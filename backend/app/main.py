@@ -5,6 +5,8 @@ Main FastAPI application entry point
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.config import settings
+import app.models # Register all models
 
 # Create FastAPI application instance
 app = FastAPI(
@@ -13,15 +15,13 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    debug=settings.DEBUG,
 )
 
-# Configure CORS
+# Configure CORS using settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=settings.allowed_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -45,17 +45,12 @@ async def health_check():
     return {"status": "healthy"}
 
 
-# TODO: Add API routers
-# from app.api import meetings, documents, transcripts
-# app.include_router(meetings.router, prefix="/api/meetings", tags=["meetings"])
-# app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
-# app.include_router(transcripts.router, prefix="/api/transcripts", tags=["transcripts"])
+from app.api.api import api_router
 
-# TODO: Add WebSocket endpoint
-# @app.websocket("/ws/meeting/{meeting_id}")
-# async def websocket_endpoint(websocket: WebSocket, meeting_id: str):
-#     await websocket.accept()
-#     # WebSocket logic here
+# Include centralized API router
+app.include_router(api_router, prefix="/api")
+
+
 
 
 if __name__ == "__main__":

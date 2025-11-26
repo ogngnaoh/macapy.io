@@ -10,7 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/ # Commented out to allow frontend/src/lib, or use specific path
+/lib/
 lib64/
 parts/
 sdist/
@@ -129,3 +130,5 @@ secrets.json
 credentials.json
 *.pem
 *.key
+nul
+

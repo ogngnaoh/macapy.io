@@ -6,15 +6,15 @@ services:
     image: ankane/pgvector:latest
     container_name: macapy_db
     environment:
-      POSTGRES_DB: macapy_db
-      POSTGRES_USER: macapy_user
-      POSTGRES_PASSWORD: macapy_password
+      POSTGRES_DB: ${POSTGRES_DB:-macapy_db}
+      POSTGRES_USER: ${POSTGRES_USER:-macapy_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-macapy_password}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U macapy_user -d macapy_db"]
+      test: [ "CMD-SHELL", "pg_isready -U macapy_user -d macapy_db" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -28,7 +28,7 @@ services:
       dockerfile: Dockerfile
     container_name: macapy_backend
     environment:
-      DATABASE_URL: postgresql://macapy_user:macapy_password@db:5432/macapy_db
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-macapy_user}:${POSTGRES_PASSWORD:-macapy_password}@db:5432/${POSTGRES_DB:-macapy_db}
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       SECRET_KEY: ${SECRET_KEY}
       DEBUG: ${DEBUG:-false}
