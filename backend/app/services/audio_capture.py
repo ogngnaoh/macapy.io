@@ -79,6 +79,7 @@ class AudioChunk:
     sample_rate: int  # Sample rate (Hz)
     channels: int  # Number of channels
     audio_level: float  # RMS audio level (0.0 to 1.0)
+    source: str = "unknown"  # "system" (loopback), "user" (mic), or "mixed"
 
 
 class AudioCaptureService:
@@ -530,32 +531,40 @@ class AudioCaptureService:
                             # System silent or late - ignore for this chunk
                             pass
 
-                    # 3. Mix
-                    if mic_data is not None and sys_data is not None:
-                        min_len = min(len(mic_data), len(sys_data))
-                        mixed_audio = (mic_data[:min_len] + sys_data[:min_len]) / 2.0
-                    elif mic_data is not None:
-                        mixed_audio = mic_data
-                    elif sys_data is not None:
-                        mixed_audio = sys_data
-                    
-                    if mixed_audio is None or len(mixed_audio) == 0:
-                        continue
+                    # 3. Yield SEPARATE chunks for system and mic (for two-column transcript)
+                    # System audio chunk (what others say)
+                    if sys_data is not None and len(sys_data) > 0:
+                        sys_level = self._calculate_audio_level(sys_data)
+                        self.current_audio_level = max(self.current_audio_level, sys_level)
 
-                    # 4. Yield
-                    audio_level = self._calculate_audio_level(mixed_audio)
-                    self.current_audio_level = audio_level
+                        sys_chunk_obj = AudioChunk(
+                            data=sys_data,
+                            timestamp=loop.time(),
+                            duration=self.chunk_duration,
+                            sample_rate=self.sample_rate,
+                            channels=self.channels,
+                            audio_level=sys_level,
+                            source="system"
+                        )
+                        self.total_chunks_captured += 1
+                        yield sys_chunk_obj
 
-                    chunk = AudioChunk(
-                        data=mixed_audio,
-                        timestamp=loop.time(),
-                        duration=self.chunk_duration,
-                        sample_rate=self.sample_rate,
-                        channels=self.channels,
-                        audio_level=audio_level
-                    )
-                    self.total_chunks_captured += 1
-                    yield chunk
+                    # Mic audio chunk (what user says)
+                    if mic_data is not None and len(mic_data) > 0:
+                        mic_level = self._calculate_audio_level(mic_data)
+                        self.current_audio_level = max(self.current_audio_level, mic_level)
+
+                        mic_chunk_obj = AudioChunk(
+                            data=mic_data,
+                            timestamp=loop.time(),
+                            duration=self.chunk_duration,
+                            sample_rate=self.sample_rate,
+                            channels=self.channels,
+                            audio_level=mic_level,
+                            source="user"
+                        )
+                        self.total_chunks_captured += 1
+                        yield mic_chunk_obj
 
                 except Exception as e:
                     logger.error(f"Error in capture loop: {e}")

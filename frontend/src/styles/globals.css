@@ -1,0 +1,239 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Design System CSS Variables */
+:root {
+  /* Backgrounds */
+  --bg-primary: #0d1117;
+  --bg-secondary: #161b22;
+  --bg-tertiary: #21262d;
+
+  /* Text */
+  --text-primary: #58a6ff;    /* Light blue - main text */
+  --text-secondary: #79c0ff;  /* Lighter blue - emphasis */
+  --text-muted: #8b949e;      /* Gray - secondary info */
+  --text-dim: #484f58;        /* Dim - timestamps, hints */
+
+  /* Accents */
+  --accent-success: #3fb950;  /* Green - success states */
+  --accent-warning: #d29922;  /* Yellow - warnings */
+  --accent-error: #f85149;    /* Red - errors */
+  --accent-cyan: #39c5cf;     /* Cyan - highlights */
+
+  /* Borders */
+  --border-default: #30363d;
+  --border-focus: #58a6ff;
+
+  /* Shadows */
+  --shadow-terminal: 0 0 10px rgba(88, 166, 255, 0.1);
+  --shadow-glow: 0 0 15px rgba(88, 166, 255, 0.3);
+}
+
+/* Base styles */
+@layer base {
+  * {
+    @apply border-border-default;
+  }
+
+  html {
+    @apply antialiased;
+    font-feature-settings: "liga" 1, "calt" 1;
+  }
+
+  body {
+    @apply bg-bg-primary text-text-primary font-mono;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Custom scrollbar styling */
+  ::-webkit-scrollbar {
+    @apply w-2 h-2;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-bg-primary;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border-default rounded-full;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-text-dim;
+  }
+
+  /* Selection styling */
+  ::selection {
+    @apply bg-text-primary/30 text-text-secondary;
+  }
+
+  /* Focus styling */
+  :focus-visible {
+    @apply outline-none ring-1 ring-border-focus ring-offset-1 ring-offset-bg-primary;
+  }
+}
+
+/* Component styles */
+@layer components {
+  /* Terminal-style button */
+  .btn-terminal {
+    @apply px-4 py-2 bg-bg-tertiary border border-border-default rounded-terminal
+           text-text-primary text-sm font-mono
+           transition-all duration-150 ease-out
+           hover:bg-bg-secondary hover:border-border-focus hover:shadow-terminal
+           active:scale-[0.98]
+           disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-bg-tertiary;
+  }
+
+  .btn-terminal-primary {
+    @apply btn-terminal bg-text-primary/10 border-text-primary/30
+           hover:bg-text-primary/20 hover:border-text-primary;
+  }
+
+  .btn-terminal-success {
+    @apply btn-terminal bg-accent-success/10 border-accent-success/30 text-accent-success
+           hover:bg-accent-success/20 hover:border-accent-success;
+  }
+
+  .btn-terminal-danger {
+    @apply btn-terminal bg-accent-error/10 border-accent-error/30 text-accent-error
+           hover:bg-accent-error/20 hover:border-accent-error;
+  }
+
+  /* Terminal-style input */
+  .input-terminal {
+    @apply w-full px-3 py-2 bg-bg-primary border border-border-default rounded-terminal
+           text-text-primary text-sm font-mono placeholder:text-text-dim
+           transition-all duration-150 ease-out
+           focus:border-border-focus focus:shadow-terminal focus:outline-none;
+  }
+
+  /* Terminal-style card */
+  .card-terminal {
+    @apply bg-bg-secondary border border-border-default rounded-terminal p-4
+           shadow-terminal;
+  }
+
+  /* Terminal prompt prefix */
+  .terminal-prompt {
+    @apply text-accent-success font-bold;
+  }
+
+  .terminal-prompt::before {
+    content: '> ';
+  }
+
+  /* Blinking cursor */
+  .cursor-blink {
+    @apply inline-block w-2 h-4 bg-text-primary animate-blink;
+  }
+
+  /* Recording indicator */
+  .recording-indicator {
+    @apply w-3 h-3 rounded-full bg-accent-error animate-pulse-recording shadow-glow-red;
+  }
+
+  /* Status badges */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+  }
+
+  .badge-success {
+    @apply badge bg-accent-success/20 text-accent-success border border-accent-success/30;
+  }
+
+  .badge-warning {
+    @apply badge bg-accent-warning/20 text-accent-warning border border-accent-warning/30;
+  }
+
+  .badge-error {
+    @apply badge bg-accent-error/20 text-accent-error border border-accent-error/30;
+  }
+
+  .badge-info {
+    @apply badge bg-accent-cyan/20 text-accent-cyan border border-accent-cyan/30;
+  }
+
+  /* Transcript line styling */
+  .transcript-line {
+    @apply py-2 px-3 border-l-2 border-transparent
+           hover:bg-bg-tertiary/50 hover:border-text-primary
+           transition-all duration-150;
+  }
+
+  .transcript-line-active {
+    @apply transcript-line border-accent-success bg-accent-success/5;
+  }
+
+  /* Sidebar navigation item */
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded-terminal
+           text-text-muted text-sm
+           transition-all duration-150 ease-out
+           hover:bg-bg-tertiary hover:text-text-primary;
+  }
+
+  .nav-item-active {
+    @apply nav-item bg-bg-tertiary text-text-primary border-l-2 border-text-primary;
+  }
+}
+
+/* Utility classes */
+@layer utilities {
+  /* Text utilities */
+  .text-gradient-blue {
+    @apply bg-gradient-to-r from-text-primary to-accent-cyan bg-clip-text text-transparent;
+  }
+
+  /* Drag region for title bar */
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag {
+    -webkit-app-region: no-drag;
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Truncate with ellipsis */
+  .truncate-lines-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .truncate-lines-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}
+
+/* Animation keyframes (additional to Tailwind config) */
+@keyframes terminal-typing {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+
+.animate-terminal-typing {
+  animation: terminal-typing 0.5s steps(20) forwards;
+  overflow: hidden;
+  white-space: nowrap;
+}

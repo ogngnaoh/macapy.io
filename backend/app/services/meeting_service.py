@@ -13,6 +13,7 @@ from app.models.transcript import Transcript
 from app.models.meeting import Meeting, MeetingStatus
 from app.models.summary import Summary
 from app.models.suggestion import Suggestion
+from app.config import settings
 from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
@@ -26,7 +27,8 @@ class MeetingService:
         self.capture_task: Optional[asyncio.Task] = None
         self.summary_task: Optional[asyncio.Task] = None
         self.is_running = False
-        
+        self.is_paused = False  # Pause state for privacy feature
+
         # Buffers for AI processing
         self.transcript_buffer: List[str] = []
         self.last_summary_time = datetime.utcnow()
@@ -94,6 +96,53 @@ class MeetingService:
         self.current_meeting_id = None
         logger.info(f"Stopped meeting processing for {meeting_id}")
 
+    async def pause_meeting(self, meeting_id: str):
+        """
+        Pause meeting audio capture (privacy feature).
+        Audio is not captured/transcribed while paused.
+        """
+        if not self.is_running or meeting_id != self.current_meeting_id:
+            logger.warning(f"Cannot pause: meeting {meeting_id} not active")
+            return False
+
+        self.is_paused = True
+        logger.info(f"Paused meeting {meeting_id}")
+
+        # Broadcast pause status
+        await manager.broadcast_to_meeting({
+            "type": "meeting_status",
+            "data": {"status": "paused", "meeting_id": meeting_id}
+        }, meeting_id)
+
+        return True
+
+    async def resume_meeting(self, meeting_id: str):
+        """
+        Resume meeting audio capture after pause.
+        """
+        if not self.is_running or meeting_id != self.current_meeting_id:
+            logger.warning(f"Cannot resume: meeting {meeting_id} not active")
+            return False
+
+        self.is_paused = False
+        logger.info(f"Resumed meeting {meeting_id}")
+
+        # Broadcast resume status
+        await manager.broadcast_to_meeting({
+            "type": "meeting_status",
+            "data": {"status": "recording", "meeting_id": meeting_id}
+        }, meeting_id)
+
+        return True
+
+    def get_status(self) -> dict:
+        """Get current meeting status."""
+        return {
+            "is_running": self.is_running,
+            "is_paused": self.is_paused,
+            "meeting_id": self.current_meeting_id
+        }
+
     async def _processing_loop(self, meeting_id: str):
         """
         Main loop: Capture -> Transcribe -> Save -> Broadcast -> AI Triggers
@@ -103,6 +152,9 @@ class MeetingService:
             async for chunk in self.audio_capture.capture_audio():
                 if not self.is_running:
                     break
+                # Skip processing when paused (privacy feature)
+                if self.is_paused:
+                    continue
                 asyncio.create_task(self._handle_chunk(chunk, meeting_id))
 
         except Exception as e:
@@ -112,12 +164,13 @@ class MeetingService:
 
     async def _summarization_loop(self, meeting_id: str):
         """
-        Periodic loop to generate summaries every 60 seconds.
+        Periodic loop to generate summaries at configured interval (default 30s).
         """
-        logger.info("Starting summarization loop")
+        interval = settings.SUMMARY_INTERVAL
+        logger.info(f"Starting summarization loop (interval: {interval}s)")
         try:
             while self.is_running:
-                await asyncio.sleep(60) # Wait 60 seconds
+                await asyncio.sleep(interval)  # Use configured interval
                 
                 # Get recent transcripts from DB or buffer?
                 # Using DB is safer to get everything including what might have been missed in buffer if we cleared it
@@ -170,13 +223,15 @@ class MeetingService:
             result = await self.transcription_service.transcribe_chunk(chunk)
             
             if result and result.text.strip():
-                # Save to DB
+                # Save to DB with speaker from audio source
+                # chunk.source is "system" (loopback/others) or "user" (mic/you)
+                speaker = getattr(chunk, 'source', 'unknown')
                 async with AsyncSessionLocal() as db:
                     transcript = Transcript(
                         meeting_id=meeting_id,
                         text=result.text,
                         timestamp=result.timestamp,
-                        speaker="Unknown"
+                        speaker=speaker
                     )
                     db.add(transcript)
                     await db.commit()
