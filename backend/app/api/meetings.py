@@ -25,7 +25,12 @@ async def read_meetings(
     limit: int = 100,
     db: AsyncSession = Depends(get_db)
 ) -> Any:
-    result = await db.execute(select(Meeting).offset(skip).limit(limit))
+    result = await db.execute(
+        select(Meeting)
+        .order_by(Meeting.start_time.desc())
+        .offset(skip)
+        .limit(limit)
+    )
     meetings = result.scalars().all()
     return meetings
 

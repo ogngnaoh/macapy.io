@@ -24,6 +24,8 @@ export interface SummaryEvent {
   data: {
     id: number;
     content: string;
+    start_time?: string;
+    end_time?: string;
     created_at: string;
   };
 }
@@ -107,7 +109,7 @@ class WebSocketManager {
     this.setStatus('connecting');
     console.log('[WS] Connecting to meeting:', this.meetingId);
 
-    const url = `${WS_BASE}/ws/meeting/${this.meetingId}`;
+    const url = `${WS_BASE}/api/ws/meeting/${this.meetingId}`;
     this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {

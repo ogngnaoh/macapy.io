@@ -3,19 +3,28 @@
  * Manages WebSocket connection and dispatches events to store
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { useStore } from '@/store';
 import { wsManager, type WebSocketEvent } from '@/services/websocket';
 
-export function useWebSocket(meetingId: string | null) {
+interface UseWebSocketOptions {
+  onError?: (message: string, recoverable: boolean) => void;
+}
+
+export function useWebSocket(meetingId: string | null, options: UseWebSocketOptions = {}) {
   const {
     addTranscript,
     addSummary,
     addSuggestion,
+    addAIResponse,
     setTokenUsage,
     setMeetingStatus,
     setWebSocketStatus,
   } = useStore();
+
+  // Use ref for callback to avoid dependency changes
+  const onErrorRef = useRef(options.onError);
+  onErrorRef.current = options.onError;
 
   const handleEvent = useCallback(
     (event: WebSocketEvent) => {
@@ -35,9 +44,22 @@ export function useWebSocket(meetingId: string | null) {
             id: event.data.id,
             meeting_id: meetingId || '',
             content: event.data.content,
-            start_time: null,
-            end_time: null,
+            start_time: event.data.start_time ?? null,
+            end_time: event.data.end_time ?? null,
             created_at: event.data.created_at,
+          });
+          // Also add to unified AI responses
+          addAIResponse({
+            id: `summary-${event.data.id}`,
+            type: 'summary',
+            content: event.data.content,
+            timestamp: event.data.created_at,
+            metadata: {
+              timeRange: {
+                start: event.data.start_time ?? null,
+                end: event.data.end_time ?? null,
+              },
+            },
           });
           break;
 
@@ -47,6 +69,17 @@ export function useWebSocket(meetingId: string | null) {
             question: event.data.question,
             suggestions: event.data.suggestions,
             created_at: event.data.created_at,
+          });
+          // Also add to unified AI responses
+          addAIResponse({
+            id: `suggestion-${event.data.id}`,
+            type: 'suggestion',
+            content: event.data.question,
+            timestamp: event.data.created_at,
+            metadata: {
+              question: event.data.question,
+              suggestions: event.data.suggestions,
+            },
           });
           break;
 
@@ -64,14 +97,17 @@ export function useWebSocket(meetingId: string | null) {
 
         case 'error':
           console.error('[WS] Error event:', event.data);
-          // Could show toast notification here
+          onErrorRef.current?.(
+            event.data.message || 'WebSocket error occurred',
+            event.data.recoverable ?? false
+          );
           break;
 
         default:
           console.warn('[WS] Unknown event type:', event);
       }
     },
-    [addTranscript, addSummary, addSuggestion, setTokenUsage, setMeetingStatus, meetingId]
+    [addTranscript, addSummary, addSuggestion, addAIResponse, setTokenUsage, setMeetingStatus, meetingId]
   );
 
   useEffect(() => {

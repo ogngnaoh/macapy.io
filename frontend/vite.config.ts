@@ -1,13 +1,48 @@
-import { defineConfig } from 'vite';
+import { defineConfig, Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
 import electron from 'vite-plugin-electron';
 import renderer from 'vite-plugin-electron-renderer';
 import { resolve } from 'path';
+import { copyFileSync, mkdirSync, existsSync } from 'fs';
+
+// Custom plugin to copy preload script without transformation
+function copyPreloadPlugin(): Plugin {
+  return {
+    name: 'copy-preload',
+    buildStart() {
+      const srcPath = resolve(__dirname, 'electron/preload/index.cjs');
+      const destDir = resolve(__dirname, 'dist-electron/preload');
+      const destPath = resolve(destDir, 'index.cjs');
+
+      // Ensure destination directory exists
+      if (!existsSync(destDir)) {
+        mkdirSync(destDir, { recursive: true });
+      }
+
+      // Copy the preload script as-is (no transformation)
+      copyFileSync(srcPath, destPath);
+      console.log('[copy-preload] Copied preload script to dist-electron/preload/index.cjs');
+    },
+    // Also copy on hot reload during dev
+    configureServer(server) {
+      server.watcher.on('change', (file) => {
+        if (file.endsWith('electron/preload/index.cjs')) {
+          const srcPath = resolve(__dirname, 'electron/preload/index.cjs');
+          const destPath = resolve(__dirname, 'dist-electron/preload/index.cjs');
+          copyFileSync(srcPath, destPath);
+          console.log('[copy-preload] Preload script updated');
+        }
+      });
+    }
+  };
+}
 
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [
     react(),
+    // Copy preload script first (before electron plugin starts)
+    copyPreloadPlugin(),
     electron([
       {
         // Main process entry point
@@ -24,21 +59,7 @@ export default defineConfig({
           },
         },
       },
-      {
-        // Preload scripts entry point
-        entry: 'electron/preload/index.ts',
-        onstart(options) {
-          options.reload();
-        },
-        vite: {
-          build: {
-            outDir: 'dist-electron/preload',
-            rollupOptions: {
-              external: ['electron'],
-            },
-          },
-        },
-      },
+      // Preload is now handled by copyPreloadPlugin - no vite transformation
     ]),
     renderer(),
   ],

@@ -1,17 +1,27 @@
-import { app, BrowserWindow, ipcMain, shell, safeStorage, Tray, Menu, globalShortcut } from 'electron';
-import { join } from 'path';
+import { app, BrowserWindow, ipcMain, shell, safeStorage, Tray, Menu, globalShortcut, nativeImage } from 'electron';
+import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
+import { existsSync } from 'fs';
 import Store from 'electron-store';
 
-const __dirname = fileURLToPath(new URL('.', import.meta.url));
+// Get __dirname in ESM context, with fallback for bundled environments
+let __dirname: string;
+try {
+  __dirname = dirname(fileURLToPath(import.meta.url));
+} catch {
+  // Fallback for bundled environment where import.meta.url may not be file://
+  __dirname = join(app.getAppPath(), 'dist-electron', 'main');
+}
 
 // Initialize electron-store for non-sensitive settings
 const store = new Store({
   name: 'macapy-settings',
   defaults: {
     windowBounds: { width: 800, height: 700 },
-    alwaysOnTop: true,
+    alwaysOnTop: false,
     compactMode: false,
+    encryptedApiKey: '',
+    apiKey: '',
   },
 });
 
@@ -24,7 +34,7 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 
 const isDev = !app.isPackaged;
-const preload = join(__dirname, '../preload/index.js');
+const preload = join(__dirname, '../preload/index.cjs');
 const distPath = join(__dirname, '../../dist');
 
 // Window size presets
@@ -49,7 +59,7 @@ async function createWindow(): Promise<void> {
     icon: join(__dirname, '../../public/icon.png'),
     backgroundColor: '#0d1117',
     frame: false, // Frameless for custom title bar
-    alwaysOnTop: alwaysOnTop,
+    alwaysOnTop: false, // Force disabled as per user request
     webPreferences: {
       preload,
       nodeIntegration: false,
@@ -90,12 +100,26 @@ async function createWindow(): Promise<void> {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  // Register maximize/unmaximize listeners once during window creation
+  mainWindow.on('maximize', () => {
+    mainWindow?.webContents.send('window:maximized', true);
+  });
+  mainWindow.on('unmaximize', () => {
+    mainWindow?.webContents.send('window:maximized', false);
+  });
 }
 
 // System tray setup
 function createTray(): void {
   // Use a simple icon path - in production would be proper icon
   const iconPath = join(__dirname, '../../public/icon.png');
+
+  // Skip tray creation if icon doesn't exist
+  if (!existsSync(iconPath)) {
+    console.warn('Tray icon not found at:', iconPath, '- skipping tray creation');
+    return;
+  }
 
   tray = new Tray(iconPath);
   tray.setToolTip('macapy - Meeting Assistant');
@@ -212,10 +236,12 @@ ipcMain.handle('app:platform', () => {
 });
 
 ipcMain.handle('window:minimize', () => {
+  console.log('IPC: window:minimize');
   mainWindow?.minimize();
 });
 
 ipcMain.handle('window:maximize', () => {
+  console.log('IPC: window:maximize');
   if (mainWindow?.isMaximized()) {
     mainWindow.unmaximize();
   } else {
@@ -224,21 +250,12 @@ ipcMain.handle('window:maximize', () => {
 });
 
 ipcMain.handle('window:close', () => {
+  console.log('IPC: window:close');
   mainWindow?.close();
 });
 
 ipcMain.handle('window:isMaximized', () => {
   return mainWindow?.isMaximized() ?? false;
-});
-
-// Listen for maximize/unmaximize events
-ipcMain.on('window:onMaximizeChange', (event) => {
-  mainWindow?.on('maximize', () => {
-    event.sender.send('window:maximized', true);
-  });
-  mainWindow?.on('unmaximize', () => {
-    event.sender.send('window:maximized', false);
-  });
 });
 
 // Always-on-top toggle

@@ -18,7 +18,7 @@ export interface TranscriptSegment {
   id: string;
   text: string;
   timestamp: number;
-  speaker: 'system' | 'user' | 'unknown';
+  speaker: string; // 'meeting' for unified transcript, or legacy 'system'/'user'
   created_at: string;
 }
 
@@ -36,6 +36,22 @@ export interface QueryExchange {
   timestamp: string;
 }
 
+// Unified AI Response types
+export type AIResponseType = 'summary' | 'suggestion' | 'query_response';
+export type AIResponseFilter = 'all' | 'summary' | 'suggestion' | 'query';
+
+export interface AIResponseItem {
+  id: string;
+  type: AIResponseType;
+  content: string;
+  timestamp: string;
+  metadata?: {
+    question?: string;
+    suggestions?: string[];
+    timeRange?: { start: string | null; end: string | null };
+  };
+}
+
 // =============================================================================
 // STORE STATE
 // =============================================================================
@@ -49,10 +65,9 @@ interface AppState {
     error: string | null;
   };
 
-  // Transcript State (TWO columns - system vs user)
+  // Transcript State (unified single list)
   transcript: {
-    systemSegments: TranscriptSegment[]; // What others say (loopback audio)
-    userSegments: TranscriptSegment[];   // What you say (mic audio)
+    segments: TranscriptSegment[]; // All meeting audio (unified)
     isAutoScroll: boolean;
   };
 
@@ -74,6 +89,12 @@ interface AppState {
   suggestion: {
     queue: SuggestionData[];
     active: SuggestionData | null;
+  };
+
+  // Unified AI Responses (for AIResponsePanel)
+  aiResponses: {
+    items: AIResponseItem[];
+    filter: AIResponseFilter;
   };
 
   // Token Usage State
@@ -160,6 +181,11 @@ interface AppActions {
   dismissActiveSuggestion: () => void;
   clearSuggestions: () => void;
 
+  // AI Response Actions (unified panel)
+  addAIResponse: (item: AIResponseItem) => void;
+  setAIFilter: (filter: AIResponseFilter) => void;
+  clearAIResponses: () => void;
+
   // Token Actions
   setTokenUsage: (current: number, max: number) => void;
 
@@ -171,6 +197,7 @@ interface AppActions {
 
   // History Actions
   setHistoryMeetings: (meetings: Meeting[]) => void;
+  addMeetingToHistory: (meeting: Meeting) => void;
   setSelectedHistoryMeeting: (meeting: Meeting | null) => void;
   setHistorySearchQuery: (query: string) => void;
   setHistoryLoading: (loading: boolean) => void;
@@ -208,8 +235,7 @@ const initialState: AppState = {
     error: null,
   },
   transcript: {
-    systemSegments: [],
-    userSegments: [],
+    segments: [],
     isAutoScroll: true,
   },
   summary: {
@@ -226,6 +252,10 @@ const initialState: AppState = {
     queue: [],
     active: null,
   },
+  aiResponses: {
+    items: [],
+    filter: 'all',
+  },
   tokens: {
     current: 0,
     max: 272000, // GPT-5 nano input limit
@@ -233,7 +263,7 @@ const initialState: AppState = {
   },
   ui: {
     activeView: 'meeting',
-    isAlwaysOnTop: true,
+    isAlwaysOnTop: false,
     isCompactMode: false,
     isSidebarCollapsed: false,
   },
@@ -297,29 +327,22 @@ export const useStore = create<AppState & AppActions>()(
           summary: initialState.summary,
           query: initialState.query,
           suggestion: initialState.suggestion,
+          aiResponses: initialState.aiResponses,
           tokens: initialState.tokens,
         }),
 
-      // Transcript Actions
+      // Transcript Actions (unified - all audio in single stream)
       addTranscript: (segment) =>
-        set((state) => {
-          const isSystem = segment.speaker === 'system';
-          return {
-            transcript: {
-              ...state.transcript,
-              systemSegments: isSystem
-                ? [...state.transcript.systemSegments, segment]
-                : state.transcript.systemSegments,
-              userSegments: !isSystem
-                ? [...state.transcript.userSegments, segment]
-                : state.transcript.userSegments,
-            },
-          };
-        }),
+        set((state) => ({
+          transcript: {
+            ...state.transcript,
+            segments: [...state.transcript.segments, segment],
+          },
+        })),
 
       clearTranscripts: () =>
         set((state) => ({
-          transcript: { ...state.transcript, systemSegments: [], userSegments: [] },
+          transcript: { ...state.transcript, segments: [] },
         })),
 
       setAutoScroll: (enabled) =>
@@ -384,6 +407,25 @@ export const useStore = create<AppState & AppActions>()(
       clearSuggestions: () =>
         set({ suggestion: { queue: [], active: null } }),
 
+      // AI Response Actions (unified panel)
+      addAIResponse: (item) =>
+        set((state) => ({
+          aiResponses: {
+            ...state.aiResponses,
+            items: [item, ...state.aiResponses.items], // Newest first
+          },
+        })),
+
+      setAIFilter: (filter) =>
+        set((state) => ({
+          aiResponses: { ...state.aiResponses, filter },
+        })),
+
+      clearAIResponses: () =>
+        set((state) => ({
+          aiResponses: { ...state.aiResponses, items: [] },
+        })),
+
       // Token Actions
       setTokenUsage: (current, max) =>
         set({
@@ -412,6 +454,14 @@ export const useStore = create<AppState & AppActions>()(
       // History Actions
       setHistoryMeetings: (meetings) =>
         set((state) => ({ history: { ...state.history, meetings } })),
+
+      addMeetingToHistory: (meeting) =>
+        set((state) => ({
+          history: {
+            ...state.history,
+            meetings: [meeting, ...state.history.meetings.filter(m => m.id !== meeting.id)],
+          },
+        })),
 
       setSelectedHistoryMeeting: (meeting) =>
         set((state) => ({ history: { ...state.history, selected: meeting } })),
@@ -480,6 +530,7 @@ export const selectMeeting = (state: AppState) => state.meeting;
 export const selectTranscript = (state: AppState) => state.transcript;
 export const selectSummary = (state: AppState) => state.summary;
 export const selectSuggestion = (state: AppState) => state.suggestion;
+export const selectAIResponses = (state: AppState) => state.aiResponses;
 export const selectTokens = (state: AppState) => state.tokens;
 export const selectUI = (state: AppState) => state.ui;
 export const selectHistory = (state: AppState) => state.history;

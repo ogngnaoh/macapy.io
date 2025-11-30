@@ -40,6 +40,9 @@ env/
 .vscode/
 *.code-workspace
 
+# Visual Studio
+.vs/
+
 # Jupyter Notebook
 .ipynb_checkpoints
 

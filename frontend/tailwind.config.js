@@ -7,26 +7,26 @@ export default {
   theme: {
     extend: {
       colors: {
-        // Backgrounds
-        'bg-primary': 'var(--bg-primary)',
-        'bg-secondary': 'var(--bg-secondary)',
-        'bg-tertiary': 'var(--bg-tertiary)',
+        // Backgrounds - using rgb format with alpha support
+        'bg-primary': 'rgb(var(--bg-primary-rgb) / <alpha-value>)',
+        'bg-secondary': 'rgb(var(--bg-secondary-rgb) / <alpha-value>)',
+        'bg-tertiary': 'rgb(var(--bg-tertiary-rgb) / <alpha-value>)',
 
-        // Text colors
-        'text-primary': 'var(--text-primary)',
-        'text-secondary': 'var(--text-secondary)',
-        'text-muted': 'var(--text-muted)',
-        'text-dim': 'var(--text-dim)',
+        // Text colors - using rgb format with alpha support
+        'text-primary': 'rgb(var(--text-primary-rgb) / <alpha-value>)',
+        'text-secondary': 'rgb(var(--text-secondary-rgb) / <alpha-value>)',
+        'text-muted': 'rgb(var(--text-muted-rgb) / <alpha-value>)',
+        'text-dim': 'rgb(var(--text-dim-rgb) / <alpha-value>)',
 
-        // Accents
-        'accent-success': 'var(--accent-success)',
-        'accent-warning': 'var(--accent-warning)',
-        'accent-error': 'var(--accent-error)',
-        'accent-cyan': 'var(--accent-cyan)',
+        // Accents - using rgb format with alpha support
+        'accent-success': 'rgb(var(--accent-success-rgb) / <alpha-value>)',
+        'accent-warning': 'rgb(var(--accent-warning-rgb) / <alpha-value>)',
+        'accent-error': 'rgb(var(--accent-error-rgb) / <alpha-value>)',
+        'accent-cyan': 'rgb(var(--accent-cyan-rgb) / <alpha-value>)',
 
-        // Borders
-        'border-default': 'var(--border-default)',
-        'border-focus': 'var(--border-focus)',
+        // Borders - using rgb format with alpha support
+        'border-default': 'rgb(var(--border-default-rgb) / <alpha-value>)',
+        'border-focus': 'rgb(var(--border-focus-rgb) / <alpha-value>)',
 
         // Terminal-inspired palette
         terminal: {

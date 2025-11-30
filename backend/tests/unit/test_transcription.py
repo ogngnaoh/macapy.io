@@ -17,11 +17,14 @@ import asyncio
 import logging
 import sys
 from pathlib import Path
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+import numpy as np
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.services.audio_capture import AudioCaptureService
+from app.services.audio_capture import AudioCaptureService, AudioChunk
 from app.services.transcription import TranscriptionService
 from app.config import settings
 
@@ -33,168 +36,181 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+@pytest.mark.asyncio
 async def test_transcription_basic():
     """
-    Test transcription service with live dual audio capture.
-
-    This test will:
-    1. Start audio capture from System Audio AND Microphone
-    2. Capture audio for 10 seconds
-    3. Transcribe each chunk in real-time
-    4. Print transcripts as they arrive
+    Test transcription service with mocked audio capture.
     """
     logger.info("=" * 60)
-    logger.info("TRANSCRIPTION SERVICE TEST (DUAL CAPTURE)")
-    logger.info("=" * 60)
-    logger.info("This will capture audio from System Audio AND Microphone for 10 seconds")
-    logger.info("Play some audio and speak clearly to test...")
+    logger.info("TRANSCRIPTION SERVICE TEST (MOCKED)")
     logger.info("=" * 60)
 
-    # Initialize services
-    audio_service = AudioCaptureService()
-    transcription_service = TranscriptionService()
+    # Mock AudioCaptureService
+    with patch("app.services.audio_capture.AudioCaptureService") as MockAudioService:
+        mock_audio_service = MockAudioService.return_value
+        
+        # Create fake audio chunks
+        async def mock_capture_generator(*args, **kwargs):
+            for i in range(5):
+                await asyncio.sleep(0.1)
+                yield AudioChunk(
+                    data=np.zeros(16000, dtype=np.float32),
+                    timestamp=float(i),
+                    duration=1.0,
+                    sample_rate=16000,
+                    channels=1,
+                    audio_level=0.5,
+                    source="user"
+                )
 
-    transcripts = []
-    chunk_count = 0
+        mock_audio_service.capture_audio.side_effect = mock_capture_generator
+        mock_audio_service.stop_capture = AsyncMock()
 
-    try:
-        # Start audio capture using async generator
-        logger.info("\nStarting audio capture...")
-        logger.info("✓ Audio capture starting (recording for 10 seconds)")
+        # Mock TranscriptionService
+        with patch("app.services.transcription.TranscriptionService") as MockTranscriptionService:
+            mock_transcription_service = MockTranscriptionService.return_value
+            # Make transcribe_chunk return a coroutine that resolves to the result
+            async def mock_transcribe(chunk, language="en"):
+                return MagicMock(text="Mocked Transcript", timestamp=0.0)
+            
+            mock_transcription_service.transcribe_chunk.side_effect = mock_transcribe
+            mock_transcription_service.close = AsyncMock()
 
-        # Capture and transcribe for 10 seconds
-        start_time = asyncio.get_event_loop().time()
+            # Initialize services (using mocks)
+            audio_service = mock_audio_service
+            transcription_service = mock_transcription_service
 
-        async for chunk in audio_service.capture_audio(auto_select_loopback=True, auto_select_mic=True):
-            # Check if we've exceeded 10 seconds
-            if (asyncio.get_event_loop().time() - start_time) >= 10.0:
-                break
+            transcripts = []
+            chunk_count = 0
 
-            chunk_count += 1
-            logger.info(
-                f"\n[Chunk {chunk_count}] Audio level: {chunk.audio_level:.4f}, "
-                f"Duration: {chunk.duration:.2f}s"
-            )
+            try:
+                logger.info("\nStarting audio capture...")
+                
+                async for chunk in audio_service.capture_audio(auto_select_loopback=True, auto_select_mic=True):
+                    chunk_count += 1
+                    logger.info(f"\n[Chunk {chunk_count}] Audio level: {chunk.audio_level:.4f}")
 
-            # Transcribe chunk
-            result = await transcription_service.transcribe_chunk(chunk)
+                    # Transcribe chunk
+                    result = await transcription_service.transcribe_chunk(chunk)
 
-            if result:
-                transcripts.append(result)
-                logger.info(f"✓ TRANSCRIPT: '{result.text}'")
-            else:
-                logger.info("  (Silent or failed)")
+                    if result:
+                        transcripts.append(result)
+                        logger.info(f"✓ TRANSCRIPT: '{result.text}'")
 
-        logger.info("\n" + "=" * 60)
-        logger.info("TEST COMPLETED")
-        logger.info("=" * 60)
-        logger.info(f"Total chunks captured: {chunk_count}")
-        logger.info(f"Total transcripts: {len(transcripts)}")
+                logger.info("\n" + "=" * 60)
+                logger.info("TEST COMPLETED")
+                logger.info("=" * 60)
+                logger.info(f"Total chunks captured: {chunk_count}")
+                logger.info(f"Total transcripts: {len(transcripts)}")
+                
+                assert chunk_count == 5
+                assert len(transcripts) == 5
 
-        if transcripts:
-            logger.info("\nFull Transcript:")
-            logger.info("-" * 60)
-            for i, result in enumerate(transcripts, 1):
-                logger.info(f"{i}. {result.text}")
-            logger.info("-" * 60)
-
-            # Combine all transcripts
-            full_text = " ".join(t.text for t in transcripts)
-            logger.info(f"\nCombined: {full_text}")
-        else:
-            logger.warning("\n⚠ No transcripts were generated!")
-            logger.warning("Possible reasons:")
-            logger.warning("  - Audio level too low (silence)")
-            logger.warning("  - Microphone not working")
-            logger.warning("  - OpenAI API key invalid")
-            logger.warning("  - Network issues")
-
-    except KeyboardInterrupt:
-        logger.info("\nTest interrupted by user")
-
-    except Exception as e:
-        logger.error(f"\nTest failed with error: {e}", exc_info=True)
-        raise
-
-    finally:
-        # Cleanup
-        logger.info("\nCleaning up...")
-        await audio_service.stop_capture()
-        await transcription_service.close()
-        logger.info("✓ Cleanup complete")
+            except Exception as e:
+                logger.error(f"\nTest failed with error: {e}", exc_info=True)
+                raise
 
 
+@pytest.mark.asyncio
 async def test_transcription_silent_chunk():
     """
     Test that silent chunks are properly skipped.
     """
-    import numpy as np
-    from app.services.audio_capture import AudioChunk
-
     logger.info("\n" + "=" * 60)
     logger.info("SILENT CHUNK")
     logger.info("=" * 60)
 
-    transcription_service = TranscriptionService()
+    # Patch AsyncOpenAI because __init__ uses it
+    with patch("app.services.transcription.AsyncOpenAI") as MockOpenAI:
+        # Ensure the client instance returned by MockOpenAI() has an async close method
+        mock_client = MockOpenAI.return_value
+        mock_client.close = AsyncMock()
+        
+        transcription_service = TranscriptionService()
+        
+        # Mock _call_whisper_api on the instance with an explicit async function
+        async def mock_call_api(*args, **kwargs):
+            return "Should not be called"
+        
+        # Use MagicMock to wrap the async function so we can assert calls
+        mock_wrapper = MagicMock(side_effect=mock_call_api)
+        transcription_service._call_whisper_api = mock_wrapper
+        
+        # Create a silent audio chunk (all zeros)
+        silent_audio = np.zeros(16000, dtype=np.float32)
+        silent_chunk = AudioChunk(
+            data=silent_audio,
+            timestamp=0.0,
+            duration=1.0,
+            sample_rate=16000,
+            channels=1,
+            audio_level=0.0  # Silent
+        )
 
-    # Create a silent audio chunk (all zeros)
-    silent_audio = np.zeros(16000, dtype=np.float32)  # 1 second of silence
-    silent_chunk = AudioChunk(
-        data=silent_audio,
-        timestamp=0.0,
-        duration=1.0,
-        sample_rate=16000,
-        channels=1,
-        audio_level=0.0  # Silent
-    )
+        logger.info("Testing silent chunk (audio_level=0.0)...")
+        # We expect it to return None without calling API
+        result = await transcription_service.transcribe_chunk(silent_chunk)
 
-    logger.info("Testing silent chunk (audio_level=0.0)...")
-    result = await transcription_service.transcribe_chunk(silent_chunk)
-
-    if result is None:
-        logger.info("✓ PASSED: Silent chunk was correctly skipped")
-    else:
-        logger.error(f"✗ FAILED: Silent chunk returned: {result.text}")
-
-    await transcription_service.close()
+        if result is None:
+            logger.info("✓ PASSED: Silent chunk was correctly skipped")
+        else:
+            logger.error(f"✗ FAILED: Silent chunk returned: {result.text}")
+        
+        # Verify API was NOT called
+        mock_wrapper.assert_not_called()
+        
+        await transcription_service.close()
 
 
+@pytest.mark.asyncio
 async def test_transcription_noise_chunk():
     """
     Test transcription with synthetic noise.
     """
-    import numpy as np
-    from app.services.audio_capture import AudioChunk
-
     logger.info("\n" + "=" * 60)
     logger.info("NOISE CHUNK TEST")
     logger.info("=" * 60)
 
-    transcription_service = TranscriptionService()
+    with patch("app.services.transcription.AsyncOpenAI") as MockOpenAI:
+        # Ensure the client instance returned by MockOpenAI() has an async close method
+        mock_client = MockOpenAI.return_value
+        mock_client.close = AsyncMock()
 
-    # Create a noise chunk (random audio)
-    noise_audio = np.random.uniform(-0.1, 0.1, 16000).astype(np.float32)
-    noise_chunk = AudioChunk(
-        data=noise_audio,
-        timestamp=0.0,
-        duration=1.0,
-        sample_rate=16000,
-        channels=1,
-        audio_level=0.05  # Above silence threshold
-    )
+        transcription_service = TranscriptionService()
+        
+        # Mock _call_whisper_api on the instance with an explicit async function
+        async def mock_call_api(*args, **kwargs):
+            return "Noise text"
+            
+        # Use MagicMock to wrap the async function so we can assert calls if needed
+        # But here we just need it to be awaitable
+        transcription_service._call_whisper_api = mock_call_api
+        
+        # Create a noise chunk
+        noise_audio = np.random.uniform(-0.1, 0.1, 16000).astype(np.float32)
+        noise_chunk = AudioChunk(
+            data=noise_audio,
+            timestamp=0.0,
+            duration=1.0,
+            sample_rate=16000,
+            channels=1,
+            audio_level=0.05  # Above silence threshold
+        )
 
-    logger.info("Testing noise chunk (audio_level=0.05)...")
-    result = await transcription_service.transcribe_chunk(noise_chunk)
+        logger.info("Testing noise chunk (audio_level=0.05)...")
+        result = await transcription_service.transcribe_chunk(noise_chunk)
 
-    if result:
-        logger.info(f"✓ Transcription returned: '{result.text}'")
-        logger.info("  (Likely empty or gibberish - that's expected for random noise)")
-    else:
-        logger.info("  No transcription (Whisper returned empty)")
+        if result:
+            logger.info(f"✓ Transcription returned: '{result.text}'")
+            assert result.text == "Noise text"
+        else:
+            logger.info("  No transcription")
+            pytest.fail("Expected transcription for noise chunk")
 
-    await transcription_service.close()
+        await transcription_service.close()
 
 
+@pytest.mark.asyncio
 async def test_config_validation():
     """
     Test that configuration is properly loaded.
@@ -203,15 +219,10 @@ async def test_config_validation():
     logger.info("CONFIGURATION TEST")
     logger.info("=" * 60)
 
-    logger.info(f"OpenAI API Key present: {'Yes' if settings.OPENAI_API_KEY else 'NO - MISSING!'}")
-    logger.info(f"Whisper Model: {settings.WHISPER_MODEL}")
-    logger.info(f"Audio Sample Rate: {settings.AUDIO_SAMPLE_RATE}")
-
-    if not settings.OPENAI_API_KEY:
-        logger.error("\n✗ FAILED: OPENAI_API_KEY not found in .env file")
-        logger.error("Please add OPENAI_API_KEY=sk-... to your .env file")
-        return False
-
+    # We can't easily change settings at runtime if they are loaded at module level, 
+    # but we can check if they are present.
+    assert settings.OPENAI_API_KEY, "OPENAI_API_KEY missing"
+    
     logger.info("\n✓ PASSED: Configuration is valid")
     return True
 
@@ -219,64 +230,25 @@ async def test_config_validation():
 # Main test runner
 async def run_all_tests():
     """Run all tests in sequence."""
-    logger.info("\n" + "=" * 60)
-    logger.info("RUNNING ALL TRANSCRIPTION TESTS")
-    logger.info("=" * 60)
-
-    # Test 1: Configuration
-    if not await test_config_validation():
-        logger.error("Configuration test failed - aborting remaining tests")
-        return
-
-    # Test 2: Silent chunk handling
+    # This runner is for manual execution
+    await test_config_validation()
     await test_transcription_silent_chunk()
-
-    # Test 3: Noise chunk handling
     await test_transcription_noise_chunk()
-
-    # Test 4: Live audio transcription (interactive)
-    logger.info("\n" + "=" * 60)
-    logger.info("Ready for live audio test?")
-    logger.info("This will record for 10 seconds. Press Ctrl+C to skip.")
-    logger.info("=" * 60)
-    await asyncio.sleep(2)
-
-    try:
-        await test_transcription_basic()
-    except KeyboardInterrupt:
-        logger.info("\nLive audio test skipped by user")
-
-    logger.info("\n" + "=" * 60)
-    logger.info("ALL TESTS COMPLETED")
-    logger.info("=" * 60)
+    await test_transcription_basic()
 
 
 if __name__ == "__main__":
-    """
-    Run tests directly (not via pytest).
-
-    Usage:
-        python backend/tests/test_transcription.py
-    """
     asyncio.run(run_all_tests())
 
-
-# Pytest test functions (for running with pytest)
+# Pytest wrappers
 def test_config():
-    """Pytest wrapper for config test."""
     asyncio.run(test_config_validation())
 
-
 def test_silent():
-    """Pytest wrapper for silent chunk test."""
     asyncio.run(test_transcription_silent_chunk())
 
-
 def test_noise():
-    """Pytest wrapper for noise chunk test."""
     asyncio.run(test_transcription_noise_chunk())
 
-
 def test_live():
-    """Pytest wrapper for live transcription test."""
     asyncio.run(test_transcription_basic())

@@ -47,7 +47,8 @@ async def test_meeting_lifecycle_mocked():
         # Verify commit was called
         mock_session.commit.assert_awaited()
         
-        assert service.is_running(meeting_id)
+        assert service.is_running
+        assert service.current_meeting_id == meeting_id
         
         # Stop Meeting
         print("Stopping meeting...")
@@ -56,4 +57,4 @@ async def test_meeting_lifecycle_mocked():
         
         # Verify status update
         assert meeting.status == MeetingStatus.COMPLETED
-        assert not service.is_running(meeting_id)
+        assert not service.is_running

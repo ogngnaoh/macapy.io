@@ -4,26 +4,26 @@
 
 /* Design System CSS Variables */
 :root {
-  /* Backgrounds */
-  --bg-primary: #0d1117;
-  --bg-secondary: #161b22;
-  --bg-tertiary: #21262d;
+  /* Backgrounds - RGB values for Tailwind opacity support */
+  --bg-primary-rgb: 13 17 23;
+  --bg-secondary-rgb: 22 27 34;
+  --bg-tertiary-rgb: 33 38 45;
 
-  /* Text */
-  --text-primary: #58a6ff;    /* Light blue - main text */
-  --text-secondary: #79c0ff;  /* Lighter blue - emphasis */
-  --text-muted: #8b949e;      /* Gray - secondary info */
-  --text-dim: #484f58;        /* Dim - timestamps, hints */
+  /* Text - RGB values */
+  --text-primary-rgb: 88 166 255;    /* Light blue - main text */
+  --text-secondary-rgb: 121 192 255;  /* Lighter blue - emphasis */
+  --text-muted-rgb: 139 148 158;      /* Gray - secondary info */
+  --text-dim-rgb: 72 79 88;        /* Dim - timestamps, hints */
 
-  /* Accents */
-  --accent-success: #3fb950;  /* Green - success states */
-  --accent-warning: #d29922;  /* Yellow - warnings */
-  --accent-error: #f85149;    /* Red - errors */
-  --accent-cyan: #39c5cf;     /* Cyan - highlights */
+  /* Accents - RGB values */
+  --accent-success-rgb: 63 185 80;  /* Green - success states */
+  --accent-warning-rgb: 210 153 34;  /* Yellow - warnings */
+  --accent-error-rgb: 248 81 73;    /* Red - errors */
+  --accent-cyan-rgb: 57 197 207;     /* Cyan - highlights */
 
-  /* Borders */
-  --border-default: #30363d;
-  --border-focus: #58a6ff;
+  /* Borders - RGB values */
+  --border-default-rgb: 48 54 61;
+  --border-focus-rgb: 88 166 255;
 
   /* Shadows */
   --shadow-terminal: 0 0 10px rgba(88, 166, 255, 0.1);
@@ -49,7 +49,7 @@
 
   /* Custom scrollbar styling */
   ::-webkit-scrollbar {
-    @apply w-2 h-2;
+    @apply w-2.5 h-2.5;
   }
 
   ::-webkit-scrollbar-track {
@@ -77,30 +77,7 @@
 
 /* Component styles */
 @layer components {
-  /* Terminal-style button */
-  .btn-terminal {
-    @apply px-4 py-2 bg-bg-tertiary border border-border-default rounded-terminal
-           text-text-primary text-sm font-mono
-           transition-all duration-150 ease-out
-           hover:bg-bg-secondary hover:border-border-focus hover:shadow-terminal
-           active:scale-[0.98]
-           disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-bg-tertiary;
-  }
-
-  .btn-terminal-primary {
-    @apply btn-terminal bg-text-primary/10 border-text-primary/30
-           hover:bg-text-primary/20 hover:border-text-primary;
-  }
-
-  .btn-terminal-success {
-    @apply btn-terminal bg-accent-success/10 border-accent-success/30 text-accent-success
-           hover:bg-accent-success/20 hover:border-accent-success;
-  }
-
-  .btn-terminal-danger {
-    @apply btn-terminal bg-accent-error/10 border-accent-error/30 text-accent-error
-           hover:bg-accent-error/20 hover:border-accent-error;
-  }
+  /* Note: Button styles are defined in Button.tsx component with type-safe variants */
 
   /* Terminal-style input */
   .input-terminal {
@@ -193,7 +170,8 @@
   }
 
   .no-drag {
-    -webkit-app-region: no-drag;
+    -webkit-app-region: no-drag !important;
+    cursor: default;
   }
 
   /* Hide scrollbar but keep functionality */

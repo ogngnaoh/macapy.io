@@ -18,6 +18,23 @@ from sqlalchemy import select
 
 logger = logging.getLogger(__name__)
 
+# Conditional import for Realtime API
+if settings.USE_REALTIME_API:
+    try:
+        from app.services.realtime_transcription import (
+            get_realtime_transcription_service,
+            RealtimeTranscriptionService,
+            resample_to_24khz,
+            TranscriptDelta
+        )
+        REALTIME_AVAILABLE = True
+        logger.info("Realtime API imports successful")
+    except ImportError as e:
+        logger.warning(f"Realtime API not available: {e}. Falling back to Whisper.")
+        REALTIME_AVAILABLE = False
+else:
+    REALTIME_AVAILABLE = False
+
 class MeetingService:
     def __init__(self):
         self.audio_capture = AudioCaptureService()
@@ -26,25 +43,47 @@ class MeetingService:
         self.current_meeting_id: Optional[str] = None
         self.capture_task: Optional[asyncio.Task] = None
         self.summary_task: Optional[asyncio.Task] = None
+        self.realtime_task: Optional[asyncio.Task] = None  # For Realtime API receiver
         self.is_running = False
         self.is_paused = False  # Pause state for privacy feature
+
+        # Realtime API service (lazy initialized)
+        self.realtime_service: Optional['RealtimeTranscriptionService'] = None
+        self.use_realtime = REALTIME_AVAILABLE and settings.USE_REALTIME_API
 
         # Buffers for AI processing
         self.transcript_buffer: List[str] = []
         self.last_summary_time = datetime.utcnow()
 
+        # Transcript batching: accumulate text until sentence boundary or timeout
+        # Simplified: single accumulator for unified transcript (no speaker separation)
+        self.transcript_accumulator: str = ""
+        self.last_broadcast_time: Optional[datetime] = None
+        self.batch_timeout_seconds = 3.0  # Max time to wait before broadcasting partial text
+
+        logger.info(f"MeetingService initialized. Realtime API: {'enabled' if self.use_realtime else 'disabled (using Whisper)'}")
+
     async def start_meeting(self, meeting_id: str):
         """
         Start the meeting processing pipeline.
+        If another meeting is running, stop it first.
         """
         if self.is_running:
-            logger.warning("Meeting already in progress")
-            return
+            if self.current_meeting_id == meeting_id:
+                logger.info(f"Meeting {meeting_id} already running, skipping start")
+                return
+            # Stop the existing meeting before starting a new one
+            logger.warning(f"Stopping existing meeting {self.current_meeting_id} to start {meeting_id}")
+            await self.stop_meeting(self.current_meeting_id)
 
         self.current_meeting_id = meeting_id
         self.is_running = True
         self.transcript_buffer = []
         self.last_summary_time = datetime.utcnow()
+
+        # Reset transcript batching state (simplified: single accumulator)
+        self.transcript_accumulator = ""
+        self.last_broadcast_time = None
         
         # Update meeting status in DB
         async with AsyncSessionLocal() as db:
@@ -146,8 +185,19 @@ class MeetingService:
     async def _processing_loop(self, meeting_id: str):
         """
         Main loop: Capture -> Transcribe -> Save -> Broadcast -> AI Triggers
+
+        Uses Realtime API if enabled, otherwise falls back to batch Whisper.
         """
-        logger.info("Starting audio processing loop")
+        logger.info(f"Starting audio processing loop (Realtime API: {self.use_realtime})")
+
+        if self.use_realtime:
+            await self._processing_loop_realtime(meeting_id)
+        else:
+            await self._processing_loop_whisper(meeting_id)
+
+    async def _processing_loop_whisper(self, meeting_id: str):
+        """Process audio using batch Whisper API (fallback)."""
+        logger.info("Using batch Whisper API for transcription")
         try:
             async for chunk in self.audio_capture.capture_audio():
                 if not self.is_running:
@@ -158,9 +208,146 @@ class MeetingService:
                 asyncio.create_task(self._handle_chunk(chunk, meeting_id))
 
         except Exception as e:
-            logger.error(f"Error in processing loop: {e}", exc_info=True)
+            logger.error(f"Error in Whisper processing loop: {e}", exc_info=True)
         finally:
-            logger.info("Audio processing loop ended")
+            logger.info("Whisper processing loop ended")
+
+    async def _processing_loop_realtime(self, meeting_id: str):
+        """Process audio using OpenAI Realtime API for low-latency transcription."""
+        logger.info(f"Starting Realtime API processing for meeting {meeting_id}")
+
+        try:
+            # Initialize Realtime API service
+            self.realtime_service = get_realtime_transcription_service()
+
+            # Connect to Realtime API
+            connected = await self.realtime_service.connect()
+            if not connected:
+                logger.warning("Failed to connect to Realtime API, falling back to Whisper")
+                self.use_realtime = False
+                await self._processing_loop_whisper(meeting_id)
+                return
+
+            logger.info("Connected to Realtime API, starting transcript receiver")
+            # Start task to receive transcripts
+            self.realtime_task = asyncio.create_task(
+                self._handle_realtime_transcripts(meeting_id)
+            )
+
+            # Send audio chunks to Realtime API
+            chunk_count = 0
+            async for chunk in self.audio_capture.capture_audio():
+                if not self.is_running:
+                    break
+
+                # Skip processing when paused (privacy feature)
+                if self.is_paused:
+                    continue
+
+                chunk_count += 1
+                if chunk_count % 100 == 1:  # Log every 100th chunk
+                    logger.debug(f"Sending audio chunk #{chunk_count}")
+
+                # Resample to 24kHz if needed
+                if chunk.sample_rate != settings.REALTIME_SAMPLE_RATE:
+                    audio_24k = resample_to_24khz(chunk.data, chunk.sample_rate)
+                else:
+                    audio_24k = chunk.data
+
+                # Send to Realtime API
+                await self.realtime_service.send_audio_numpy(audio_24k)
+
+        except Exception as e:
+            logger.error(f"Error in Realtime processing loop: {e}", exc_info=True)
+            # Attempt fallback to Whisper
+            if self.is_running:
+                logger.info("Attempting fallback to Whisper API")
+                self.use_realtime = False
+                await self._processing_loop_whisper(meeting_id)
+
+        finally:
+            # Cleanup Realtime API
+            if self.realtime_task:
+                self.realtime_task.cancel()
+                try:
+                    await self.realtime_task
+                except asyncio.CancelledError:
+                    pass
+
+            if self.realtime_service:
+                await self.realtime_service.close()
+                self.realtime_service = None
+
+            logger.info("Realtime processing loop ended")
+
+    async def _handle_realtime_transcripts(self, meeting_id: str):
+        """Handle streaming transcripts from Realtime API."""
+        logger.debug(f"Transcript handler started for meeting {meeting_id}")
+        if not self.realtime_service:
+            logger.warning("No realtime_service, exiting handler")
+            return
+
+        try:
+            async for transcript in self.realtime_service.receive_transcripts():
+                logger.debug(f"Received transcript: final={transcript.is_final}, text='{transcript.text[:30] if transcript.text else ''}...'")
+                if not self.is_running:
+                    break
+
+                if self.is_paused:
+                    continue
+
+                # Only process final transcripts (complete sentences)
+                # Realtime API with VAD provides natural sentence boundaries
+                if transcript.is_final and transcript.text.strip():
+                    await self._handle_realtime_transcript(
+                        transcript.text.strip(),
+                        transcript.timestamp,
+                        meeting_id
+                    )
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Error handling Realtime transcripts: {e}")
+
+    async def _handle_realtime_transcript(self, text: str, timestamp: float, meeting_id: str):
+        """Save and broadcast a transcript from Realtime API."""
+        try:
+            # Unified transcript - no speaker separation needed
+            # LLM orchestration focuses on content, not speaker attribution
+            speaker = "meeting"
+
+            async with AsyncSessionLocal() as db:
+                transcript = Transcript(
+                    meeting_id=meeting_id,
+                    text=text,
+                    timestamp=timestamp,
+                    speaker=speaker
+                )
+                db.add(transcript)
+                await db.commit()
+                await db.refresh(transcript)
+
+                # Update buffer for summarization
+                self.transcript_buffer.append(text)
+
+                # Broadcast transcript
+                await manager.broadcast_to_meeting({
+                    "type": "transcript",
+                    "data": {
+                        "id": str(transcript.id),
+                        "text": transcript.text,
+                        "timestamp": transcript.timestamp,
+                        "speaker": transcript.speaker,
+                        "created_at": transcript.created_at.isoformat()
+                    }
+                }, meeting_id)
+
+                # AI: Check for questions
+                asyncio.create_task(self._process_ai_suggestions(meeting_id, text, db))
+
+        except Exception as e:
+            logger.error(f"Error handling Realtime transcript: {e}")
 
     async def _summarization_loop(self, meeting_id: str):
         """
@@ -200,62 +387,105 @@ class MeetingService:
                         
                         self.last_summary_time = datetime.utcnow()
                         
-                        # Broadcast
+                        # Broadcast summary
                         await manager.broadcast_to_meeting({
                             "type": "summary_update",
                             "data": {
                                 "id": summary.id,
                                 "content": summary.content,
+                                "start_time": summary.start_time.isoformat() if summary.start_time else None,
+                                "end_time": summary.end_time.isoformat() if summary.end_time else None,
                                 "created_at": summary.created_at.isoformat()
                             }
                         }, meeting_id)
+
+                        # Broadcast token usage after each summary
+                        from app.services.token_service import token_service
+                        try:
+                            token_usage = await token_service.get_meeting_token_usage(meeting_id, db)
+                            await manager.broadcast_to_meeting({
+                                "type": "token_usage",
+                                "data": token_usage
+                            }, meeting_id)
+                        except Exception as te:
+                            logger.warning(f"Failed to broadcast token usage: {te}")
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
             logger.error(f"Error in summarization loop: {e}", exc_info=True)
 
+    def _is_sentence_end(self, text: str) -> bool:
+        """Check if text ends with a sentence-ending punctuation."""
+        text = text.rstrip()
+        return text.endswith(('.', '!', '?', '...', '."', '!"', '?"'))
+
     async def _handle_chunk(self, chunk: AudioChunk, meeting_id: str):
         """
-        Process a single audio chunk: Transcribe -> Save -> Broadcast -> Check for Questions
+        Process a single audio chunk with sentence batching.
+        Accumulates text until sentence boundary or timeout, then saves/broadcasts.
+        Simplified: unified transcript without speaker separation.
         """
         try:
             result = await self.transcription_service.transcribe_chunk(chunk)
-            
+
             if result and result.text.strip():
-                # Save to DB with speaker from audio source
-                # chunk.source is "system" (loopback/others) or "user" (mic/you)
-                speaker = getattr(chunk, 'source', 'unknown')
-                async with AsyncSessionLocal() as db:
-                    transcript = Transcript(
-                        meeting_id=meeting_id,
-                        text=result.text,
-                        timestamp=result.timestamp,
-                        speaker=speaker
-                    )
-                    db.add(transcript)
-                    await db.commit()
-                    await db.refresh(transcript)
-                    
-                    # Update buffer for summarization
-                    self.transcript_buffer.append(result.text)
-                    
-                    # Broadcast transcript
-                    await manager.broadcast_to_meeting({
-                        "type": "transcript",
-                        "data": {
-                            "id": str(transcript.id),
-                            "text": transcript.text,
-                            "timestamp": transcript.timestamp,
-                            "speaker": transcript.speaker,
-                            "created_at": transcript.created_at.isoformat()
-                        }
-                    }, meeting_id)
-                    
-                    # AI: Check for questions
-                    # We do this in background to not block
-                    asyncio.create_task(self._process_ai_suggestions(meeting_id, result.text, db))
-                    
+                # Unified speaker for all transcripts
+                speaker = "meeting"
+
+                # Accumulate text (simplified: single accumulator)
+                if self.transcript_accumulator:
+                    self.transcript_accumulator = self.transcript_accumulator + " " + result.text.strip()
+                else:
+                    self.transcript_accumulator = result.text.strip()
+
+                # Initialize last broadcast time if needed
+                now = datetime.utcnow()
+                if self.last_broadcast_time is None:
+                    self.last_broadcast_time = now
+
+                # Check if we should broadcast (sentence end or timeout)
+                time_since_last = (now - self.last_broadcast_time).total_seconds()
+
+                should_broadcast = (
+                    self._is_sentence_end(self.transcript_accumulator) or
+                    time_since_last >= self.batch_timeout_seconds
+                )
+
+                if should_broadcast and self.transcript_accumulator.strip():
+                    async with AsyncSessionLocal() as db:
+                        transcript = Transcript(
+                            meeting_id=meeting_id,
+                            text=self.transcript_accumulator.strip(),
+                            timestamp=result.timestamp,
+                            speaker=speaker
+                        )
+                        db.add(transcript)
+                        await db.commit()
+                        await db.refresh(transcript)
+
+                        # Update buffer for summarization
+                        self.transcript_buffer.append(self.transcript_accumulator.strip())
+
+                        # Broadcast transcript
+                        await manager.broadcast_to_meeting({
+                            "type": "transcript",
+                            "data": {
+                                "id": str(transcript.id),
+                                "text": transcript.text,
+                                "timestamp": transcript.timestamp,
+                                "speaker": transcript.speaker,
+                                "created_at": transcript.created_at.isoformat()
+                            }
+                        }, meeting_id)
+
+                        # AI: Check for questions on the batched text
+                        asyncio.create_task(self._process_ai_suggestions(meeting_id, self.transcript_accumulator.strip(), db))
+
+                    # Reset accumulator
+                    self.transcript_accumulator = ""
+                    self.last_broadcast_time = now
+
         except Exception as e:
             logger.error(f"Error handling chunk: {e}")
 

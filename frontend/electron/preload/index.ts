@@ -35,11 +35,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('settings:set', key, value),
 
   // Window state listeners
-  onMaximizeChange: (callback: (isMaximized: boolean) => void): void => {
+  onMaximizeChange: (callback: (isMaximized: boolean) => void): (() => void) => {
     ipcRenderer.send('window:onMaximizeChange');
-    ipcRenderer.on('window:maximized', (_event, isMaximized: boolean) => {
+    const handler = (_event: Electron.IpcRendererEvent, isMaximized: boolean) => {
       callback(isMaximized);
-    });
+    };
+    ipcRenderer.on('window:maximized', handler);
+    return () => ipcRenderer.removeListener('window:maximized', handler);
   },
 
   // Settings change listeners
@@ -106,7 +108,7 @@ export interface ElectronAPI {
   setSetting: (key: string, value: unknown) => Promise<boolean>;
 
   // Listeners
-  onMaximizeChange: (callback: (isMaximized: boolean) => void) => void;
+  onMaximizeChange: (callback: (isMaximized: boolean) => void) => () => void;
   onAlwaysOnTopChange: (callback: (value: boolean) => void) => () => void;
   onCompactModeChange: (callback: (value: boolean) => void) => () => void;
   onStartMeeting: (callback: () => void) => () => void;

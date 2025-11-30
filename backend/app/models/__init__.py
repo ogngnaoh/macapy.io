@@ -9,6 +9,8 @@ This module exports all database models used in the application:
 - ContextChunk: Chunked documents with vector embeddings for semantic search
 - Summary: AI-generated rolling meeting summaries
 - Suggestion: AI-generated contextual response suggestions
+- TokenUsage: API token consumption tracking per meeting/operation
+- UserSettings: Application preference storage
 
 All models use UUID primary keys and include created_at/updated_at timestamps.
 """
@@ -18,6 +20,8 @@ from .transcript import Transcript
 from .context import ContextDocument, ContextChunk
 from .summary import Summary
 from .suggestion import Suggestion
+from .token_usage import TokenUsage
+from .user_settings import UserSettings
 
 __all__ = [
     "Meeting",
@@ -27,4 +31,6 @@ __all__ = [
     "ContextChunk",
     "Summary",
     "Suggestion",
+    "TokenUsage",
+    "UserSettings",
 ]

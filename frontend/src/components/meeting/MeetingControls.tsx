@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useStore } from '@/store';
 import { meetingsApi } from '@/services/api';
 import { wsManager } from '@/services/websocket';
+import { RecapButton } from './RecapButton';
 
 export function MeetingControls() {
   const {
@@ -17,6 +18,7 @@ export function MeetingControls() {
     incrementDuration,
     setMeetingError,
     resetMeeting,
+    addMeetingToHistory,
     setWebSocketStatus,
   } = useStore();
 
@@ -90,14 +92,21 @@ export function MeetingControls() {
 
     try {
       setMeetingStatus('ending');
-      await meetingsApi.end(meeting.current.id);
+      const endedMeeting = await meetingsApi.end(meeting.current.id);
       wsManager.disconnect();
+
+      // Save to history BEFORE resetting state
+      addMeetingToHistory({
+        ...endedMeeting,
+        status: 'COMPLETED',
+      });
+
       resetMeeting();
     } catch (error) {
       console.error('Failed to stop meeting:', error);
       setMeetingError(error instanceof Error ? error.message : 'Failed to stop meeting');
     }
-  }, [meeting.current, setMeetingStatus, resetMeeting, setMeetingError]);
+  }, [meeting.current, setMeetingStatus, addMeetingToHistory, resetMeeting, setMeetingError]);
 
   const handlePause = useCallback(async () => {
     if (!meeting.current) return;
@@ -171,9 +180,13 @@ export function MeetingControls() {
         )}
 
         {/* Controls */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
+          {/* Recap Button (only when meeting is active) */}
+          {!isIdle && <RecapButton />}
+
           {isIdle && (
             <button
+              data-testid="meeting-start-btn"
               onClick={handleStart}
               disabled={isStarting}
               className="px-4 py-1.5 bg-text-primary text-bg-primary text-sm font-medium rounded hover:bg-text-secondary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -185,12 +198,14 @@ export function MeetingControls() {
           {isRecording && (
             <>
               <button
+                data-testid="meeting-pause-btn"
                 onClick={handlePause}
                 className="px-3 py-1.5 bg-bg-tertiary text-accent-warning text-sm font-medium rounded hover:bg-border-default transition-colors"
               >
                 Pause
               </button>
               <button
+                data-testid="meeting-stop-btn"
                 onClick={handleStop}
                 className="px-3 py-1.5 bg-accent-error/20 text-accent-error text-sm font-medium rounded hover:bg-accent-error/30 transition-colors"
               >

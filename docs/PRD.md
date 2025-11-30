@@ -1,9 +1,14 @@
 # Product Requirements Document (PRD)
 # macapy.io - Agentic Meeting Assistant
 
-**Version**: 1.0
-**Last Updated**: 2025-11-25
-**Status**: Draft - Pre-Implementation
+**Version**: 1.1
+**Last Updated**: 2025-11-28
+**Status**: Backend Implementation Complete - Frontend Integration In Progress
+
+> **Implementation Status (2025-11-28)**:
+> - Backend services: ~95% complete (all core services operational)
+> - Frontend components: ~90% complete (UI components built)
+> - E2E integration: Verified via Playwright tests
 
 ---
 
@@ -425,7 +430,7 @@ A lightweight desktop application that:
 
 ### 6.4 Audio Requirements
 
-- Virtual audio device: VB-CABLE (Windows), BlackHole (macOS)
+- System audio capture: ScreenCaptureKit (macOS 12.3+), WASAPI Loopback (Windows)
 - Sample rate: 16kHz (Whisper optimal)
 - Channels: Mono
 - Format: 16-bit PCM
@@ -437,7 +442,7 @@ A lightweight desktop application that:
 ### 7.1 Assumptions
 
 1. User has stable internet connection for API calls
-2. User has installed virtual audio device for system audio capture
+2. User has granted Screen Recording permission (macOS) for system audio capture
 3. OpenAI API remains available and pricing stable
 4. GPT-5 nano model ID and capabilities as specified
 
@@ -449,7 +454,8 @@ A lightweight desktop application that:
 | Database | PostgreSQL + pgvector | Low |
 | Transcription | OpenAI Whisper API | Medium |
 | Reasoning | GPT-5 nano | Medium |
-| Audio | pyaudiowpatch / VB-CABLE | Medium |
+| Audio (Windows) | pyaudiowpatch / WASAPI | Low |
+| Audio (macOS) | ScreenCaptureKit (macOS 12.3+) | Low |
 
 ### 7.3 Risks and Mitigations
 

@@ -1,11 +1,12 @@
 """
 Audio Capture Service for macapy.io
 
-Captures system audio from virtual audio devices (VB-CABLE on Windows)
-and provides real-time audio chunks for transcription.
+Captures system audio using native platform APIs:
+- Windows: pyaudiowpatch with WASAPI loopback
+- macOS: ScreenCaptureKit (macOS 12.3+)
 
 Architecture:
-- Async audio capture using pyaudiowpatch (Windows) or sounddevice (cross-platform)
+- Async audio capture using platform-native APIs
 - Buffers audio into configurable chunks (default: 1 second)
 - Monitors audio levels for UI feedback
 - Handles device errors and reconnection
@@ -23,28 +24,35 @@ Usage:
 import asyncio
 import logging
 import platform
-import struct
-from typing import AsyncGenerator, Optional, Dict, List
+from typing import AsyncGenerator, Optional, List, TYPE_CHECKING
 from dataclasses import dataclass
 from enum import Enum
 
 import numpy as np
 from scipy import signal
 
+from app.config import settings
+
 # Import platform-specific audio library
 SYSTEM = platform.system()
+
 if SYSTEM == "Windows":
     try:
         import pyaudiowpatch as pyaudio
         AUDIO_BACKEND = "pyaudiowpatch"
     except ImportError:
-        import sounddevice as sd
-        AUDIO_BACKEND = "sounddevice"
+        raise ImportError(
+            "pyaudiowpatch is required for Windows audio capture. "
+            "Install with: pip install pyaudiowpatch"
+        )
+elif SYSTEM == "Darwin":
+    # macOS - use ScreenCaptureKit
+    AUDIO_BACKEND = "screencapturekit"
 else:
-    import sounddevice as sd
-    AUDIO_BACKEND = "sounddevice"
-
-from app.config import settings
+    raise RuntimeError(
+        f"Unsupported platform: {SYSTEM}. "
+        "macapy.io supports Windows and macOS only."
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +92,11 @@ class AudioChunk:
 
 class AudioCaptureService:
     """
-    Service for capturing system audio from virtual audio devices.
+    Service for capturing system audio using native platform APIs.
+
+    Supported platforms:
+    - Windows: pyaudiowpatch with WASAPI loopback
+    - macOS: ScreenCaptureKit (macOS 12.3+)
 
     This service handles:
     - Device detection and selection
@@ -130,8 +142,8 @@ class AudioCaptureService:
         self._stream = None
 
         # Audio buffer (thread-safe queue)
-        self._buffer = asyncio.Queue(maxsize=10)  # Buffer up to 10 chunks
-        self._mic_buffer = asyncio.Queue(maxsize=10)  # Buffer for microphone audio
+        self._buffer = asyncio.Queue(maxsize=100)  # Buffer up to 100 chunks
+        self._mic_buffer = asyncio.Queue(maxsize=100)  # Buffer for microphone audio
 
         logger.info(
             f"AudioCaptureService initialized with backend: {AUDIO_BACKEND}, "
@@ -217,39 +229,45 @@ class AudioCaptureService:
                 devices.append(device)
 
         else:
-            # Use sounddevice for macOS/Linux
-            sd_devices = sd.query_devices()
+            # macOS - use ScreenCaptureKit
+            from app.services.audio_capture_macos import ScreenCaptureKitAudioCapture
 
-            for i, device_info in enumerate(sd_devices):
-                if device_info['max_input_channels'] > 0:
-                    # Check if this is a loopback/virtual device
-                    is_loopback = (
-                        'blackhole' in device_info['name'].lower() or
-                        'loopback' in device_info['name'].lower()
-                    )
+            if not ScreenCaptureKitAudioCapture.is_available():
+                logger.error(
+                    "ScreenCaptureKit not available. Requires macOS 12.3 or later."
+                )
+                return devices
 
-                    device = AudioDeviceInfo(
-                        index=i,
-                        name=device_info['name'],
-                        channels=device_info['max_input_channels'],
-                        sample_rate=int(device_info['default_samplerate']),
-                        is_loopback=is_loopback,
-                        is_default=(i == sd.default.device[0])
-                    )
-                    devices.append(device)
+            sck_service = ScreenCaptureKitAudioCapture()
+            sck_devices = await sck_service.list_audio_devices()
+
+            for dev in sck_devices:
+                device = AudioDeviceInfo(
+                    index=dev.get("index", -1),
+                    name=dev.get("name", "Unknown"),
+                    channels=2,  # ScreenCaptureKit typically provides stereo
+                    sample_rate=self.sample_rate,
+                    is_loopback=dev.get("is_loopback", False),
+                    is_default=dev.get("is_default", False)
+                )
+                devices.append(device)
 
         logger.info(f"Found {len(devices)} audio input devices")
 
-        # Log virtual audio devices (important for setup verification)
+        # Log system audio capability
         loopback_devices = [d for d in devices if d.is_loopback]
         if loopback_devices:
-            logger.info(f"Found {len(loopback_devices)} virtual audio device(s): "
-                       f"{[d.name for d in loopback_devices]}")
+            logger.info(f"System audio capture available: {[d.name for d in loopback_devices]}")
         else:
-            logger.warning(
-                "No virtual audio devices found! Please install VB-CABLE (Windows) "
-                "or BlackHole (macOS) to capture system audio."
-            )
+            if SYSTEM == "Darwin":
+                logger.warning(
+                    "System audio capture not available. "
+                    "Requires macOS 12.3+ and Screen Recording permission."
+                )
+            else:
+                logger.warning(
+                    "No WASAPI loopback device found for system audio capture."
+                )
 
         return devices
 
@@ -314,12 +332,16 @@ class AudioCaptureService:
             if AUDIO_BACKEND == "pyaudiowpatch":
                 async for chunk in self._capture_with_pyaudio_dual(device_index, mic_device_index):
                     yield chunk
-            else:
-                # Fallback for non-Windows (sounddevice) - currently only supports single stream or simple mixing
-                # For now, we'll just use the primary device if available, or mic if not
-                target_idx = device_index if device_index is not None else mic_device_index
-                async for chunk in self._capture_with_sounddevice(target_idx):
+            elif AUDIO_BACKEND == "screencapturekit":
+                # macOS - use ScreenCaptureKit
+                # device_index == -1 means system audio via ScreenCaptureKit
+                async for chunk in self._capture_with_screencapturekit(
+                    capture_system=(device_index is not None),
+                    capture_mic=(mic_device_index is not None)
+                ):
                     yield chunk
+            else:
+                raise RuntimeError(f"Unknown audio backend: {AUDIO_BACKEND}")
 
         except Exception as e:
             logger.error(f"Audio capture error: {e}", exc_info=True)
@@ -362,15 +384,31 @@ class AudioCaptureService:
 
     async def _auto_select_loopback_device(self) -> Optional[int]:
         """
-        Automatically select the best loopback/virtual audio device.
+        Automatically select the best loopback/system audio device.
 
         On Windows with pyaudiowpatch, this will select the WASAPI loopback
         device for the default output device, allowing capture of system audio
         without needing VB-CABLE or changing system audio settings.
 
+        On macOS with ScreenCaptureKit, returns -1 to indicate native system
+        audio capture (no device index needed).
+
         Returns:
-            Device index or None if no suitable device found
+            Device index, -1 for ScreenCaptureKit system audio, or None if unavailable
         """
+        if AUDIO_BACKEND == "screencapturekit":
+            # macOS - ScreenCaptureKit uses -1 as virtual index for system audio
+            from app.services.audio_capture_macos import ScreenCaptureKitAudioCapture
+            if ScreenCaptureKitAudioCapture.is_available():
+                logger.info("Auto-selected ScreenCaptureKit for system audio capture")
+                return -1  # Virtual index for system audio
+            else:
+                logger.warning(
+                    "ScreenCaptureKit not available. "
+                    "Requires macOS 12.3+ and Screen Recording permission."
+                )
+                return None
+
         if AUDIO_BACKEND == "pyaudiowpatch":
             # Use WASAPI loopback to capture from default output device
             if self._pyaudio_instance is None:
@@ -407,7 +445,7 @@ class AudioCaptureService:
             logger.info(f"Auto-selected loopback device: {first_loopback.name}")
             return first_loopback.index
 
-        logger.warning("No loopback/virtual audio device found for auto-selection")
+        logger.warning("No system audio capture device found for auto-selection")
         return None
 
     async def _capture_with_pyaudio_dual(
@@ -588,86 +626,88 @@ class AudioCaptureService:
             try:
                 data = await loop.run_in_executor(None, stream.read, chunk_size, False)
                 if self.status != CaptureStatus.CAPTURING: break
-                
+
                 # Put in queue, remove old if full to keep latency low
                 if queue.full():
                     try: queue.get_nowait()
                     except asyncio.QueueEmpty: pass
-                
+
                 await queue.put(data)
             except Exception as e:
                 if self.status == CaptureStatus.CAPTURING:
                     logger.warning(f"Stream {name} read error: {e}")
                     await asyncio.sleep(1.0) # Backoff
 
-    async def _capture_with_sounddevice(self, device_index: int) -> AsyncGenerator[AudioChunk, None]:
+    async def _capture_with_screencapturekit(
+        self,
+        capture_system: bool = True,
+        capture_mic: bool = True
+    ) -> AsyncGenerator[AudioChunk, None]:
         """
-        Capture audio using sounddevice (macOS/Linux backend).
+        Capture audio using ScreenCaptureKit (macOS 12.3+).
 
-        Uses callback-based capture with an async queue.
+        Uses native macOS APIs for system audio and microphone capture.
+        No external virtual audio devices required.
+
+        Args:
+            capture_system: Whether to capture system audio
+            capture_mic: Whether to capture microphone audio
+
+        Yields:
+            AudioChunk with source="system" or source="user"
         """
-        # Audio callback function
-        def audio_callback(indata, frames, time_info, status):
-            if status:
-                logger.warning(f"Audio callback status: {status}")
+        from app.services.audio_capture_macos import ScreenCaptureKitAudioCapture
 
-            # Copy audio data to avoid buffer reuse issues
-            audio_data = indata.copy().flatten()
+        if not ScreenCaptureKitAudioCapture.is_available():
+            raise RuntimeError(
+                "ScreenCaptureKit not available. "
+                "Requires macOS 12.3 or later with Screen Recording permission."
+            )
 
-            # Put in queue (non-blocking)
-            try:
-                self._buffer.put_nowait(audio_data)
-            except asyncio.QueueFull:
-                logger.warning("Audio buffer full - dropping chunk")
-
-        # Open audio stream with callback
-        stream = sd.InputStream(
-            device=device_index,
+        # Create ScreenCaptureKit service with matching settings
+        sck_service = ScreenCaptureKitAudioCapture(
+            sample_rate=self.sample_rate,
             channels=self.channels,
-            samplerate=self.sample_rate,
-            blocksize=self.chunk_size,
-            dtype=np.float32,
-            callback=audio_callback
+            chunk_duration=self.chunk_duration
+        )
+
+        self.status = CaptureStatus.CAPTURING
+        logger.info(
+            f"Starting ScreenCaptureKit capture: system={capture_system}, mic={capture_mic}"
         )
 
         try:
-            stream.start()
-            logger.info(f"Audio stream started: {self.sample_rate}Hz, {self.channels}ch")
-            self.status = CaptureStatus.CAPTURING
+            async for chunk in sck_service.capture_audio(
+                capture_system=capture_system,
+                capture_mic=capture_mic
+            ):
+                # Update audio level tracking
+                self.current_audio_level = max(self.current_audio_level, chunk.audio_level)
+                self.total_chunks_captured += 1
 
-            # Yield chunks from queue
-            while self.status == CaptureStatus.CAPTURING:
-                try:
-                    # Wait for audio data with timeout
-                    audio_data = await asyncio.wait_for(
-                        self._buffer.get(),
-                        timeout=5.0
-                    )
+                # Convert to our AudioChunk type (they're compatible but different classes)
+                yield AudioChunk(
+                    data=chunk.data,
+                    timestamp=chunk.timestamp,
+                    duration=chunk.duration,
+                    sample_rate=chunk.sample_rate,
+                    channels=chunk.channels,
+                    audio_level=chunk.audio_level,
+                    source=chunk.source
+                )
 
-                    # Calculate audio level
-                    audio_level = self._calculate_audio_level(audio_data)
-                    self.current_audio_level = audio_level
+                # Check if we should stop
+                if self.status != CaptureStatus.CAPTURING:
+                    break
 
-                    # Create audio chunk
-                    chunk = AudioChunk(
-                        data=audio_data,
-                        timestamp=asyncio.get_event_loop().time(),
-                        duration=self.chunk_duration,
-                        sample_rate=self.sample_rate,
-                        channels=self.channels,
-                        audio_level=audio_level
-                    )
-
-                    self.total_chunks_captured += 1
-                    yield chunk
-
-                except asyncio.TimeoutError:
-                    logger.debug("No audio data received (timeout)")
-                    continue
-
+        except Exception as e:
+            logger.error(f"ScreenCaptureKit capture error: {e}")
+            raise
         finally:
-            stream.stop()
-            stream.close()
+            self.status = CaptureStatus.STOPPED
+            # sck_service.capture_audio handles stopping in its finally block
+            # await sck_service.stop_capture()
+            logger.info("ScreenCaptureKit capture stopped")
 
     def _resample_audio(
         self,

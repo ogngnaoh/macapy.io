@@ -11,14 +11,16 @@ consistent data structures across the application.
 """
 
 from .meeting import Meeting, MeetingCreate, MeetingUpdate
-# TODO: Uncomment when implemented
-# from .transcript import Transcript, TranscriptCreate
-# from .document import Document, DocumentCreate, DocumentUpload
+from .transcript import Transcript, TranscriptCreate, TranscriptUpdate
+from .document import DocumentBase, DocumentResponse
 
 __all__ = [
     "Meeting",
     "MeetingCreate",
     "MeetingUpdate",
-    # "Transcript", "TranscriptCreate",
-    # "Document", "DocumentCreate", "DocumentUpload",
+    "Transcript",
+    "TranscriptCreate",
+    "TranscriptUpdate",
+    "DocumentBase",
+    "DocumentResponse",
 ]

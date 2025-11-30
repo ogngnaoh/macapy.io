@@ -79,8 +79,8 @@ async def list_audio_devices():
     Returns device information including virtual audio devices (loopback devices)
     that can capture system audio.
 
-    **For Windows users**: Look for "CABLE Output" device (from VB-CABLE).
-    **For macOS users**: Look for "BlackHole" device.
+    **For Windows users**: WASAPI loopback devices capture system audio directly.
+    **For macOS users**: System Audio via ScreenCaptureKit (requires Screen Recording permission).
     """
     try:
         devices = await audio_service.list_audio_devices()
@@ -175,7 +175,7 @@ async def start_audio_capture(request: StartCaptureRequest, background_tasks: Ba
             if not loopback_devices:
                 raise HTTPException(
                     status_code=404,
-                    detail="No virtual audio device found. Please install VB-CABLE (Windows) or BlackHole (macOS)."
+                    detail="System audio capture not available. On macOS, grant Screen Recording permission in System Settings."
                 )
             device = loopback_devices[0]
         else:

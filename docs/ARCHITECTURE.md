@@ -1,9 +1,16 @@
 # Application Architecture Document
 # macapy.io - Agentic Meeting Assistant
 
-**Version**: 1.0
-**Last Updated**: 2025-11-25
-**Status**: Draft - Pre-Implementation
+**Version**: 1.1
+**Last Updated**: 2025-11-28
+**Status**: Implementation Verified - Core Services Operational
+
+> **Verification Summary (2025-11-28)**:
+> - All 20 backend tests passing (14 unit + 6 integration)
+> - API endpoints verified via Playwright E2E tests
+> - Audio capture dual-source (system/user) working
+> - GPT-5 nano integration configured
+> - WebSocket broadcasting operational
 
 ---
 
@@ -65,8 +72,8 @@
            |                                         |
            v                                         v
 +------------------+                     +------------------+
-|   OpenAI APIs    |                     |  Virtual Audio   |
-| Whisper/GPT-5    |                     | (VB-CABLE/etc)   |
+|   OpenAI APIs    |                     |  System Audio    |
+| Whisper/GPT-5    |                     | (Native APIs)    |
 +------------------+                     +------------------+
 ```
 

@@ -25,3 +25,4 @@ class Meeting(Base):
     documents = relationship("ContextDocument", back_populates="meeting", cascade="all, delete-orphan")
     summaries = relationship("Summary", back_populates="meeting", cascade="all, delete-orphan")
     suggestions = relationship("Suggestion", back_populates="meeting", cascade="all, delete-orphan")
+    token_usages = relationship("TokenUsage", back_populates="meeting", cascade="all, delete-orphan")

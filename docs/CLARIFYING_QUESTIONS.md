@@ -1,9 +1,9 @@
 # Clarifying Questions
 # macapy.io - Pre-Implementation Decisions
 
-**Version**: 1.0
-**Last Updated**: 2025-11-25
-**Status**: Awaiting User Input
+**Version**: 1.1
+**Last Updated**: 2025-11-28
+**Status**: Implementation Complete - Some Decisions Documented Below
 
 ---
 
@@ -30,7 +30,7 @@ Please review each question and provide your decision. These answers will direct
 - 60s: ~$0.01/hour
 - 90s: ~$0.007/hour
 
-**Your Answer**: _______________
+**Your Answer**: **A) 30 seconds** - Implemented in backend/app/config.py as SUMMARY_INTERVAL=30
 
 ---
 
@@ -68,7 +68,7 @@ Please review each question and provide your decision. These answers will direct
 - Separate: Clearer attribution, more complex UI
 - User choice: Flexibility, potential confusion
 
-**Your Answer**: _______________
+**Your Answer**: **B) Separate streams with visual distinction** - Implemented with dual AudioChunk sources ("system" / "user") in audio_capture.py. Frontend displays two-column transcript.
 
 ---
 
@@ -90,7 +90,7 @@ Please review each question and provide your decision. These answers will direct
 - User queries need guaranteed context space
 - Document context valuable for interview scenarios
 
-**Your Answer**: _______________
+**Your Answer**: **A) Dynamic allocation** - Implemented with build_context_within_limit() in llm_service.py. Context aggregation prioritizes summaries, then recent transcripts (30-min rolling window), then document chunks.
 
 ---
 
@@ -338,11 +338,11 @@ Please review each question and provide your decision. These answers will direct
 - C) Cross-platform from start (Windows + macOS)
 
 **Considerations**:
-- Windows only: Faster development, VB-CABLE well-supported
-- macOS: BlackHole support, different audio APIs
+- Windows only: Faster development, WASAPI well-supported
+- macOS: Native ScreenCaptureKit API (macOS 12.3+)
 - Cross-platform: More testing, broader reach
 
-**Your Answer**: _______________
+**Your Answer**: **C) Cross-platform from start** - Both Windows (pyaudiowpatch/WASAPI) and macOS (ScreenCaptureKit) backends implemented in audio_capture.py. No external virtual audio devices required.
 
 ---
 
@@ -401,7 +401,7 @@ Please review each question and provide your decision. These answers will direct
 - Developer key: Simpler UX, cost management challenge
 - Subscription: Predictable revenue, backend complexity
 
-**Your Answer**: _______________
+**Your Answer**: **A) User provides their own API key** - Stored in .env file as OPENAI_API_KEY. Token usage tracked via token_service.py with warnings at 80%/95% of context window.
 
 ---
 

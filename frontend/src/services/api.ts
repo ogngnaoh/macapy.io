@@ -161,12 +161,117 @@ export interface Suggestion {
   created_at: string;
 }
 
+export interface TokenUsage {
+  current_tokens: number;
+  max_tokens: number;
+  percentage: number;
+  breakdown: {
+    transcripts: number;
+    summaries: number;
+  };
+  warning: boolean;
+  danger: boolean;
+}
+
+export interface RecapResponse {
+  recap: string;
+  tokens_used: number;
+  transcript_count: number;
+  time_range: {
+    start: string | null;
+    end: string | null;
+  } | null;
+}
+
+export interface SummaryGenerateResponse {
+  message: string;
+  summary: Summary | null;
+}
+
 export const aiApi = {
   getSummaries: (meetingId: string): Promise<Summary[]> =>
     request(`/api/ai/meetings/${meetingId}/summaries`),
 
   getSuggestions: (meetingId: string): Promise<Suggestion[]> =>
     request(`/api/ai/meetings/${meetingId}/suggestions`),
+
+  // Get token usage for a meeting
+  getTokenUsage: (meetingId: string): Promise<TokenUsage> =>
+    request(`/api/ai/meetings/${meetingId}/tokens`),
+
+  // Get 30-second recap
+  getRecap: (meetingId: string, durationSeconds: number = 30): Promise<RecapResponse> =>
+    request('/api/ai/recap', {
+      method: 'POST',
+      body: JSON.stringify({
+        meeting_id: meetingId,
+        duration_seconds: durationSeconds,
+      }),
+    }),
+
+  // Trigger manual summary generation
+  generateSummary: (meetingId: string): Promise<SummaryGenerateResponse> =>
+    request(`/api/ai/meetings/${meetingId}/summaries/generate`, {
+      method: 'POST',
+    }),
+
+  // Stream AI query response
+  streamQuery: async function* (
+    meetingId: string,
+    question: string,
+    includeDocuments: boolean = true
+  ): AsyncGenerator<string, void, unknown> {
+    const response = await fetch(`${API_BASE}/api/ai/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        meeting_id: meetingId,
+        question,
+        include_documents: includeDocuments,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, 'Query failed');
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error('No response body');
+
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || '';
+
+      for (const line of lines) {
+        if (line.startsWith('data: ')) {
+          const data = line.slice(6);
+          if (data === '[DONE]') return;
+          try {
+            const parsed = JSON.parse(data);
+            if (parsed.content) yield parsed.content;
+            if (parsed.error) {
+              const errorMessage = typeof parsed.error === 'string'
+                ? parsed.error
+                : parsed.error.message || 'Query failed';
+              throw new Error(errorMessage);
+            }
+          } catch (e) {
+            // Re-throw API errors, skip malformed JSON
+            if (e instanceof Error && e.message !== 'Unexpected end of JSON input') {
+              throw e;
+            }
+          }
+        }
+      }
+    }
+  },
 };
 
 // =============================================================================
