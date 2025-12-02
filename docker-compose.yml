@@ -1,0 +1,76 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database with pgvector
+  db:
+    image: ankane/pgvector:latest
+    container_name: macapy_db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-macapy_db}
+      POSTGRES_USER: ${POSTGRES_USER:-macapy_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-macapy_password}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U macapy_user -d macapy_db" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - macapy_network
+
+  # FastAPI Backend
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: macapy_backend
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-macapy_user}:${POSTGRES_PASSWORD:-macapy_password}@db:5432/${POSTGRES_DB:-macapy_db}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      SECRET_KEY: ${SECRET_KEY}
+      DEBUG: ${DEBUG:-false}
+      BACKEND_HOST: 0.0.0.0
+      BACKEND_PORT: 8000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - backend_uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - macapy_network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: macapy_frontend
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - macapy_network
+    command: npm run dev -- --host 0.0.0.0
+
+volumes:
+  postgres_data:
+    driver: local
+  backend_uploads:
+    driver: local
+
+networks:
+  macapy_network:
+    driver: bridge

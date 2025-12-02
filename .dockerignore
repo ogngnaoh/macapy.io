@@ -1,0 +1,59 @@
+# Version control
+.git
+.gitignore
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Python
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info
+dist
+build
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+.tox
+.mypy_cache
+
+# Node
+node_modules
+npm-debug.log
+yarn-error.log
+
+# IDEs
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Logs
+*.log
+logs/
+
+# Documentation (optional - include if you want docs in image)
+reference/
+docs/
+
+# Backend specific
+backend/alembic/versions/*.pyc
+backend/uploads/
+backend/scripts/
