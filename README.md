@@ -6,7 +6,7 @@
 ![Status](https://img.shields.io/badge/status-v1.0-success.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-lightgrey.svg)
 
-**macapy.io** is a Electron-based desktop application designed to transform how you experience online meetings. By leveraging **OpenAI Whisper** for real-time transcription and **GPT-5 nano** for intelligent reasoning, it acts as your personal cognitive augmentation layer—providing live summaries, detecting questions, and suggesting context-aware responses in real-time.
+**macapy.io** is an Electron-based desktop application designed to transform how you experience online meetings. By leveraging **OpenAI Whisper** for real-time transcription and **GPT-5 nano** for intelligent reasoning, it acts as your personal cognitive augmentation layer—providing live summaries, detecting questions, and suggesting context-aware responses in real-time.
 
 ---
 
