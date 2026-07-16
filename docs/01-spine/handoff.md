@@ -2,19 +2,19 @@
 
 ## Start here next session
 
-Run the slice-2 planning-then-implementation session: mic capture (AVAudioEngine, 16kHz) → SpeechAnalyzer → live transcript in the panel (volatile grey / final solid). Read SPEC §6.3–6.4 (STTEngine protocol, TranscriptEvent, live-transcript flow) and slice-01's doc for conventions. Write the slice-2 working doc with acceptance checks before code, get user review, then implement. First technical step: validate SpeechAnalyzer's real API surface against the macOS 26 SDK — our docs describe intent, not verified signatures.
+Slices 2–5 are planned end-to-end: four slice docs with pre-written acceptance checks exist (slice-02…slice-05 in this folder), **awaiting the user's front-loaded review** — that review is the gate before any code. If the review has happened, start slice 2 with its de-risk spike (fixture wav → real SpeechAnalyzer under `swift test`, check 1 in slice-02 doc). Execution model: per slice, builder subagent (TDD, inherit model for 2–3 / sonnet for 4–5) → critic pass (2–3 only) → independent verifier re-runs machine checks → user-walked live checks → ship ritual. Orchestrator owns docs and commits.
 
 ## Current state
 
-- Slice 1 (app skeleton) **shipped 2026-07-16**, all 6 acceptance checks verified (see docs/01-spine/slice-01-app-skeleton.md): tests red→green across commits 2dc5dbf→HEAD, xcodebuild clean on Xcode 26.6, live checks walked by the user, 0 network connections.
-- Working skeleton: menu bar accessory app, ⌥⌘M toggles a non-activating floating panel, dynamic activation policy for history/settings windows. `SessionController` (idle ⇄ capturing) is the seam slice 2 hooks the pipeline into; `AppShellCoordinator.syncPanel()` is where start/stop side effects live.
-- Build: `xcodebuild -project macapy.xcodeproj -scheme macapy build`; tests: `swift test`. Requires Xcode 26 selected (`xcode-select -p` → /Applications/Xcode.app).
-- Root CLAUDE.md regenerated with commands/stack/structure (no longer the interim pointer).
+- Slice 1 shipped 2026-07-16, all checks verified (slice-01 doc). Skeleton: menu bar accessory, ⌥⌘M non-activating panel, `SessionController` (idle ⇄ capturing), `AppShellCoordinator.syncPanel()` is the start/stop funnel.
+- Planning session (2026-07-16): SpeechAnalyzer + process-tap APIs **validated against SDK 26.5** (Xcode 26.6) — key signatures and gotchas recorded in slice-02/03 docs; SPEC §6 amendment candidates listed in milestone Integration notes (query format not 16kHz; STTEngine prepare/preferredInputFormat; String+TimeInterval events; @MainActor store).
+- Slice docs 2–5 written in slice-01 format, acceptance checks numbered and split machine-verifiable vs user-live. Not yet user-reviewed.
+- Build: `xcodebuild -project macapy.xcodeproj -scheme macapy build`; tests: `swift test`; Xcode 26 selected.
 
 ## Open concerns
 
-- SpeechAnalyzer accuracy + exact API shape unvalidated — slice 2 is the proof point; STTEngine protocol is the escape hatch (SPEC N1).
-- Mic TCC prompt UX: ad-hoc-signed debug builds may re-prompt after rebuilds; watch for it in slice 2, relevant to slice-3 process-tap TCC too.
-- Panel is fixed-size/fixed-position functional-minimal; frontend design session still pending (fine per milestone non-goals).
-- swift-log dropped in favor of os.Logger; sandbox decision deferred to slice 3 — both flagged as SPEC amendments to make when convenient.
-- 7 NEEDS-CLARIFICATION markers in PRD/SPEC stand (locale, calendar sources, dual-meeting audio, SQLCipher) — none block M1.
+- SpeechAnalyzer **accuracy** still unproven (API shape is validated; quality is not) — slice 2 spike + live checks are the proof point; STTEngine protocol is the escape hatch.
+- Unknown: whether the real engine runs under `swift test` (asset download; possible TCC on SPM test processes). Spike fails loudly and rescopes to `swift run`/user-live if blocked.
+- Speech-model asset install needs network once — zero-network check must run after it.
+- Mic TCC re-prompts on ad-hoc-signed rebuilds (slice 2); process-tap TCC key name to verify hands-on (slice 3); sandbox decision planned → unsandboxed, confirm hands-on in slice 3.
+- 7 NEEDS-CLARIFICATION markers in PRD/SPEC stand — none block M1.

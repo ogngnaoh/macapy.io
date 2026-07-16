@@ -30,10 +30,10 @@ Ship the fastest fully-local live meeting transcriber on macOS — the author ca
 | # | Slice (end-to-end, independently shippable) | Status |
 |---|---|---|
 | 1 | App skeleton: SPM targets, menu bar item, empty floating panel, start/stop state machine ([plan/record](./slice-01-app-skeleton.md)) | shipped 2026-07-16 |
-| 2 | Mic → SpeechAnalyzer → live transcript rendering in panel (volatile/final) | active |
-| 3 | System-audio process tap → dual-stream transcription → you/them labels | pending |
-| 4 | GRDB persistence + meeting lifecycle + ephemeral mode + pause hotkey + minimal history list | pending |
-| 5 | Latency instrumentation, diagnostics basics, fixture-playback test harness proving G1 | pending |
+| 2 | Mic → SpeechAnalyzer → live transcript rendering in panel (volatile/final) ([plan/record](./slice-02-mic-live-transcript.md)) | active |
+| 3 | System-audio process tap → dual-stream transcription → you/them labels ([plan/record](./slice-03-system-audio-tap.md)) | pending |
+| 4 | GRDB persistence + meeting lifecycle + ephemeral mode + pause hotkey + minimal history list ([plan/record](./slice-04-persistence.md)) | pending |
+| 5 | Latency instrumentation, diagnostics basics, fixture-playback test harness proving G1 ([plan/record](./slice-05-latency-harness.md)) | pending |
 
 ## Integration notes
 
@@ -41,6 +41,7 @@ Ship the fastest fully-local live meeting transcriber on macOS — the author ca
 
 - 2026-07-16: Milestone derived from approved SPEC; no code exists yet. v0 (Electron/FastAPI) still occupies the repo pending archival decision.
 - 2026-07-16 (slice 1): Hand-authored thin pbxproj + root-level local SPM package ref (".") works on Xcode 26.6 — no project generator needed. Decisions: accessory app w/ dynamic activation policy; Carbon RegisterEventHotKey (no Accessibility TCC); no swift-log (os.Logger suffices — SPEC §5 amendment candidate); sandbox decision deferred to slice 3; panel has no close button (visibility stays in lockstep with session state). Gotchas hit: NSPanel `hidesOnDeactivate` defaults true; Swift 6.3 forbids @MainActor storage access from nonisolated deinit (→ `nonisolated(unsafe)` for Carbon refs).
+- 2026-07-16 (slices 2–5 planning): SpeechAnalyzer API **validated against SDK 26.5** — actor-based, fed via `AsyncSequence<AnalyzerInput>`, volatile results opt-in (`ReportingOption.volatileResults`), `result.isFinal`, `AssetInventory` model install; process-tap API (`CATapDescription`, `AudioHardwareCreateProcessTap`) confirmed present. SPEC §6 amendment candidates from this: (1) audio format must be *queried* via `bestAvailableAudioFormat` — the fixed-16kHz assumption is wrong, conversion step needed; (2) `STTEngine` gains `prepare()`/`preferredInputFormat()`; (3) `TranscriptEvent` carries plain `String` + `TimeInterval` (matches schema v1); (4) `TranscriptStore` as `@MainActor @Observable` rather than plain actor in M1. Also: the zero-network exit check (criterion 4) must be sequenced **after** the one-time speech-model asset install, which needs network once. Execution model: front-loaded slice docs 2–5 with a single user review gate; per slice, builder subagent (TDD) → critic pass (slices 2–3 only) → independent verifier subagent re-runs machine checks → user-walked live checks; orchestrator owns docs and commits; handoff rewritten at every role boundary.
 
 ## Exit criteria
 
