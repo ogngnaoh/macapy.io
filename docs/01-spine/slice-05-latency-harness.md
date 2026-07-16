@@ -1,7 +1,7 @@
 # Slice 5 — Latency Instrumentation, Fixture-Playback Harness (G1), Diagnostics Basics
 
 **Status:** pending
-**Plan approved:** pending user review (front-loaded batch for slices 2–5, 2026-07-16)
+**Plan approved:** 2026-07-16 (front-loaded batch review of slices 2–5; acceptance checks reviewed before implementation)
 **References:** ../../SPEC.md §3 (G1), §8 (observability), §10, ./milestone.md
 
 The plan for this slice is also its record (working-doc convention). Checklist below is current state.
@@ -52,7 +52,7 @@ public actor FixturePlaybackSource: AudioCaptureSource {
 }
 ```
 
-## Acceptance checks (written before implementation; user review pending)
+## Acceptance checks (written before implementation; user-reviewed 2026-07-16)
 
 Machine-verifiable:
 
@@ -68,7 +68,7 @@ User-live:
 
 ## Checklist
 
-- [ ] Acceptance checks user-reviewed (front-loaded batch gate)
+- [x] Acceptance checks user-reviewed 2026-07-16 (front-loaded batch gate)
 - [ ] Builder: LatencyRecorder (+ math tests red→green)
 - [ ] Builder: FixturePlaybackSource (+ pacing test red→green)
 - [ ] Builder: harness lib + executable target + JSON output

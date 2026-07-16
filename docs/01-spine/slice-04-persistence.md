@@ -1,7 +1,7 @@
 # Slice 4 — GRDB Persistence, Meeting Lifecycle, Ephemeral Mode, Pause Hotkey, History List
 
 **Status:** pending
-**Plan approved:** pending user review (front-loaded batch for slices 2–5, 2026-07-16)
+**Plan approved:** 2026-07-16 (front-loaded batch review of slices 2–5; acceptance checks reviewed before implementation)
 **References:** ../../SPEC.md §6.2, ./milestone.md, ./slice-02-mic-live-transcript.md
 
 The plan for this slice is also its record (working-doc convention). Checklist below is current state.
@@ -69,7 +69,7 @@ public actor SegmentWriter {
 }
 ```
 
-## Acceptance checks (written before implementation; user review pending)
+## Acceptance checks (written before implementation; user-reviewed 2026-07-16)
 
 Machine-verifiable:
 
@@ -89,7 +89,7 @@ User-live:
 
 ## Checklist
 
-- [ ] Acceptance checks user-reviewed (front-loaded batch gate)
+- [x] Acceptance checks user-reviewed 2026-07-16 (front-loaded batch gate)
 - [ ] Builder: GRDB dep + MacapyDatabase + migration v1 (tests red→green)
 - [ ] Builder: MeetingStore + cascade delete (tests red→green)
 - [ ] Builder: SegmentWriter batching (tests red→green)

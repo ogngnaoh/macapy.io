@@ -1,7 +1,7 @@
 # Slice 2 — Mic → SpeechAnalyzer → Live Transcript
 
 **Status:** active
-**Plan approved:** pending user review (front-loaded batch for slices 2–5, 2026-07-16)
+**Plan approved:** 2026-07-16 (front-loaded batch review of slices 2–5; acceptance checks reviewed before implementation)
 **References:** ../../SPEC.md §6.1, §6.3–6.4, ./milestone.md, ./slice-01-app-skeleton.md
 
 The plan for this slice is also its record (working-doc convention). Checklist below is current state.
@@ -122,7 +122,7 @@ final class MeetingPipeline {
 
 Data flow: mic tap (native format) → `BufferConverter` → `AsyncStream<AudioChunk>` → `SpeechAnalyzerEngine` → `AsyncThrowingStream<TranscriptEvent>` → pipeline task → `store.apply` (MainActor) → `PanelView` observation (segments solid; trailing volatile line in `.foregroundStyle(.secondary)`; scroll pinned to bottom).
 
-## Acceptance checks (written before implementation; user review pending)
+## Acceptance checks (written before implementation; user-reviewed 2026-07-16)
 
 Machine-verifiable (`swift test` + `xcodebuild`, re-run by the independent verifier):
 
@@ -140,8 +140,8 @@ User-live:
 
 ## Checklist
 
-- [ ] Slice doc committed before any Swift code
-- [ ] Acceptance checks user-reviewed (front-loaded batch gate)
+- [x] Slice doc committed before any Swift code (e40abec)
+- [x] Acceptance checks user-reviewed 2026-07-16 (front-loaded batch gate)
 - [ ] Builder: de-risk spike (fixture + failing integration test first, then engine to green)
 - [ ] Builder: CaptureKit types + BufferConverter (+ tests red→green)
 - [ ] Builder: MicCapture

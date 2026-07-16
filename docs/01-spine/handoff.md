@@ -2,7 +2,7 @@
 
 ## Start here next session
 
-Slices 2–5 are planned end-to-end: four slice docs with pre-written acceptance checks exist (slice-02…slice-05 in this folder), **awaiting the user's front-loaded review** — that review is the gate before any code. If the review has happened, start slice 2 with its de-risk spike (fixture wav → real SpeechAnalyzer under `swift test`, check 1 in slice-02 doc). Execution model: per slice, builder subagent (TDD, inherit model for 2–3 / sonnet for 4–5) → critic pass (2–3 only) → independent verifier re-runs machine checks → user-walked live checks → ship ritual. Orchestrator owns docs and commits.
+Slices 2–5 docs **approved by the user 2026-07-16** (front-loaded review done). Slice 2 is in build: builder subagent dispatched, starting with the de-risk spike (fixture wav → real SpeechAnalyzer under `swift test`, check 1 in slice-02 doc). If resuming: check slice-02 checklist for last completed role, then continue the sequence builder → critic → verifier → user live checks → ship ritual. Execution model: per slice, builder subagent (TDD, inherit model for 2–3 / sonnet for 4–5) → critic pass (2–3 only) → independent verifier re-runs machine checks → user-walked live checks → ship ritual. Orchestrator owns docs and commits.
 
 ## Current state
 
