@@ -7,8 +7,11 @@ import os
 /// settings UI.
 @MainActor
 final class HotKey {
-    private var hotKeyRef: EventHotKeyRef?
-    private var eventHandlerRef: EventHandlerRef?
+    // nonisolated(unsafe): set once in init, released in deinit; Carbon
+    // hot-key registration lives on the main run loop, and Swift 6 deinits
+    // are nonisolated so plain @MainActor storage can't be touched there.
+    private nonisolated(unsafe) var hotKeyRef: EventHotKeyRef?
+    private nonisolated(unsafe) var eventHandlerRef: EventHandlerRef?
     private let handler: @MainActor () -> Void
     private static let signature: OSType = 0x4D43_5059 // 'MCPY'
     private static let log = Logger(subsystem: "io.macapy.app", category: "HotKey")
