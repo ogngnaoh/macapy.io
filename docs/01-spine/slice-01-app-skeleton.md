@@ -48,16 +48,17 @@ Tests/AppShellTests swift-testing
 ## Checklist
 
 - [x] Slice plan written and user-reviewed (this doc)
-- [ ] Slice doc committed before any Swift code
-- [ ] Package.swift with six targets + test target
-- [ ] App/ shim, Info.plist, entitlements, assets
-- [ ] Hand-authored macapy.xcodeproj + shared scheme
-- [ ] SessionController tests (before implementation)
-- [ ] SessionController
-- [ ] FloatingPanelController + PanelView placeholder
-- [ ] HotKey wrapper (⌥⌘M)
-- [ ] ActivationPolicyController + scenes (MenuBarExtra, history Window)
+- [x] Slice doc committed before any Swift code (53f6c1e)
+- [x] Package.swift with six targets + test target
+- [x] App/ shim, Info.plist, entitlements, assets
+- [x] Hand-authored macapy.xcodeproj + shared scheme
+- [x] SessionController tests (before implementation — commit 2dc5dbf)
+- [x] SessionController
+- [x] FloatingPanelController + PanelView placeholder
+- [x] HotKey wrapper (⌥⌘M)
+- [x] ActivationPolicyController + scenes (MenuBarExtra, history Window)
 - [ ] Build + tests green (needs Xcode 26 — install pending)
+- [ ] TDD red verified retroactively: `swift test` at 2dc5dbf fails with missing SessionController, passes at HEAD
 - [ ] Live acceptance checks 3–5 walked with the user
 - [ ] Ship rituals: milestone/handoff/CLAUDE.md updated, final commit
 
@@ -65,5 +66,8 @@ Tests/AppShellTests swift-testing
 
 (append as work proceeds)
 
-- Xcode 26 not installed at session start (CLT-only, Swift 6.0.3, no macOS 26 SDK) — file scaffolding proceeds; build verification blocked until install completes.
+- Xcode 26 not installed at session start (CLT-only, Swift 6.0.3, no macOS 26 SDK) — file scaffolding proceeds; build verification blocked until install completes. `swift package dump-package` parse check passed under CLT.
 - pbxproj is hand-authored; fallbacks agreed in plan: (a) move package into `MacapyKit/` if root-level Package.swift + sibling xcodeproj misbehaves, (b) one-shot local xcodegen generation, committed, no repo dependency.
+- TDD adaptation: red could not be run live (no toolchain). Tests were committed alone (2dc5dbf) before any implementation existed, so red is verifiable at that exact commit once Xcode lands; recipe in checklist. Flagged rather than claimed as fully-honored TDD.
+- Floating panel has no close button by design — closing it would desync panel visibility from session state; the session ends via ⌥⌘M or the menu bar.
+- Panel styling: `.nonactivatingPanel` + `.floating` + `[.canJoinAllSpaces, .fullScreenAuxiliary]`, `hidesOnDeactivate = false` (defaults to true on NSPanel — a classic gotcha).
