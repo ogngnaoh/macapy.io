@@ -135,3 +135,11 @@ credentials.json
 *.key
 nul
 
+
+# v0 local artifacts left on disk (source preserved on legacy branch)
+frontend/
+node_modules/
+.playwright-mcp/
+.pytest_cache/
+.DS_Store
+.env
