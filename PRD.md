@@ -1,6 +1,6 @@
 # PRD: macapy — Local-First Agentic Meeting Assistant
 
-**Status:** Draft
+**Status:** Approved
 **Last updated:** 2026-07-16
 
 ## 1. Problem

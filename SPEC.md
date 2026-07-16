@@ -1,6 +1,6 @@
 # SPEC: macapy — Native macOS Agentic Meeting Assistant
 
-**Status:** Draft
+**Status:** Approved
 **Last updated:** 2026-07-16
 **Related PRD:** ./PRD.md
 **Prior art:** docs/superpowers/specs/2026-07-16-macapy-revival-design.md (brainstorming outcome + research); the archived Electron/FastAPI v0 is the negative example this design corrects.
