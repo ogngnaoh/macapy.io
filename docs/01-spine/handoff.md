@@ -2,19 +2,19 @@
 
 ## Start here next session
 
-Install Xcode 26 if not done (`sudo xcode-select -s /Applications/Xcode.app`, accept license), then run slice-1 verification per docs/01-spine/slice-01-app-skeleton.md: (1) `swift test` at commit 2dc5dbf must FAIL (retroactive TDD red), (2) `swift test` at HEAD must pass, (3) `xcodebuild -project macapy.xcodeproj -scheme macapy build`, (4) walk acceptance checks 3–5 live with the user. Then ship rituals.
+Run the slice-2 planning-then-implementation session: mic capture (AVAudioEngine, 16kHz) → SpeechAnalyzer → live transcript in the panel (volatile grey / final solid). Read SPEC §6.3–6.4 (STTEngine protocol, TranscriptEvent, live-transcript flow) and slice-01's doc for conventions. Write the slice-2 working doc with acceptance checks before code, get user review, then implement. First technical step: validate SpeechAnalyzer's real API surface against the macOS 26 SDK — our docs describe intent, not verified signatures.
 
 ## Current state
 
-- Slice 1 (app skeleton) is **code-complete, unverified** — nothing has ever been built (no Xcode 26 on the machine at authoring time; CLT-only).
-- Committed: slice doc (53f6c1e) → scaffolding (7055263) → tests-only red commit (2dc5dbf) → AppShell implementation (aec10af).
-- Structure: root Package.swift (six module targets, zero deps), thin hand-authored macapy.xcodeproj (synchronized App/ folder, local package ref "."), App/ shim with LSUIElement Info.plist.
-- AppShell: SessionController (idle ⇄ capturing, tested), non-activating floating NSPanel, Carbon ⌥⌘M hotkey, dynamic activation policy, MenuBarExtra + history/settings scenes.
-- Decisions logged in the slice doc: no swift-log (os.Logger; SPEC amendment candidate), sandbox deferred to slice 3, no panel close button, bundle id io.macapy.app.
+- Slice 1 (app skeleton) **shipped 2026-07-16**, all 6 acceptance checks verified (see docs/01-spine/slice-01-app-skeleton.md): tests red→green across commits 2dc5dbf→HEAD, xcodebuild clean on Xcode 26.6, live checks walked by the user, 0 network connections.
+- Working skeleton: menu bar accessory app, ⌥⌘M toggles a non-activating floating panel, dynamic activation policy for history/settings windows. `SessionController` (idle ⇄ capturing) is the seam slice 2 hooks the pipeline into; `AppShellCoordinator.syncPanel()` is where start/stop side effects live.
+- Build: `xcodebuild -project macapy.xcodeproj -scheme macapy build`; tests: `swift test`. Requires Xcode 26 selected (`xcode-select -p` → /Applications/Xcode.app).
+- Root CLAUDE.md regenerated with commands/stack/structure (no longer the interim pointer).
 
 ## Open concerns
 
-- **Hand-authored pbxproj is unproven.** First Xcode open may reject the root-level local package ref ("."). Agreed fallbacks in slice doc: move package to MacapyKit/, or one-shot xcodegen. Same for the scheme's `PACKAGE-TARGET:AppShellTests` testable reference — `swift test` is the authoritative check.
-- `.defaultLaunchBehavior(.suppressed)` / `.restorationBehavior(.disabled)` and SE-0411-dependent `@State` init isolation are untested against the real macOS 26 SDK — expect possible small compile fixes on first build.
-- CLAUDE.md at root is still the interim pointer file — regenerate at slice ship (part of rituals, deliberately not done pre-verification).
-- Prior concerns stand: SpeechAnalyzer accuracy unvalidated (slice 2), process-tap TCC UX (slice 3), 7 NEEDS-CLARIFICATION markers in PRD/SPEC (none block M1).
+- SpeechAnalyzer accuracy + exact API shape unvalidated — slice 2 is the proof point; STTEngine protocol is the escape hatch (SPEC N1).
+- Mic TCC prompt UX: ad-hoc-signed debug builds may re-prompt after rebuilds; watch for it in slice 2, relevant to slice-3 process-tap TCC too.
+- Panel is fixed-size/fixed-position functional-minimal; frontend design session still pending (fine per milestone non-goals).
+- swift-log dropped in favor of os.Logger; sandbox decision deferred to slice 3 — both flagged as SPEC amendments to make when convenient.
+- 7 NEEDS-CLARIFICATION markers in PRD/SPEC stand (locale, calendar sources, dual-meeting audio, SQLCipher) — none block M1.

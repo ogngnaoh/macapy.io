@@ -29,8 +29,8 @@ Ship the fastest fully-local live meeting transcriber on macOS — the author ca
 
 | # | Slice (end-to-end, independently shippable) | Status |
 |---|---|---|
-| 1 | App skeleton: SPM targets, menu bar item, empty floating panel, start/stop state machine | active |
-| 2 | Mic → SpeechAnalyzer → live transcript rendering in panel (volatile/final) | pending |
+| 1 | App skeleton: SPM targets, menu bar item, empty floating panel, start/stop state machine ([plan/record](./slice-01-app-skeleton.md)) | shipped 2026-07-16 |
+| 2 | Mic → SpeechAnalyzer → live transcript rendering in panel (volatile/final) | active |
 | 3 | System-audio process tap → dual-stream transcription → you/them labels | pending |
 | 4 | GRDB persistence + meeting lifecycle + ephemeral mode + pause hotkey + minimal history list | pending |
 | 5 | Latency instrumentation, diagnostics basics, fixture-playback test harness proving G1 | pending |
@@ -40,6 +40,7 @@ Ship the fastest fully-local live meeting transcriber on macOS — the author ca
 (Decisions and dead ends worth remembering — append as work proceeds.)
 
 - 2026-07-16: Milestone derived from approved SPEC; no code exists yet. v0 (Electron/FastAPI) still occupies the repo pending archival decision.
+- 2026-07-16 (slice 1): Hand-authored thin pbxproj + root-level local SPM package ref (".") works on Xcode 26.6 — no project generator needed. Decisions: accessory app w/ dynamic activation policy; Carbon RegisterEventHotKey (no Accessibility TCC); no swift-log (os.Logger suffices — SPEC §5 amendment candidate); sandbox decision deferred to slice 3; panel has no close button (visibility stays in lockstep with session state). Gotchas hit: NSPanel `hidesOnDeactivate` defaults true; Swift 6.3 forbids @MainActor storage access from nonisolated deinit (→ `nonisolated(unsafe)` for Carbon refs).
 
 ## Exit criteria
 

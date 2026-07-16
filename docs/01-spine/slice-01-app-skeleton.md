@@ -1,6 +1,6 @@
 # Slice 1 — App Skeleton
 
-**Status:** in progress
+**Status:** shipped 2026-07-16
 **Plan approved:** 2026-07-16 (decisions made interactively; acceptance checks reviewed before implementation)
 **References:** ../../SPEC.md §5–6, ./milestone.md
 
@@ -57,10 +57,10 @@ Tests/AppShellTests swift-testing
 - [x] FloatingPanelController + PanelView placeholder
 - [x] HotKey wrapper (⌥⌘M)
 - [x] ActivationPolicyController + scenes (MenuBarExtra, history Window)
-- [ ] Build + tests green (needs Xcode 26 — install pending)
-- [ ] TDD red verified retroactively: `swift test` at 2dc5dbf fails with missing SessionController, passes at HEAD
-- [ ] Live acceptance checks 3–5 walked with the user
-- [ ] Ship rituals: milestone/handoff/CLAUDE.md updated, final commit
+- [x] Build + tests green (Xcode 26.6 / Swift 6.3.3)
+- [x] TDD red verified retroactively: `swift test` at 2dc5dbf fails with missing SessionController, passes at HEAD
+- [x] Live acceptance checks 3–5 walked with the user
+- [x] Ship rituals: milestone/handoff/CLAUDE.md updated, final commit
 
 ## Notes / dead ends
 
@@ -71,3 +71,5 @@ Tests/AppShellTests swift-testing
 - TDD adaptation: red could not be run live (no toolchain). Tests were committed alone (2dc5dbf) before any implementation existed, so red is verifiable at that exact commit once Xcode lands; recipe in checklist. Flagged rather than claimed as fully-honored TDD.
 - Floating panel has no close button by design — closing it would desync panel visibility from session state; the session ends via ⌥⌘M or the menu bar.
 - Panel styling: `.nonactivatingPanel` + `.floating` + `[.canJoinAllSpaces, .fullScreenAuxiliary]`, `hidesOnDeactivate = false` (defaults to true on NSPanel — a classic gotcha).
+- Verification results (2026-07-16, Xcode 26.6 / Swift 6.3.3): red confirmed at 2dc5dbf (compile failure, SessionController missing); 7/7 tests pass at HEAD; xcodebuild build succeeded first try — root-level local package ref (".") works, no fallback needed. One compile fix required: Swift 6.3 forbids @MainActor storage access from nonisolated deinit → `nonisolated(unsafe)` on the Carbon refs (commit after aec10af). Launch verified: activationPolicy=1, no windows, no Dock icon (JXA + screenshots); hotkey/panel/focus and Dock flip walked live by the user; `lsof -i` on the running process: 0 network connections (check 6).
+- System Events keystroke automation unavailable from this environment (no Automation permission) — interactive checks are genuinely user-walked, which matches the verification convention anyway.
