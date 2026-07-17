@@ -2,20 +2,19 @@
 
 ## Start here next session
 
-Slice 4 (GRDB persistence + lifecycle + ephemeral + pause hotkey + history) is **active**; slice4-builder (sonnet) dispatched for the full TDD build — no user touchpoint until its live checks 8–10 (pause halts capture, ephemeral leaves no rows, history reopens a transcript). **Binding constraint the builder must honor (slice-04 doc Notes):** `finalsStream()` has no replay — SegmentWriter attaches BEFORE `pipeline.start()` and re-attaches after every `reset()`, with tests for that ordering. Then verifier (no critic pass for slice 4 per plan) → user live checks → ship ritual → slice 5. If resuming mid-slice, the slice-04 checklist shows the last completed role.
+Slice 5 (latency instrumentation + fixture harness proving G1 + diagnostics basics) is **active** — the last build slice. slice5-builder (sonnet) dispatched: LatencyRecorder, FixturePlaybackSource, `LatencyHarness` executable (`swift run -c release macapy-latency <fixture>` → JSON p50/p95/max + pass_g1), G1BudgetTests debug-ceiling regression test, minimal live diagnostics section. Then verifier → user live checks (authoritative release harness run, number recorded in milestone.md) → ship ritual → **milestone close-out**: real-meeting dogfood, zero-network full pass, cold start < 2s, then milestone 01 → shipped / 02 → active. If resuming mid-slice, the slice-05 checklist shows the last completed role.
 
 ## Current state
 
-- Slices 1–3 **shipped** (3: 2026-07-17; its live check 8, real-meeting dogfood, deferred to close-out by agreement). Dual-stream you/them verified live incl. headphones and mid-capture device switch.
-- 26/26 tests green; `xcodebuild` clean; zero external deps so far — GRDB lands in slice 4 (first `.package` entry; tooling fetch is fine, app still makes zero network calls).
-- Key techniques recorded: `tccd` string table for TCC keys (slice-03 Notes), `git archive` scratch-dir for read-only old-rev test runs, injected-bug non-vacuity proofs (verifier), two-phase builder with TCC checkpoint.
-- Backlog (recorded in milestone Integration notes): mid-capture format listener (didn't reproduce), TCC-denial-silent onboarding UX (M5), unbounded-stream memory watch under analyzer stall (G4).
+- Slices 1–4 **shipped** (4: 2026-07-17, all live checks individually confirmed). App now does: dual-stream live transcript (You/Them), GRDB persistence w/ history window, ephemeral mode, ⌥⌘M start/stop + ⌥⌘P pause.
+- 56/56 tests green ×many, 0 flakes ever; xcodebuild clean incl. wiped-DerivedData builds. GRDB 7.11.1 is the only external dep.
+- Slice-4 record: two real defects caught pre-ship (deterministic tail-final data loss in SegmentWriter — fixed via `finishFinalsStreams()` + completion signal; latent slice-1 Carbon HotKey bug — fixed + proven live). Contract notes live in slice-04 Notes (attach-before-start; finish-before-flushAndStop).
+- Deferred to close-out by agreement: slice-3 real-meeting dogfood (exit criterion 2), zero-network full-meeting pass (criterion 4), cold-start measure (criterion 5 part).
 - Commands: `swift test`, `xcodebuild -project macapy.xcodeproj -scheme macapy build`; Xcode 26 selected.
 
 ## Open concerns
 
-- Real-meeting dogfood pending (close-out): accuracy/robustness in a genuine call is still the ultimate unproven.
-- Clean-machine speech-model download path unexercised (model preinstalled here); zero-network claim holds only post-install.
-- GRDB version pin is the builder's choice this slice — record it and the migration-v1 shape in the slice doc at ship.
-- Sleep-based teardown regression test: theoretical flake under extreme load (clean so far).
-- ⌥⌘P second Carbon hotkey lands in slice 4 — watch for collisions with existing app shortcuts.
+- G1 (<1s speech-to-visible) is still **unmeasured** — slice 5 is the proof; if p95 ≥ 1s on base Apple Silicon the milestone's headline claim fails and we tune (chunk size, volatile reporting) before close-out.
+- Real-meeting accuracy/robustness unproven until the close-out dogfood.
+- Clean-machine model download path unexercised (model preinstalled here).
+- Backlog (milestone notes): mid-capture format listener; TCC-denial-silent onboarding (M5); unbounded-stream memory watch under analyzer stall.

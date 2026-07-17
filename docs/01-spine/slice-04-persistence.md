@@ -1,6 +1,6 @@
 # Slice 4 — GRDB Persistence, Meeting Lifecycle, Ephemeral Mode, Pause Hotkey, History List
 
-**Status:** pending
+**Status:** shipped 2026-07-17
 **Plan approved:** 2026-07-16 (front-loaded batch review of slices 2–5; acceptance checks reviewed before implementation)
 **References:** ../../SPEC.md §6.2, ./milestone.md, ./slice-02-mic-live-transcript.md
 
@@ -99,8 +99,8 @@ User-live:
 - [x] Verifier: checks 1–7 **all PASS** (2026-07-17) — red reproduced (compile failure); red→green and pre-existing-test adaptations audited clean; ephemeral proof uses a real on-disk contrast; HotKey fix sound by inspection; 53/53 ×4, 0 flakes
 - [x] Fix verifier residual (d): deterministic flush via stream-finish + completion signal (test 98b75cf → fix d6abb55; pre-fix red was **100% reproducible** across 8 runs once the yield-slack was removed — the race was real and constant, not theoretical)
 - [x] Re-verify the flush fix: **PASS** (2026-07-17) — red 3/3 deterministic at 98b75cf; stress test exercises the real store→writer chain, zero slack; completion-signal design traced sound (no early return, no lost-final window; documented precondition: `flushAndStop()` without a prior stream-finish hangs — unreachable in production, `stop()` calls both unconditionally); 56/56 ×3, clean-DerivedData build
-- [ ] Live checks 8–10 walked with the user
-- [ ] Ship rituals: milestone table, integration notes, handoff, final commit
+- [x] Live checks 8–10 walked with the user (2026-07-17), all four sub-checks individually confirmed: history+transcript incl. last-sentence flush proof ✓, pause halts capture ✓, rapid ⌥⌘M/⌥⌘P alternation clean (Carbon fix proven live) ✓, ephemeral absent from history + sqlite meetings count unchanged ✓
+- [x] Ship rituals: milestone table, integration notes, handoff, final commit
 
 ## Notes / dead ends
 
