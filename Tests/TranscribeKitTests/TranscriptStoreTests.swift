@@ -76,4 +76,43 @@ struct TranscriptStoreTests {
         }
         #expect(received == ["one", "two"])
     }
+
+    /// Slice 4 addition: `finishFinalsStreams()` ends the side-channel (so a
+    /// meeting's `SegmentWriter` can complete deterministically at
+    /// `MeetingPipeline.stop()`) but — unlike `reset()` — leaves the
+    /// transcript itself alone, since the panel keeps showing it after stop.
+    @Test func finishFinalsStreamsEndsTheStreamWithoutClearingTranscript() async {
+        let store = TranscriptStore()
+        let finals = store.finalsStream()
+
+        store.apply(.final(segment("kept", .mic, 0, 1)), from: .mic)
+        store.finishFinalsStreams()
+
+        #expect(store.segments.map(\.text) == ["kept"], "finishFinalsStreams must not clear the transcript")
+
+        var received: [String] = []
+        for await seg in finals {
+            received.append(seg.text)
+        }
+        #expect(received == ["kept"], "everything yielded before finish() must still be delivered")
+    }
+
+    /// AsyncStream's actual guarantee this fix leans on: values yielded
+    /// before `finish()` are always delivered to the consumer before it
+    /// observes the stream end — regardless of how many were queued up.
+    @Test func finishFinalsStreamsDeliversEverythingYieldedBeforeIt() async {
+        let store = TranscriptStore()
+        let finals = store.finalsStream()
+
+        for i in 0..<20 {
+            store.apply(.final(segment("s\(i)", .mic, TimeInterval(i), TimeInterval(i) + 1)), from: .mic)
+        }
+        store.finishFinalsStreams()
+
+        var received: [String] = []
+        for await seg in finals {
+            received.append(seg.text)
+        }
+        #expect(received == (0..<20).map { "s\($0)" })
+    }
 }

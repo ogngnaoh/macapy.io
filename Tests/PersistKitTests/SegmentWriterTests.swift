@@ -78,30 +78,67 @@ struct SegmentWriterTests {
         _ = await runTask.value
     }
 
+    /// Regression (verifier-caught race, see SegmentWriter.swift's FIX doc
+    /// comment): an earlier `flushAndStop()` read `buffer` directly and could
+    /// race a still-in-flight `run()` iteration, silently dropping the tail.
+    /// This test is now deterministic by construction: `flushAndStop()` can
+    /// only proceed once `run()` has itself observed the stream end and
+    /// performed the flush — there is no scheduling window left to race, so
+    /// no `Task.yield()`/sleep slack is needed (or would even help mask a
+    /// regression here — removing it is the point).
     @Test func finalFlushLosesNothingEvenBelowThresholdAndBeforeDebounce() async throws {
         let meetingStore = MeetingStore(database: try MacapyDatabase.inMemory())
         let meeting = try await meetingStore.beginMeeting(startedAt: Date(), ephemeral: false)
         let writer = SegmentWriter(
             store: meetingStore, meetingID: meeting.id,
-            batchThreshold: 25, debounceNanos: 5_000_000_000  // long enough that only flushAndStop can flush in time
+            batchThreshold: 25, debounceNanos: 5_000_000_000  // long enough that only the trailing flush can flush in time
         )
         let (stream, continuation) = AsyncStream<Segment>.makeStream()
         let runTask = Task { await writer.run(consuming: stream) }
 
         continuation.yield(seg("tail-1", 0))
         continuation.yield(seg("tail-2", 1))
-        // Give the run() loop a few scheduling turns to buffer what was just
-        // yielded before we force the flush (see SegmentWriter.swift's note on
-        // this actor-ordering reliance — flagged for the verifier).
-        for _ in 0..<5 { await Task.yield() }
+        // No yields/sleeps: AsyncStream guarantees both of the above are
+        // delivered to run()'s for-await before it observes this as "ended".
+        continuation.finish()
 
         try await writer.flushAndStop()
 
         let stored = try await meetingStore.segments(for: meeting.id)
         #expect(stored.map(\.text) == ["tail-1", "tail-2"], "final flush must not lose buffered segments")
 
-        continuation.finish()
         _ = await runTask.value
+    }
+
+    /// Stress version of the above, run through the real `TranscriptStore` +
+    /// `finishFinalsStreams()` path exactly as `MeetingPipeline.stop()` uses
+    /// it: apply one final, immediately end the stream, immediately
+    /// `flushAndStop()` — zero yields/sleeps between any of these steps, 50
+    /// iterations with fresh stores each time. The old (buffer-reading)
+    /// `flushAndStop()` would flake here under scheduler pressure; this
+    /// passes deterministically because `flushAndStop()` cannot return before
+    /// `run()` has drained everything the stream will ever yield.
+    @Test func stressImmediateFinishAndStopNeverLosesASegment() async throws {
+        for i in 0..<50 {
+            let transcriptStore = TranscriptStore()
+            let meetingStore = MeetingStore(database: try MacapyDatabase.inMemory())
+            let meeting = try await meetingStore.beginMeeting(startedAt: Date(), ephemeral: false)
+            let writer = SegmentWriter(store: meetingStore, meetingID: meeting.id)
+
+            let finals = transcriptStore.finalsStream()
+            let runTask = Task { await writer.run(consuming: finals) }
+
+            let segment = Segment(id: UUID(), source: .mic, text: "iteration-\(i)", tStart: 0, tEnd: 1)
+            transcriptStore.apply(.final(segment), from: .mic)
+
+            transcriptStore.finishFinalsStreams()
+            try await writer.flushAndStop()
+
+            let stored = try await meetingStore.segments(for: meeting.id)
+            #expect(stored.map(\.text) == ["iteration-\(i)"], "iteration \(i) lost its segment")
+
+            _ = await runTask.value
+        }
     }
 
     // MARK: - Binding constraint: attach before any final can be produced

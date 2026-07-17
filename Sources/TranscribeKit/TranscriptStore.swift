@@ -50,6 +50,21 @@ public final class TranscriptStore {
     public func reset() {
         segments.removeAll()
         volatile.removeAll()
+        finishFinalsStreams()
+    }
+
+    /// Ends any open `finalsStream()` continuations **without** clearing
+    /// `segments`/`volatile` — the panel keeps showing the transcript after a
+    /// meeting stops (only starting the *next* meeting, via `reset()`, clears
+    /// it). Added in slice 4 so `MeetingPipeline.stop()` can deterministically
+    /// end a meeting's persistence: `AsyncStream` guarantees every value
+    /// yielded before `finish()` is delivered to its consumer before the
+    /// consumer observes the stream end, so a `SegmentWriter` attached to this
+    /// stream is guaranteed to drain every already-yielded final and perform
+    /// its trailing flush — no reliance on actor-executor scheduling order
+    /// (see `SegmentWriter.flushAndStop()`'s doc comment for the hazard this
+    /// replaced). Idempotent: a no-op if nothing is attached.
+    public func finishFinalsStreams() {
         for continuation in finalsContinuations.values {
             continuation.finish()
         }
@@ -57,7 +72,8 @@ public final class TranscriptStore {
     }
 
     /// A side-channel of finalized segments, in the order they were applied.
-    /// Ends on `reset()`. Consumed by slice 4's GRDB writer.
+    /// Ends on `reset()` or `finishFinalsStreams()`. Consumed by slice 4's
+    /// GRDB writer.
     public func finalsStream() -> AsyncStream<Segment> {
         let id = UUID()
         let (stream, continuation) = AsyncStream<Segment>.makeStream()
