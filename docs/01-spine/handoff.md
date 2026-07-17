@@ -14,6 +14,7 @@ Slice 5 (latency instrumentation + fixture harness proving G1 + diagnostics basi
 
 ## Open concerns
 
+- **BLOCKER (active): G1 measurement anchor invalid** — volatile `range.end` is forward-looking (98.2% of long-fixture samples negative; p95 itself negative; passG1=true is a false proof). Builder investigating per-run `.audioTimeRange` attributes vs a fed-audio clamp as the honest anchor; negatives will be excluded-and-counted in the report either way. Authoritative release run (live check 5) blocked until the fix re-verifies. If both anchors prove dishonest, the fallback design escalates to the orchestrator/user.
 - G1 (<1s speech-to-visible) is still **unmeasured** — slice 5 is the proof; if p95 ≥ 1s on base Apple Silicon the milestone's headline claim fails and we tune (chunk size, volatile reporting) before close-out.
 - Real-meeting accuracy/robustness unproven until the close-out dogfood.
 - Clean-machine model download path unexercised (model preinstalled here).
