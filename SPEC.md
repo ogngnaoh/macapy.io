@@ -1,7 +1,7 @@
 # SPEC: macapy — Native macOS Agentic Meeting Assistant
 
 **Status:** Approved
-**Last updated:** 2026-07-16
+**Last updated:** 2026-07-17 (M1 amendments folded in — §6.5)
 **Related PRD:** ./PRD.md
 **Prior art:** docs/superpowers/specs/2026-07-16-macapy-revival-design.md (brainstorming outcome + research); the archived Electron/FastAPI v0 is the negative example this design corrects.
 
@@ -35,7 +35,7 @@ v0 (Electron + FastAPI + Postgres/pgvector) needed four runtimes to run one meet
 - **Language:** Swift 6.x, strict concurrency; SwiftUI for all UI.
 - **Platform:** macOS 26+ (Tahoe), Apple Silicon only.
 - **Key frameworks:** Core Audio process taps (`CATapDescription`) + AVAudioEngine (capture); SpeechAnalyzer/SpeechTranscriber (STT); EventKit (Reminders/Calendar, M4); Keychain Services (credentials).
-- **Dependencies (SPM):** GRDB (SQLite); FluidAudio (diarization, M2); sqlite-vec (embeddings, M4); swift-log. Deliberately nothing else — no networking lib (URLSession), no DI framework.
+- **Dependencies (SPM):** GRDB (SQLite; pinned 7.11.1 since M1); FluidAudio (diarization, M2); sqlite-vec (embeddings, M4). Deliberately nothing else — no networking lib (URLSession), no DI framework. Logging is `os.Logger`, subsystem `io.macapy.app`, one category per module (swift-log dropped — §6.5).
 - **Persistence:** single SQLite database in `~/Library/Application Support/macapy/`; WAL mode.
 - **Testing:** swift-testing; fixture audio files; a local fake OpenAI-compatible server for LLM tests.
 - **Distribution:** SPM-based Xcode project; Developer ID signed + notarized; Sparkle auto-update (M5).
@@ -136,6 +136,18 @@ protocol LLMProvider {                   // one impl in v1: OpenAICompatibleClie
 
 **Query box (FR-007).** Same context assembly, user question as task, streamed into the panel. No agentic loop in v1 — one call, meeting-scoped.
 
+### 6.5 Amendments from M1 (2026-07-17)
+
+Findings from building the spine, recorded in docs/01-spine/milestone.md and folded in here; where they conflict with §5–§6.4 above, these win:
+
+1. **Audio format is queried, not assumed.** The fixed-16kHz labels in §6.1/§6.4 are wrong in general: the analyzer's format comes from `bestAvailableAudioFormat` (16kHz **Int16** mono on SDK 26.5) and capture inserts a conversion step. `AVAudioFormat` is non-Sendable — reconstruct per source.
+2. **`STTEngine` gains `prepare()` and `preferredInputFormat()`** (model-asset install and format negotiation precede `transcribe(_:source:)`).
+3. **`TranscriptEvent` carries plain `String` + `TimeInterval`** (matches schema v1), not the richer range type sketched in §6.3.
+4. **`TranscriptStore` is `@MainActor @Observable`** in M1, not a plain actor (§6.1 diagram) — SwiftUI observation and in-order application won out; revisit only if a measured bottleneck appears.
+5. **DB columns are camelCase**, not the snake_case of the §6.2 sketch (GRDB convention).
+6. **Logging is `os.Logger`** (subsystem `io.macapy.app`, category per module); swift-log is out of the dependency list.
+7. **The app is unsandboxed** (decision confirmed hands-on in M1 slice 3 — the process tap requires it); hardened runtime + signing/notarization per §8 stand. TCC: `NSAudioCaptureUsageDescription` / `kTCCServiceAudioCapture` for the system-audio tap.
+
 ## 7. Alternatives considered
 
 ### Alt A: Revive the Electron/FastAPI stack (fix v0 in place)
@@ -168,7 +180,7 @@ protocol LLMProvider {                   // one impl in v1: OpenAICompatibleClie
 ## 9. Rollout & migration
 
 - **Greenfield repo reset:** archive Electron/FastAPI v0 to a `legacy` branch; Swift project starts clean at root. Old Postgres data is not migrated (v0 was never in real use).
-- **Milestone-gated rollout (maps to docs/milestones.md):** M1 spine → M2 diarization + post-meeting agent + provider layer → M3 copilot cascade → M4 memory/RAG/briefs → M5 signed/notarized public release with Sparkle updates.
+- **Milestone-gated rollout (maps to docs/milestones.md):** M1 spine → M2 diarization + post-meeting agent + provider layer (design-first: a whole-product design pass — every primary screen through M5, reviewed in Claude Design — is M2 slice 1, and later milestones implement within that system) → M3 copilot cascade → M4 memory/RAG/briefs → M5 signed/notarized public release with Sparkle updates.
 - **Kill switches:** AI features are globally toggleable (app remains a pure local transcriber — PRD Story 1); copilot sensitivity down to "off"; per-meeting spending cap halts AI, never capture.
 - **Schema migrations:** GRDB migrator, additive per milestone, forward-only pre-1.0.
 
