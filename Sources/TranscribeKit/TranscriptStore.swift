@@ -1,0 +1,80 @@
+import CaptureKit
+import Foundation
+import Observation
+
+/// The live transcript model the panel observes. `@MainActor @Observable`
+/// (amended vs SPEC §6, which said actor): event rates are a few/sec, so
+/// main-actor serialization costs nothing at M1 scale and removes an
+/// observation-bridging layer.
+///
+/// Volatile model: **at most one volatile line per source** — SpeechTranscriber
+/// volatiles are successive refinements of the current utterance, so a final
+/// clears that source's volatile line and appends a `Segment`. Finals also flow
+/// out `finalsStream()` for slice 4's persistence writer.
+@MainActor
+@Observable
+public final class TranscriptStore {
+    public struct VolatileLine: Equatable, Sendable {
+        public let source: AudioSource
+        public let text: String
+
+        public init(source: AudioSource, text: String) {
+            self.source = source
+            self.text = text
+        }
+    }
+
+    public private(set) var segments: [Segment] = []
+    public private(set) var volatile: [AudioSource: VolatileLine] = [:]
+
+    @ObservationIgnored private var finalsContinuations: [UUID: AsyncStream<Segment>.Continuation] = [:]
+
+    public init() {}
+
+    public func apply(_ event: TranscriptEvent, from source: AudioSource) {
+        switch event {
+        case let .volatile(text, _, _):
+            volatile[source] = VolatileLine(source: source, text: text)
+        case let .final(segment):
+            volatile[source] = nil
+            insertOrdered(segment)
+            for continuation in finalsContinuations.values {
+                continuation.yield(segment)
+            }
+        case .turnEnded:
+            break
+        }
+    }
+
+    /// Clears the transcript and ends any open `finalsStream()` (a new meeting).
+    public func reset() {
+        segments.removeAll()
+        volatile.removeAll()
+        for continuation in finalsContinuations.values {
+            continuation.finish()
+        }
+        finalsContinuations.removeAll()
+    }
+
+    /// A side-channel of finalized segments, in the order they were applied.
+    /// Ends on `reset()`. Consumed by slice 4's GRDB writer.
+    public func finalsStream() -> AsyncStream<Segment> {
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<Segment>.makeStream()
+        finalsContinuations[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { @MainActor in self?.finalsContinuations.removeValue(forKey: id) }
+        }
+        return stream
+    }
+
+    /// Insert keeping `segments` ordered by `tStart`. Finals usually arrive in
+    /// order, so this scans from the tail (O(1) amortized in the common case).
+    private func insertOrdered(_ segment: Segment) {
+        var index = segments.count
+        while index > 0, segments[index - 1].tStart > segment.tStart {
+            index -= 1
+        }
+        segments.insert(segment, at: index)
+    }
+}

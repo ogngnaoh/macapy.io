@@ -39,9 +39,14 @@ struct BufferConverterTests {
         #expect(out.format.commonFormat == .pcmFormatInt16)
         #expect(out.format.channelCount == 1)
 
-        // 3:1 downsample → ~1600 frames; allow slack for converter priming.
-        #expect(out.frameLength > 1_400, "got \(out.frameLength)")
-        #expect(out.frameLength < 1_800, "got \(out.frameLength)")
+        // 3:1 downsample of a single 4800-frame chunk → a "plausible" ~1600
+        // frames, but the resampler's group delay legitimately holds a couple
+        // hundred samples in filter state (they emerge in the next chunk — see
+        // `convertsAcrossManyChunksWithoutError`, where 10 chunks total ~16000
+        // with no loss). So the plausible single-chunk band is wider than the
+        // naive ratio.
+        #expect(out.frameLength > 1_200, "got \(out.frameLength)")
+        #expect(out.frameLength < 1_700, "got \(out.frameLength)")
     }
 
     @Test func producesFreshOutputBufferPerConversion() throws {

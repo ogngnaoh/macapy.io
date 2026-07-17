@@ -1,18 +1,27 @@
 import AppKit
 import SwiftUI
+import TranscribeKit
+
+/// The panel surface the coordinator drives. Abstracted so AppShell tests can
+/// substitute a no-op and never build an NSPanel/NSHostingView headlessly.
+@MainActor
+protocol PanelPresenting {
+    func show(session: SessionController, store: TranscriptStore)
+    func hide()
+}
 
 /// Owns the compact always-on-top floating panel shown while a session runs.
 /// Non-activating: it never steals key/focus from the meeting app. No close
 /// button — the session ends via ⌥⌘M or the menu bar, keeping panel
 /// visibility and session state in lockstep.
 @MainActor
-final class FloatingPanelController {
+final class FloatingPanelController: PanelPresenting {
     private var panel: NSPanel?
     private static let panelSize = NSSize(width: 320, height: 160)
 
-    func show(session: SessionController) {
+    func show(session: SessionController, store: TranscriptStore) {
         if panel == nil {
-            panel = makePanel(session: session)
+            panel = makePanel(session: session, store: store)
         }
         panel?.orderFrontRegardless()
     }
@@ -21,7 +30,7 @@ final class FloatingPanelController {
         panel?.orderOut(nil)
     }
 
-    private func makePanel(session: SessionController) -> NSPanel {
+    private func makePanel(session: SessionController, store: TranscriptStore) -> NSPanel {
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: Self.panelSize),
             styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
@@ -36,7 +45,9 @@ final class FloatingPanelController {
         panel.hidesOnDeactivate = false
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = true
-        panel.contentView = NSHostingView(rootView: PanelView().environment(session))
+        panel.contentView = NSHostingView(
+            rootView: PanelView().environment(session).environment(store)
+        )
         position(panel)
         return panel
     }

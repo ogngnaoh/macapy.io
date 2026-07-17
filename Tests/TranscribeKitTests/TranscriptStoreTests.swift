@@ -1,3 +1,4 @@
+import CaptureKit
 import Foundation
 import Testing
 import TranscribeKit
