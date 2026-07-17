@@ -83,19 +83,19 @@ Machine-verifiable:
 
 User-live:
 
-8. ⌥⌘P mid-meeting verifiably halts capture — speaking while paused produces no new segments; resume picks the transcript back up.
+8. ⌥⌘P mid-meeting verifiably halts capture — speaking while paused produces no new segments; resume picks the transcript back up. *(Strengthened 2026-07-17, user-notified at walk time:)* also press ⌥⌘M and ⌥⌘P in quick succession and confirm each hotkey only ever fires its own action — exercises the Carbon handler ID-filtering fix, which no unit test can reach.
 9. An ephemeral meeting never appears in history and leaves nothing on disk.
 10. History window lists past meetings and reopens a persisted transcript read-only (exit criterion 2 component).
 
 ## Checklist
 
 - [x] Acceptance checks user-reviewed 2026-07-16 (front-loaded batch gate)
-- [ ] Builder: GRDB dep + MacapyDatabase + migration v1 (tests red→green)
-- [ ] Builder: MeetingStore + cascade delete (tests red→green)
-- [ ] Builder: SegmentWriter batching (tests red→green)
-- [ ] Builder: SessionController .paused + ⌥⌘P + panel Paused state (tests red→green)
-- [ ] Builder: MeetingPipeline PersistenceMode + lifecycle + ephemeral toggle
-- [ ] Builder: HistoryView list + transcript detail
+- [x] Builder: GRDB 7.11.1 dep + MacapyDatabase + migration v1 (red 0e889a1 → green 21d70da)
+- [x] Builder: MeetingStore + cascade delete (21d70da)
+- [x] Builder: SegmentWriter batching + binding attach-ordering constraint w/ converse non-vacuity test (21d70da)
+- [x] Builder: SessionController .paused + ⌥⌘P + panel Paused state (21d70da; incl. latent slice-1 HotKey bug fix — see Notes)
+- [x] Builder: MeetingPipeline PersistenceMode + lifecycle + ephemeral toggle (21d70da)
+- [x] Builder: HistoryView list + transcript detail (21d70da)
 - [ ] Verifier: independent re-run of checks 1–7 with evidence
 - [ ] Live checks 8–10 walked with the user
 - [ ] Ship rituals: milestone table, integration notes, handoff, final commit
@@ -104,4 +104,5 @@ User-live:
 
 (append as work proceeds)
 
+- 2026-07-17 (builder, red 0e889a1 → green 21d70da, GRDB 7.11.1): Binding attach-ordering constraint honored structurally (writer attach is the first act of `pipeline.start(mode:)`, before prepare/captures) and proven three ways, including a converse test showing a late attach really loses an early final. **Latent slice-1 bug found & fixed in HotKey.swift**: each instance installed an unfiltered Carbon handler returning `noErr` unconditionally — a second hotkey would have made the newest handler swallow both keys; fixed via `GetEventParameter` → `EventHotKeyID` match, `eventNotHandledErr` otherwise. Not unit-testable (live check 8 strengthened instead). Deviations: DB columns camelCase not SPEC's snake_case sketch (1:1 with record types, storage-layer only — SPEC §6.2 amendment note); `MeetingStore` methods sync-`throws` using GRDB synchronous write/read inside the actor (matches doc signatures; cross-actor callers still `await`); coordinator became `@Observable` for the ephemeral toggle; menu gained Pause/Resume item; `historyStore()` memoizes the on-disk store so History shows prior-run meetings. Gotchas: GRDB `foreignKeysEnabled` defaults true (cascade free); UUIDs stored as BLOBs (CLI inspection shows binary); `beginMeeting` synthesizes a title. Residual (verifier to scrutinize): `SegmentWriter.flushAndStop()` relies on actor-executor enqueue-order draining — sound in practice, not a language-level guarantee; integration tests for check 5 + attach ordering live in MeetingPipelineTests (AppShell) since they need PersistenceMode/coordinator.
 - 2026-07-17 (from slice-2 critic, binding on this slice's design): `TranscriptStore.finalsStream()` has **no replay** — `apply(.final:)` yields only to already-attached continuations, and `reset()` finishes all continuations. The `SegmentWriter` therefore MUST attach `finalsStream()` **before** `pipeline.start()` for each meeting and re-attach after every `reset()`, or early/boundary finals are silently lost. Add an explicit test for the attach-before-start ordering and for a final emitted immediately after start.
