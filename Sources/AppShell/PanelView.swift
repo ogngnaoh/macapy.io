@@ -22,7 +22,10 @@ struct PanelView: View {
                                 .id(segment.id)
                         }
                         ForEach(volatileLines, id: \.source) { line in
+                            // Italic + secondary: color alone is too subtle against
+                            // the panel background to read as "not yet final".
                             Text(line.text)
+                                .italic()
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }
