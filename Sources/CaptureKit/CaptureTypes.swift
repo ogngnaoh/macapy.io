@@ -33,4 +33,9 @@ public enum CaptureError: Error {
     case formatUnavailable
     case conversionFailed(underlying: Error?)
     case engineStartFailed(underlying: Error)
+    /// A Core Audio process-tap / aggregate-device call failed. `status` is the
+    /// offending `OSStatus`; `stage` names which call (tap create, aggregate
+    /// create, IOProc create, device start) so a silent-audio TCC misconfig is
+    /// diagnosable from the log.
+    case processTapFailed(stage: String, status: OSStatus)
 }

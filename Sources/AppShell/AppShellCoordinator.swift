@@ -39,7 +39,14 @@ final class AppShellCoordinator {
     }
 
     static func productionPipeline(_ store: TranscriptStore) -> MeetingPipeline {
-        MeetingPipeline(engine: SpeechAnalyzerEngine(), sources: [MicCapture()], store: store)
+        // Two capture sources: mic (You) + system-audio process tap (Them). Both
+        // feed the one engine's per-source transcribe() calls into the shared
+        // store, which interleaves by tStart. Fakes are injected in tests via the
+        // makePipeline closure, so this production wiring is test-inert.
+        MeetingPipeline(
+            engine: SpeechAnalyzerEngine(),
+            sources: [MicCapture(), SystemAudioCapture()],
+            store: store)
     }
 
     func toggleSession() {

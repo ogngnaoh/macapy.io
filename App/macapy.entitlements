@@ -2,8 +2,14 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Empty in slice 1. Debug builds run unsandboxed; the App Sandbox
-	     decision is deferred to slice 3 when process-tap TCC behavior is
-	     validated hands-on (see docs/01-spine/slice-01-app-skeleton.md). -->
+	<!-- Decision (slice 3, 2026-07-16): the app ships UNSANDBOXED.
+	     Distribution is Developer ID + notarization (SPEC §5, §8), not the App
+	     Store. Core Audio process taps and the App Sandbox are a known bad mix
+	     (a sandboxed app cannot create a global process tap / aggregate device),
+	     so no com.apple.security.app-sandbox entitlement is added. System-audio
+	     capture is instead gated at runtime by the AudioCapture TCC prompt
+	     (Info.plist NSAudioCaptureUsageDescription / kTCCServiceAudioCapture);
+	     the mic by NSMicrophoneUsageDescription. This dict stays effectively
+	     empty. Recorded as the SPEC §8 sandbox clarification. -->
 </dict>
 </plist>
