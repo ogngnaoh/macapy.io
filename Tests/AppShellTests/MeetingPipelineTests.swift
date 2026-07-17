@@ -34,6 +34,10 @@ struct MeetingPipelineTests {
         var failMidStream = false
         var prepareDelayNanos: UInt64 = 0
         let counters: Counters
+        /// A slow drain: how long the tail finals are held after the capture
+        /// stream finishes. Lets the test keep one pipeline's teardown in flight
+        /// while later toggles proceed.
+        var drainDelayNanos: UInt64 = 0
 
         func prepare(locale: Locale) async throws {
             if prepareDelayNanos > 0 { try? await Task.sleep(nanoseconds: prepareDelayNanos) }
@@ -51,6 +55,7 @@ struct MeetingPipelineTests {
             let drain = self.drain[source] ?? []
             let failMidStream = self.failMidStream
             let counters = self.counters
+            let drainDelayNanos = self.drainDelayNanos
             return AsyncThrowingStream { continuation in
                 let task = Task {
                     await counters.transcribeCalled()
@@ -61,6 +66,8 @@ struct MeetingPipelineTests {
                     }
                     // Wait for the capture stream to end (stop()).
                     for await _ in audio {}
+                    // A slow drain: hold tail finals a while after capture ends.
+                    if drainDelayNanos > 0 { try? await Task.sleep(nanoseconds: drainDelayNanos) }
                     for event in drain { continuation.yield(event) }
                     continuation.finish()
                 }
@@ -125,6 +132,31 @@ struct MeetingPipelineTests {
         }
         Issue.record("timed out waiting for: \(label)")
         return false
+    }
+
+    /// Waits until `snapshot` stops changing for a sustained window, then returns
+    /// the settled value. Used to capture the store's *final* state after all
+    /// async teardown/drain work has quiesced — including any late writes a
+    /// broken teardown chain would let slip in.
+    private func waitUntilStable(
+        stableWindow: Int = 30,
+        pollNanos: UInt64 = 5_000_000,
+        _ snapshot: @MainActor () -> [String]
+    ) async -> [String] {
+        var last = snapshot()
+        var stable = 0
+        for _ in 0..<600 {
+            try? await Task.sleep(nanoseconds: pollNanos)
+            let now = snapshot()
+            if now == last {
+                stable += 1
+                if stable >= stableWindow { return now }
+            } else {
+                stable = 0
+                last = now
+            }
+        }
+        return last
     }
 
     // MARK: - Checks
@@ -229,5 +261,84 @@ struct MeetingPipelineTests {
 
         coordinator.toggleSession()  // off
         await coordinator.settle()
+    }
+
+    /// Regression (critic MAJOR): with **two or more** outstanding teardowns and
+    /// the *oldest* pipeline's drain still running, a later start's `reset()` +
+    /// fresh pipeline must not race ahead of that orphaned drain — otherwise the
+    /// old meeting's tail finals land in the shared store *after* reset and leak
+    /// into the new meeting's panel.
+    ///
+    /// Repro: ON,OFF,ON,OFF,ON. P1 starts and gets a slow (delayed) drain; P2
+    /// never really starts (its teardown is instant); so the final start chains
+    /// only to P2's fast teardown while P1's drain is still pending. P1's
+    /// delayed tail final must not resurrect into the P3 meeting.
+    ///
+    /// Deterministic by construction: in the *broken* code P3's reset runs
+    /// immediately (behind P2's instant teardown) and P1's tail lands ~40ms
+    /// later → after reset → leak. In *fixed* code every teardown chains, so the
+    /// final start waits out P1's whole drain before reset → no leak. The drain
+    /// delay (40ms) is well under `waitUntilStable`'s 150ms settle window, so a
+    /// leak, if present, always perturbs the window before it can settle clean.
+    @Test func staleDrainFinalsDoNotLeakAcrossResetWithMultipleTeardowns() async {
+        let counters = Counters()
+        let callCount = CallCounter()
+        let mkSeg: @Sendable (String, TimeInterval) -> Segment = { text, t in
+            Segment(id: UUID(), source: .mic, text: text, tStart: t, tEnd: t + 1)
+        }
+
+        let coordinator = AppShellCoordinator(panel: FakePanel(), installHotKey: false) { store in
+            callCount.count += 1
+            let source = FakeCaptureSource(source: .mic, counters: counters)
+            switch callCount.count {
+            case 1:
+                // P1: emits a live final, then a slow (delayed) tail final.
+                let engine = FakeSTTEngine(
+                    live: [.mic: [.final(mkSeg("p1-live", 0))]],
+                    drain: [.mic: [.final(mkSeg("p1-tail", 10))]],
+                    counters: counters,
+                    drainDelayNanos: 40_000_000
+                )
+                return MeetingPipeline(engine: engine, sources: [source], store: store)
+            case 3:
+                // P3: the final meeting.
+                let engine = FakeSTTEngine(
+                    live: [.mic: [.final(mkSeg("p3-live", 0))]],
+                    counters: counters
+                )
+                return MeetingPipeline(engine: engine, sources: [source], store: store)
+            default:
+                // P2: no events; it never gets past its start gate before OFF.
+                let engine = FakeSTTEngine(counters: counters)
+                return MeetingPipeline(engine: engine, sources: [source], store: store)
+            }
+        }
+
+        coordinator.toggleSession()  // ON#1 — start P1
+        await waitUntil("P1 live final applied") { coordinator.store.segments.map(\.text) == ["p1-live"] }
+
+        // OFF#1 opens P1's teardown; its drain is now in flight (40ms).
+        coordinator.toggleSession()  // OFF#1
+        coordinator.toggleSession()  // ON#2  (P2 — blocks on P1's teardown, never starts)
+        coordinator.toggleSession()  // OFF#2 (P2 teardown — instant)
+        coordinator.toggleSession()  // ON#3  (P3 — the final meeting)
+
+        // Let all outstanding work quiesce, then capture the settled store. P1's
+        // delayed tail must have been absorbed before P3's reset — never after.
+        await coordinator.settle()
+        let settled = await waitUntilStable { coordinator.store.segments.map(\.text) }
+        #expect(
+            settled == ["p3-live"],
+            "stale prior-meeting finals leaked into the fresh store: \(settled)"
+        )
+        #expect(coordinator.session.isCapturing)
+
+        coordinator.toggleSession()  // clean up
+        await coordinator.settle()
+    }
+
+    /// MainActor-confined mutable counter for the pipeline factory.
+    final class CallCounter {
+        var count = 0
     }
 }
