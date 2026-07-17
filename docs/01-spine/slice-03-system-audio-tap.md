@@ -63,7 +63,7 @@ User-live:
 ## Checklist
 
 - [x] Acceptance checks user-reviewed 2026-07-16 (front-loaded batch gate)
-- [x] Config step: entitlements/sandbox decision + usage key verified & shipped (ef5ec58; key + technique in Notes) — user TCC walk pending
+- [x] Config step: entitlements/sandbox decision + usage key verified & shipped (ef5ec58; key + technique in Notes); user walked the TCC prompt 2026-07-17 — prompt shown with our string, grant OK, no crash (live check 4 PASS early)
 - [ ] Builder: SystemAudioCapture (tap, aggregate device, IOProc; tests where fakeable)
 - [ ] Builder: pipeline second source + panel You/Them labels (dual-fake test red→green)
 - [ ] Builder: concurrent real-engine fixture test
