@@ -1,6 +1,6 @@
 # Slice 3 — System-Audio Process Tap → Dual-Stream You/Them
 
-**Status:** pending
+**Status:** active
 **Plan approved:** 2026-07-16 (front-loaded batch review of slices 2–5; acceptance checks reviewed before implementation)
 **References:** ../../SPEC.md §6.1, §6.4, ./milestone.md, ./slice-02-mic-live-transcript.md
 
@@ -48,7 +48,7 @@ public actor SystemAudioCapture: AudioCaptureSource {
 
 Machine-verifiable:
 
-1. Dual-fake-source pipeline test: two fake sources emit overlapping scripted events; the store interleaves segments correctly by `tStart` with correct You/Them source tags.
+1. Dual-fake-source pipeline test: two fake sources emit overlapping scripted events; the store interleaves segments correctly by `tStart` with correct You/Them source tags. *(Added 2026-07-17, carried from slice-2 verifier caveat, user-notified at slice-2 ship:)* the same test also asserts per-source cross-event timestamps are non-decreasing.
 2. Concurrent real-engine test: two fixture wavs transcribed through two concurrent `SpeechAnalyzerEngine.transcribe()` calls both complete with sane transcripts (validates the two-analyzer resource assumption on real hardware).
 3. All slice-1/2 tests pass unmodified; full `swift test` green; `xcodebuild` clean.
 
