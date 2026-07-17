@@ -34,7 +34,7 @@ public struct AppShellScenes: Scene {
         .restorationBehavior(.disabled)
 
         Settings {
-            SettingsPlaceholderView()
+            SettingsPlaceholderView(coordinator: coordinator)
                 .regularWindowPresence(coordinator.activationPolicy)
         }
     }

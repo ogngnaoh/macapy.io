@@ -26,6 +26,11 @@ final class MeetingPipeline {
     private let sources: [any AudioCaptureSource]
     private let store: TranscriptStore
     private let locale: Locale
+    /// Latency instrumentation (slice-05 doc decision 1): injected so tests
+    /// can inspect it, defaulted to a fresh real recorder so it's "on" by
+    /// construction — no separate enable flag. Exposed to the coordinator via
+    /// `currentRecorder` for the diagnostics section.
+    let recorder: LatencyRecorder
     private var eventTasks: [Task<Void, Never>] = []
     private var stopped = false
     private let log = Logger(subsystem: "io.macapy.app", category: "MeetingPipeline")
@@ -43,12 +48,14 @@ final class MeetingPipeline {
         engine: any STTEngine,
         sources: [any AudioCaptureSource],
         store: TranscriptStore,
-        locale: Locale = .current
+        locale: Locale = .current,
+        recorder: LatencyRecorder = LatencyRecorder(sessionStart: Date())
     ) {
         self.engine = engine
         self.sources = sources
         self.store = store
         self.locale = locale
+        self.recorder = recorder
     }
 
     /// Flips the pipeline to "stopping" synchronously, so a `start()` still
@@ -120,9 +127,24 @@ final class MeetingPipeline {
             }
             let src = source.source
             let events = engine.transcribe(audio, source: src)
-            let task = Task { @MainActor [weak self, store] in
+            let recorder = self.recorder
+            let task = Task { @MainActor [weak self, store, recorder] in
                 do {
                     for try await event in events {
+                        // Recorded right at the hook point events become
+                        // visible to the store/panel (slice-05 doc decision
+                        // 3's documented approximation of G1) — before
+                        // store.apply(), so the timestamp reflects arrival,
+                        // not whatever apply()/SwiftUI diffing costs.
+                        let arrivalWall = Date()
+                        switch event {
+                        case let .volatile(_, _, tEnd):
+                            recorder.record(kind: .volatile, audioTEnd: tEnd, arrivalWall: arrivalWall)
+                        case let .final(segment):
+                            recorder.record(kind: .final, audioTEnd: segment.tEnd, arrivalWall: arrivalWall)
+                        case .turnEnded:
+                            break
+                        }
                         store.apply(event, from: src)
                     }
                 } catch {

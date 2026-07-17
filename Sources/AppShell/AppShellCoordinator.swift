@@ -160,6 +160,15 @@ final class AppShellCoordinator {
     /// would write through — so History shows meetings from prior app runs
     /// even before any meeting starts in this one. `nil` (logged) if opening
     /// the database fails; the view shows an error state rather than crashing.
+    /// The current (or most recently started) meeting's latency recorder,
+    /// for the diagnostics section (slice-05 doc decision 7) — `nil` before
+    /// any meeting has ever started. Not `@Observable`-tracked: `LatencyRecorder`
+    /// is a plain lock-protected class, so the diagnostics view polls it
+    /// instead (see `DiagnosticsSectionView`).
+    var currentRecorder: LatencyRecorder? {
+        pipeline?.recorder
+    }
+
     func historyStore() -> MeetingStore? {
         do {
             return try openOrReusePersistentStore()
