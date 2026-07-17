@@ -89,20 +89,26 @@ struct FixturePlaybackSourceTests {
         // Let a couple of chunks flow, then pause.
         try await Task.sleep(for: .milliseconds(250))
         await source.pause()
-        let countAtPause = await counter.count
 
-        // While paused, no further chunks should arrive.
+        // `pause()` only takes effect at the top of the playback loop's
+        // next iteration — it doesn't interrupt a chunk that was already
+        // read/converted and is mid-sleep toward its own real-time target
+        // (post-fix, a chunk sleeps to its own end-time *before* being
+        // yielded, so up to one such chunk can legitimately still land
+        // shortly after `pause()` was called). Give that one straggler a
+        // window to land, then assert pacing has *truly* suspended: two
+        // samples spaced well apart must be equal.
+        try await Task.sleep(for: .milliseconds(150))
+        let countA = await counter.count
         try await Task.sleep(for: .milliseconds(400))
-        let countDuringPause = await counter.count
-        #expect(
-            countDuringPause == countAtPause,
-            "chunks kept arriving while paused: \(countAtPause) -> \(countDuringPause)")
+        let countB = await counter.count
+        #expect(countB == countA, "chunks kept arriving while paused: \(countA) -> \(countB)")
 
         await source.resume()
         _ = await consumerTask.value  // drains to EOF now that pacing has resumed
 
         let finalCount = await counter.count
-        #expect(finalCount > countDuringPause, "playback should continue delivering chunks after resume")
+        #expect(finalCount > countB, "playback should continue delivering chunks after resume")
 
         await source.stop()
     }
@@ -126,6 +132,46 @@ struct FixturePlaybackSourceTests {
         #expect(
             remaining < 25,
             "stop() should end the stream well before all ~30 chunks are delivered, got \(remaining) more")
+    }
+
+    /// Check (slice-5 blocker fix): a chunk covering audio up to position
+    /// `k·chunkDuration` must not become observable before wall-clock has
+    /// actually reached (close to) that position — otherwise the consumer
+    /// sees audio "from the future" relative to real-time pacing. This is
+    /// the precise regression the negative-latency blocker traced to:
+    /// yielding a chunk *before* sleeping to pace it (instead of after)
+    /// delivered every chunk ~one whole `chunkDuration` early, throughout
+    /// the entire stream, not just at startup. None of the other tests in
+    /// this suite catch it — they only assert *aggregate* drain time, which
+    /// is unaffected by this bug (only *individual* chunk arrival timing
+    /// is). The threshold below is deliberately set halfway between the
+    /// buggy behavior (chunk k at ~`(k-1)·Δ`) and the correct one (chunk k
+    /// at ~`k·Δ`), so it actually discriminates rather than passing either
+    /// way — verified red against the pre-fix ordering before the fix
+    /// landed (see the builder report for the red run).
+    @Test func chunksAreNotDeliveredBeforeTheirOwnAudioDurationHasElapsed() async throws {
+        let duration = 1.2
+        let chunkDuration = 0.1
+        let url = try writeSineFixture(seconds: duration)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let source = FixturePlaybackSource(fixtureURL: url, chunkDuration: chunkDuration)
+        let clock = ContinuousClock()
+        let started = clock.now
+        let audio = try await source.start(format: targetFormat())
+
+        var chunkIndex = 0
+        for await _ in audio {
+            chunkIndex += 1
+            let elapsedSinceStart = started.duration(to: clock.now)
+            let midpointThreshold = (Double(chunkIndex) - 0.5) * chunkDuration - 0.02  // 20ms scheduling slack
+            #expect(
+                elapsedSinceStart >= .milliseconds(Int(midpointThreshold * 1_000)),
+                "chunk \(chunkIndex) arrived at \(elapsedSinceStart) since start, expected >= \(midpointThreshold)s (too early)"
+            )
+        }
+
+        await source.stop()
     }
 
     private actor ChunkCounter {

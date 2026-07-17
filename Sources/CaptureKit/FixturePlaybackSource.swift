@@ -78,14 +78,24 @@ public actor FixturePlaybackSource: AudioCaptureSource {
                 if inputBuffer.frameLength == 0 { break }  // end of file
 
                 guard let converted = try? resources.converter.convert(inputBuffer) else { break }
-                continuation.yield(AudioChunk(buffer: converted, time: nil))
 
+                // Sleep to this chunk's OWN end-time *before* yielding it —
+                // not after. A chunk covering audio up to position kΔ must
+                // not be observable before wall-clock has actually reached
+                // kΔ; yielding first and sleeping after (the original,
+                // buggy order) delivered every chunk ~one whole
+                // `chunkDuration` early throughout the entire stream, not
+                // just at startup (root cause of the slice-05
+                // negative-latency blocker — see FixturePlaybackSourceTests'
+                // chunksAreNotDeliveredBeforeTheirOwnAudioDurationHasElapsed).
                 elapsed += Double(inputBuffer.frameLength) / resources.readFormat.sampleRate
                 let target = startInstant.advanced(by: .seconds(elapsed))
                 let now = clock.now
                 if target > now {
                     try? await clock.sleep(until: target)
                 }
+
+                continuation.yield(AudioChunk(buffer: converted, time: nil))
 
                 if inputBuffer.frameLength < framesPerChunk { break }  // short read == EOF
             }
