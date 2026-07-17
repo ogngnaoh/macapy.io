@@ -1,6 +1,6 @@
 # Slice 5 — Latency Instrumentation, Fixture-Playback Harness (G1), Diagnostics Basics
 
-**Status:** pending
+**Status:** shipped 2026-07-17
 **Plan approved:** 2026-07-16 (front-loaded batch review of slices 2–5; acceptance checks reviewed before implementation)
 **References:** ../../SPEC.md §3 (G1), §8 (observability), §10, ./milestone.md
 
@@ -80,12 +80,20 @@ User-live:
 - [x] Focused re-verify: **PASS, blocker lifted** (2026-07-17) — independent raw re-dump 0/775 negatives (p50≈38.6ms, p95≈95.3ms debug); red reproduced by inverting the fix (12/12 early); both test adaptations legitimate (wiring test vacuity-probed by severing the wiring); 74/74 ×3
 - [x] Exclusion tripwire tightened 0.25 → 0.05 per verifier recommendation (e784b1e, orchestrator; suite green)
 - [ ] Focused re-verify of the measurement fix
-- [ ] Live checks 5–6 walked with the user; G1 number recorded in milestone.md
-- [ ] Ship rituals: milestone table, integration notes, handoff, final commit
+- [x] Live checks 5–6 (2026-07-17): user walked both; authoritative release run re-executed by orchestrator on the author's machine for the verbatim record — **p95 85.36ms / p50 32.97ms / max 162.78ms, 775 volatiles + 34 finals, 0 excluded, passG1 true, exit 0** (full JSON in Notes + milestone.md); diagnostics section user-confirmed sane during a live meeting
+- [x] Ship rituals: milestone table, integration notes, handoff, final commit
 
 ## Notes / dead ends
 
 (append as work proceeds)
+
+- 2026-07-17 (authoritative G1 record, exit criterion 1): `swift run -c release macapy-latency Tests/TranscribeKitTests/Fixtures/long-meeting.wav` on the author's Apple Silicon machine:
+  ```json
+  {"excludedNegativeCount":0, "excludedNegativeFraction":0, "fixture":"long-meeting.wav",
+   "maxMs":162.78, "nFinal":34, "nVolatile":775,
+   "p50Ms":32.97, "p95Ms":85.36, "passG1":true}
+  ```
+  Speech-to-visible p95 is ~11.7× inside the 1000ms G1 budget.
 
 - 2026-07-17 (verifier, fresh context): checks 1–4 PASS (nearest-rank constants independently hand-computed; pacing band judged loose-but-adequate for a tripwire; harness JSON/exit contract verified incl. error paths). **Measurement-validity finding, worse than the builder's startup-transient note:** raw-sample dump on the long fixture (own scratch diagnostic over the real pipeline) shows 761/775 volatiles (98.2%) negative-latency, clustered in 13–21-event bursts pinned to dozens of distinct `tEnd` boundaries across the whole meeting; the only 14 positive samples are post-EOF finalization flush artifacts. Official harness on the long fixture: p50 −57.7ms, **p95 −4.77ms, passG1 true — a physically impossible "proof."** Working theory: volatile `range.end` is the nominal end of the window being analyzed (forward-looking), not audio-consumed-so-far. Ruling: exclude impossible negatives + surface `excludedNegative*` in the report (flattering-direction data must never silently count), AND fix the anchor itself, since post-filter only end-of-stream artifacts remain — mechanical filtering alone cannot yield a trustworthy steady-state p95. Blocker on live check 5 / exit criterion 1 until re-grounded.
 - 2026-07-17 (builder, Phase 2 fix, 22e9116 + a537a09): pacing loop now sleeps to a chunk's own end-time before yielding it; new `chunksAreNotDeliveredBeforeTheirOwnAudioDurationHasElapsed` test thresholds at the midpoint between buggy and correct timing (red 12/12 pre-fix, deterministic). `pauseSuspendsPacingAndResumeContinues` gained a one-chunk grace window (post-fix, pause takes effect at the next loop iteration — legitimate in-flight chunk). Stats now percentile over valid samples only with `excludedNegativeCount/totalCount/fraction` surfaced; `passG1` false on an all-excluded run; harness clamps anchors to a fed-audio clock (measured inert: 0 exclusions on real data). One test adaptation flagged: pipeline-wiring test asserts `totalCount` since its fake fires physically-impossible instant volatiles that the guard now (correctly) excludes. Debug long-fixture shape post-fix: p50 39.1ms, p95 93.5ms, max 170ms, all-positive. Open note for later milestones: the in-app diagnostics path has no fed-clock to clamp against — if live diagnostics ever show negative samples, that's the same class of question there.

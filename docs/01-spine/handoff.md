@@ -2,20 +2,18 @@
 
 ## Start here next session
 
-Slice 5 (latency instrumentation + fixture harness proving G1 + diagnostics basics) is **active** — the last build slice. slice5-builder (sonnet) dispatched: LatencyRecorder, FixturePlaybackSource, `LatencyHarness` executable (`swift run -c release macapy-latency <fixture>` → JSON p50/p95/max + pass_g1), G1BudgetTests debug-ceiling regression test, minimal live diagnostics section. Then verifier → user live checks (authoritative release harness run, number recorded in milestone.md) → ship ritual → **milestone close-out**: real-meeting dogfood, zero-network full pass, cold start < 2s, then milestone 01 → shipped / 02 → active. If resuming mid-slice, the slice-05 checklist shows the last completed role.
+All five slices are **shipped**. What remains is the **milestone close-out pass** (exit criteria walk with the user, then the final ship ritual): (1) real-meeting dogfood — a genuine call end-to-end: dual-source live transcript, persisted, reopened from history (criteria 2, deferred from slice 3); (2) zero-network full-meeting run — `lsof -i -a -p $(pgrep -x macapy)` empty throughout (criterion 4; model already installed so no download traffic); (3) cold start < 2s (criterion 5 remainder — launch to menu-bar-ready; pause hotkey and ephemeral already proven in slice 4, headphones in slice 3, G1 in slice 5). Then: milestones.md → 01 shipped / 02-understanding active, rewrite this handoff for M2, record SPEC amendment candidates in one place, consider archiving the session's backlog lines into the M2 planning input.
 
 ## Current state
 
-- Slices 1–4 **shipped** (4: 2026-07-17, all live checks individually confirmed). App now does: dual-stream live transcript (You/Them), GRDB persistence w/ history window, ephemeral mode, ⌥⌘M start/stop + ⌥⌘P pause.
-- 56/56 tests green ×many, 0 flakes ever; xcodebuild clean incl. wiped-DerivedData builds. GRDB 7.11.1 is the only external dep.
-- Slice-4 record: two real defects caught pre-ship (deterministic tail-final data loss in SegmentWriter — fixed via `finishFinalsStreams()` + completion signal; latent slice-1 Carbon HotKey bug — fixed + proven live). Contract notes live in slice-04 Notes (attach-before-start; finish-before-flushAndStop).
-- Deferred to close-out by agreement: slice-3 real-meeting dogfood (exit criterion 2), zero-network full-meeting pass (criterion 4), cold-start measure (criterion 5 part).
-- Commands: `swift test`, `xcodebuild -project macapy.xcodeproj -scheme macapy build`; Xcode 26 selected.
+- **Exit criterion 1 PROVEN and recorded**: release harness p95 **85.36ms** speech-to-visible (p50 32.97ms, 775 volatiles, 0 excluded) — ~11.7× inside the G1 budget. Full JSON in slice-05 doc + milestone Integration notes.
+- 74/74 tests green (14 suites), 0 flakes across every run this milestone; xcodebuild clean incl. wiped DerivedData. Sole dependency GRDB 7.11.1.
+- The G1 number survived a real gauntlet: harness pacing bug (yield-before-sleep) produced impossible negative latencies that the first version would have recorded as "proof" — caught by verifier raw-sample dump, root-caused (SpeechAnalyzer timestamps are honest), fixed, re-verified, and the reporting layer now excludes-and-counts impossible samples visibly.
+- App feature state: dual-stream You/Them live transcript, GRDB persistence + history window, ephemeral mode, ⌥⌘M/⌥⌘P hotkeys, Settings diagnostics section with live latency percentiles.
+- Commands: `swift test`; `xcodebuild -project macapy.xcodeproj -scheme macapy build`; release harness: `swift run -c release macapy-latency Tests/TranscribeKitTests/Fixtures/long-meeting.wav`.
 
 ## Open concerns
 
-- ~~G1 measurement blocker~~ **RESOLVED 2026-07-17**: root cause was a harness pacing bug (yield-before-sleep), NOT SpeechAnalyzer — timestamps proven honest (0/775 exceed fed audio). Fixed (22e9116 + a537a09), independently re-verified (0 negatives, debug p95 ≈ 86–95ms), tripwire tightened (e784b1e). Authoritative release run is GO.
-- G1 release number still unrecorded — user runs `swift run -c release macapy-latency Tests/TranscribeKitTests/Fixtures/long-meeting.wav` (≈3 min, real-time paced) and the JSON gets recorded in milestone.md (exit criterion 1). Debug shape suggests comfortable pass.
-- Real-meeting accuracy/robustness unproven until the close-out dogfood.
-- Clean-machine model download path unexercised (model preinstalled here).
-- Backlog (milestone notes): mid-capture format listener; TCC-denial-silent onboarding (M5); unbounded-stream memory watch under analyzer stall.
+- Close-out items above are the last unproven claims (real-meeting robustness, zero-network full pass, cold start).
+- Clean-machine model-download path never exercised (model preinstalled here) — matters for M5 clone-and-run, not for close-out.
+- Backlog carried into M2 planning: mid-capture format listener (unreproduced), TCC-denial-silent onboarding UX (M5), unbounded-stream memory watch under analyzer stall (G4), in-app diagnostics has no fed-clock to clamp against (if live negatives ever appear), SPEC amendments (query-format not 16k; STTEngine prepare/preferredInputFormat; String+TimeInterval events; @MainActor store; camelCase columns; os.Logger not swift-log; unsandboxed).
