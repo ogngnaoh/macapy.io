@@ -341,4 +341,56 @@ struct MeetingPipelineTests {
     final class CallCounter {
         var count = 0
     }
+
+    // MARK: - Slice 3: dual-source interleave + panel labels
+
+    /// Check 1 (slice 3): two fake sources emit overlapping scripted finals; the
+    /// store interleaves them strictly by `tStart` with the correct You/Them
+    /// source tags, and each source's own timestamps stay non-decreasing (the
+    /// cross-event ordering assertion carried from the slice-2 verifier caveat).
+    @Test func dualSourcePipelineInterleavesByTStartWithSourceTags() async {
+        let counters = Counters()
+        // Overlapping in tStart across sources: mic {0,2}, system {1,3}.
+        let engine = FakeSTTEngine(
+            live: [
+                .mic: [.final(seg("you-0", .mic, 0)), .final(seg("you-2", .mic, 2))],
+                .system: [.final(seg("them-1", .system, 1)), .final(seg("them-3", .system, 3))],
+            ],
+            counters: counters
+        )
+        let micSource = FakeCaptureSource(source: .mic, counters: counters)
+        let sysSource = FakeCaptureSource(source: .system, counters: counters)
+        let store = TranscriptStore()
+        let pipeline = MeetingPipeline(engine: engine, sources: [micSource, sysSource], store: store)
+
+        do {
+            try await pipeline.start()
+        } catch {
+            Issue.record("pipeline.start() threw: \(error)")
+            return
+        }
+        await waitUntil("4 interleaved segments") { store.segments.count == 4 }
+
+        // Interleaved strictly by tStart across the two sources.
+        #expect(store.segments.map(\.text) == ["you-0", "them-1", "you-2", "them-3"])
+        // Correct You/Them source tags, in interleaved order.
+        #expect(store.segments.map(\.source) == [.mic, .system, .mic, .system])
+        // Per-source cross-event timestamps are non-decreasing.
+        for src in [AudioSource.mic, .system] {
+            let perSource = store.segments.filter { $0.source == src }.map(\.tStart)
+            #expect(
+                zip(perSource, perSource.dropFirst()).allSatisfy { $0 <= $1 },
+                "\(src) timestamps not non-decreasing: \(perSource)")
+        }
+
+        await pipeline.stop()
+    }
+
+    /// Check (slice 3): the panel's per-line speaker label maps mic → "You" and
+    /// system → "Them". The label *rendering* is user-walked (live checks 5–6);
+    /// this pins the mapping itself.
+    @Test func panelLabelsMapSourceToYouThem() {
+        #expect(PanelView.speakerLabel(for: .mic) == "You")
+        #expect(PanelView.speakerLabel(for: .system) == "Them")
+    }
 }
