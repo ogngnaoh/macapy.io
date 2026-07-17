@@ -69,11 +69,11 @@ User-live:
 ## Checklist
 
 - [x] Acceptance checks user-reviewed 2026-07-16 (front-loaded batch gate)
-- [ ] Builder: LatencyRecorder (+ math tests red→green)
-- [ ] Builder: FixturePlaybackSource (+ pacing test red→green)
-- [ ] Builder: harness lib + executable target + JSON output
-- [ ] Builder: G1BudgetTests debug-ceiling regression test
-- [ ] Builder: pipeline wiring of recorder + minimal diagnostics section
+- [x] Builder: LatencyRecorder, nearest-rank percentiles (red 3fae96e → green bb29afd)
+- [x] Builder: FixturePlaybackSource + pacing test (bb29afd)
+- [x] Builder: LatencyHarnessLib (own target) + `macapy-latency` executable + JSON output (bb29afd)
+- [x] Builder: G1BudgetTests debug-ceiling regression test (bb29afd)
+- [x] Builder: pipeline recorder wiring + Settings diagnostics section (bb29afd)
 - [ ] Verifier: independent re-run of checks 1–4 with evidence
 - [ ] Live checks 5–6 walked with the user; G1 number recorded in milestone.md
 - [ ] Ship rituals: milestone table, integration notes, handoff, final commit
@@ -81,3 +81,5 @@ User-live:
 ## Notes / dead ends
 
 (append as work proceeds)
+
+- 2026-07-17 (builder, red 3fae96e → green bb29afd): `LatencyHarnessLib` split into its own target (keeps CaptureKit-orchestration glue out of TranscribeKit). Long fixture: 175.7s / ~5.4MB mono 16k Int16, `say`-generated 30-sentence meeting monologue. Fixtures are per-target SPM resources (no cross-target Bundle.module — fox.wav duplicated into G1BudgetTests). Diagnostics section polls the recorder at 500ms (recorder isn't @Observable). Recorder hook: `Date()` captured just before `store.apply()` on the MainActor event task — render pass (~≤1 frame) not separately measured, per doc approximation. **Measurement finding (flagged before the authoritative run):** SpeechAnalyzer's first volatile batch per analysis window reports `tEnd` pinned to the window boundary (e.g. 4.000s) and fires ~55–65ms *before* wall clock reaches that boundary → physically-impossible negative latencies at startup that flatter percentiles (fox.wav debug run: p50 −66ms). Later volatiles are honest (+3..+30ms debug). One transient per source per meeting. Verifier to rule on how the authoritative G1 number must handle these samples.
