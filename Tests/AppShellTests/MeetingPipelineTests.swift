@@ -525,6 +525,36 @@ struct MeetingPipelineTests {
         await pipeline.stop()
     }
 
+    // MARK: - Slice 5: latency recorder wiring
+
+    /// Check (slice 5): `MeetingPipeline` records volatile/final arrivals
+    /// into its injected `LatencyRecorder` at the same hook point events
+    /// reach the store — the recorder should show samples of both kinds
+    /// after a run that scripts both event types.
+    @Test func pipelineRecordsVolatileAndFinalArrivalsIntoInjectedRecorder() async throws {
+        let counters = Counters()
+        let engine = FakeSTTEngine(
+            live: [.mic: [
+                .volatile(text: "hel", tStart: 0, tEnd: 0.5),
+                .final(seg("hello world", .mic, 0)),
+            ]],
+            counters: counters
+        )
+        let source = FakeCaptureSource(source: .mic, counters: counters)
+        let store = TranscriptStore()
+        let recorder = LatencyRecorder(sessionStart: Date())
+        let pipeline = MeetingPipeline(engine: engine, sources: [source], store: store, recorder: recorder)
+
+        try await pipeline.start(mode: .ephemeral)
+        await waitUntil("segment applied") { store.segments.map(\.text) == ["hello world"] }
+
+        let report = recorder.report()
+        #expect(report.volatile.count >= 1, "expected the volatile event to be recorded")
+        #expect(report.final.count == 1, "expected the final event to be recorded")
+
+        await pipeline.stop()
+    }
+
     /// Check 8 (machine half): the coordinator's `togglePause()` forwards to
     /// the pipeline only while a session is actually capturing/paused — a
     /// no-op while idle — and drives `SessionController` through the same

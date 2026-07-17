@@ -9,7 +9,11 @@ let package = Package(
     name: "macapy",
     platforms: [.macOS("26.0")],
     products: [
-        .library(name: "AppShell", targets: ["AppShell"])
+        .library(name: "AppShell", targets: ["AppShell"]),
+        // The latency harness executable (slice-05 doc decision 2): a
+        // separate product so `swift run -c release macapy-latency
+        // <fixture.wav>` gives the authoritative G1 number.
+        .executable(name: "macapy-latency", targets: ["LatencyHarness"]),
     ],
     dependencies: [
         // PersistKit's one external dependency (SPEC §5 sanctioned; slice 4).
@@ -28,6 +32,11 @@ let package = Package(
             name: "AppShell",
             dependencies: ["CaptureKit", "TranscribeKit", "PersistKit", "AgentKit", "ProviderKit"]
         ),
+        // Shared by the LatencyHarness executable and G1BudgetTests
+        // (slice-05 doc layout) — one `runHarness(fixtureURL:)` code path,
+        // two configs/fixtures/consumers.
+        .target(name: "LatencyHarnessLib", dependencies: ["CaptureKit", "TranscribeKit"]),
+        .executableTarget(name: "LatencyHarness", dependencies: ["LatencyHarnessLib"]),
         .testTarget(name: "CaptureKitTests", dependencies: ["CaptureKit"]),
         .testTarget(
             name: "TranscribeKitTests",
@@ -36,5 +45,10 @@ let package = Package(
         ),
         .testTarget(name: "AppShellTests", dependencies: ["AppShell", "PersistKit"]),
         .testTarget(name: "PersistKitTests", dependencies: ["PersistKit", "TranscribeKit", "CaptureKit"]),
+        .testTarget(
+            name: "G1BudgetTests",
+            dependencies: ["LatencyHarnessLib"],
+            resources: [.copy("Fixtures")]
+        ),
     ]
 )
