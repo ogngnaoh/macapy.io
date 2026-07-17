@@ -36,13 +36,12 @@ struct G1BudgetTests {
         )
         // Post negative-latency-blocker fix (FixturePlaybackSource's
         // real-time pacing + the harness's fed-audio clamp), this run
-        // should exclude ~none of its volatile samples — a debug-config
-        // sample run measured 0/24 excluded. A generous, non-flaky ceiling
-        // here still catches a regression back to the pacing bug (which
-        // excluded the large majority of samples), without over-fitting to
-        // "exactly zero" on every possible machine/run.
+        // should exclude ~none of its volatile samples — measured baseline is
+        // a clean 0% on both fixtures. 5% leaves headroom for machine/run
+        // jitter while catching partial regressions long before the original
+        // pacing bug's 67–98% exclusion territory.
         #expect(
-            report.excludedNegativeFraction < 0.25,
+            report.excludedNegativeFraction < 0.05,
             "too many excluded negative-latency samples (\(report.excludedNegativeCount)/\(report.nVolatile))"
         )
         // passG1 (the strict <1000ms check) is intentionally not asserted
