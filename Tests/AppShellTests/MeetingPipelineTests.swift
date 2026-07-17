@@ -1,6 +1,7 @@
 import AVFoundation
 import CaptureKit
 import Foundation
+import PersistKit
 import Testing
 import TranscribeKit
 
@@ -18,8 +19,12 @@ struct MeetingPipelineTests {
     actor Counters {
         private(set) var captureStarts = 0
         private(set) var transcribeCalls = 0
+        private(set) var pauseCalls = 0
+        private(set) var resumeCalls = 0
         func captureStarted() { captureStarts += 1 }
         func transcribeCalled() { transcribeCalls += 1 }
+        func pauseCalled() { pauseCalls += 1 }
+        func resumeCalled() { resumeCalls += 1 }
     }
 
     enum FakeEngineError: Error { case prepareFailed, midStream }
@@ -94,8 +99,8 @@ struct MeetingPipelineTests {
             return stream
         }
 
-        func pause() async {}
-        func resume() async {}
+        func pause() async { await counters.pauseCalled() }
+        func resume() async { await counters.resumeCalled() }
         func stop() async {
             continuation?.finish()
             continuation = nil
@@ -392,5 +397,153 @@ struct MeetingPipelineTests {
     @Test func panelLabelsMapSourceToYouThem() {
         #expect(PanelView.speakerLabel(for: .mic) == "You")
         #expect(PanelView.speakerLabel(for: .system) == "Them")
+    }
+
+    // MARK: - Slice 4: persistence lifecycle, ephemeral proof, pause forwarding
+
+    /// Check 5: an ephemeral meeting run leaves zero rows in an on-disk
+    /// database (in a temp dir) and never grows its file; the same run in
+    /// persistent mode against that same on-disk store writes the expected
+    /// rows. This is the proof that `PersistenceMode.ephemeral` truly never
+    /// touches the on-disk store — not just that it uses a different one.
+    @Test func ephemeralModeNeverWritesToOnDiskDatabaseWhilePersistentModeDoes() async throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let dbURL = tempDir.appendingPathComponent("macapy.sqlite")
+
+        let onDiskDatabase = try MacapyDatabase.onDisk(at: dbURL)
+        let onDiskStore = MeetingStore(database: onDiskDatabase)
+        let sizeBeforeEphemeral = fileSize(at: dbURL)
+
+        // Ephemeral run: the pipeline must not touch `onDiskStore` at all.
+        let counters = Counters()
+        let ephemeralEngine = FakeSTTEngine(
+            live: [.mic: [.final(seg("ephemeral-line", .mic, 0))]], counters: counters
+        )
+        let ephemeralSource = FakeCaptureSource(source: .mic, counters: counters)
+        let ephemeralTranscript = TranscriptStore()
+        let ephemeralPipeline = MeetingPipeline(
+            engine: ephemeralEngine, sources: [ephemeralSource], store: ephemeralTranscript
+        )
+        try await ephemeralPipeline.start(mode: .ephemeral)
+        await waitUntil("ephemeral line applied") { ephemeralTranscript.segments.count == 1 }
+        await ephemeralPipeline.stop()
+
+        let rowsAfterEphemeral = try await onDiskStore.listMeetings()
+        #expect(rowsAfterEphemeral.isEmpty, "ephemeral mode must never write to the on-disk database")
+        #expect(
+            fileSize(at: dbURL) == sizeBeforeEphemeral,
+            "ephemeral mode must not grow the on-disk database file"
+        )
+
+        // Persistent run against the SAME on-disk store: rows DO appear.
+        let persistentEngine = FakeSTTEngine(
+            live: [.mic: [.final(seg("persistent-line", .mic, 0))]], counters: counters
+        )
+        let persistentSource = FakeCaptureSource(source: .mic, counters: counters)
+        let persistentTranscript = TranscriptStore()
+        let persistentPipeline = MeetingPipeline(
+            engine: persistentEngine, sources: [persistentSource], store: persistentTranscript
+        )
+        try await persistentPipeline.start(mode: .persistent(onDiskStore))
+        await waitUntil("persistent line applied") { persistentTranscript.segments.count == 1 }
+        await persistentPipeline.stop()
+
+        let rowsAfterPersistent = try await onDiskStore.listMeetings()
+        #expect(rowsAfterPersistent.count == 1)
+        let writtenSegments = try await onDiskStore.segments(for: rowsAfterPersistent[0].id)
+        #expect(writtenSegments.map(\.text) == ["persistent-line"])
+    }
+
+    private func fileSize(at url: URL) -> Int64 {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int64) ?? 0
+    }
+
+    /// Binding constraint (slice-04 doc Notes): `MeetingPipeline.start(mode:)`
+    /// must attach the `SegmentWriter` to `finalsStream()` before capture
+    /// starts, so a final emitted immediately isn't silently lost (no replay).
+    /// `FakeSTTEngine`'s `live` events are yielded as soon as `transcribe()` is
+    /// called — i.e. essentially immediately after `start()` — which is
+    /// exactly the hazard the binding note describes.
+    @Test func segmentWriterAttachesBeforeCaptureStartsSoAnImmediateFinalIsNotLost() async throws {
+        let meetingStore = MeetingStore(database: try MacapyDatabase.inMemory())
+        let counters = Counters()
+        let engine = FakeSTTEngine(
+            live: [.mic: [.final(seg("immediate", .mic, 0))]], counters: counters
+        )
+        let source = FakeCaptureSource(source: .mic, counters: counters)
+        let transcriptStore = TranscriptStore()
+        let pipeline = MeetingPipeline(engine: engine, sources: [source], store: transcriptStore)
+
+        try await pipeline.start(mode: .persistent(meetingStore))
+        await waitUntil("immediate final applied to store") { transcriptStore.segments.count == 1 }
+
+        let meetings = try await meetingStore.listMeetings()
+        #expect(meetings.count == 1)
+        let stored = try await waitUntilNonEmpty { try await meetingStore.segments(for: meetings[0].id) }
+        #expect(stored.map(\.text) == ["immediate"], "an immediate final must not be lost")
+
+        await pipeline.stop()
+    }
+
+    private func waitUntilNonEmpty(_ fetch: () async throws -> [Segment]) async throws -> [Segment] {
+        for _ in 0..<200 {
+            let result = try await fetch()
+            if !result.isEmpty { return result }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        return try await fetch()
+    }
+
+    /// `MeetingPipeline.pause()/resume()` (present since slice 2, unexercised
+    /// until this slice's hotkey) actually forward to the capture sources.
+    @Test func pipelinePauseAndResumeForwardToCaptureSources() async throws {
+        let counters = Counters()
+        let engine = FakeSTTEngine(live: [.mic: [.final(seg("x", .mic, 0))]], counters: counters)
+        let source = FakeCaptureSource(source: .mic, counters: counters)
+        let store = TranscriptStore()
+        let pipeline = MeetingPipeline(engine: engine, sources: [source], store: store)
+
+        try await pipeline.start(mode: .ephemeral)
+        await waitUntil("started") { store.segments.count == 1 }
+
+        await pipeline.pause()
+        #expect(await counters.pauseCalls == 1)
+        await pipeline.resume()
+        #expect(await counters.resumeCalls == 1)
+
+        await pipeline.stop()
+    }
+
+    /// Check 8 (machine half): the coordinator's `togglePause()` forwards to
+    /// the pipeline only while a session is actually capturing/paused — a
+    /// no-op while idle — and drives `SessionController` through the same
+    /// state the live hotkey check exercises by hand.
+    @Test func coordinatorTogglePauseForwardsToPipelineOnlyWhileActive() async throws {
+        let counters = Counters()
+        let engine = FakeSTTEngine(live: [.mic: [.final(seg("x", .mic, 0))]], counters: counters)
+        let source = FakeCaptureSource(source: .mic, counters: counters)
+        let coordinator = makeCoordinator(engine: engine, source: source)
+
+        coordinator.togglePause()  // idle: no-op
+        await coordinator.settle()
+        #expect(await counters.pauseCalls == 0)
+
+        coordinator.toggleSession()  // start
+        await waitUntil("started") { coordinator.store.segments.map(\.text) == ["x"] }
+
+        coordinator.togglePause()  // capturing -> paused
+        await coordinator.settle()
+        #expect(!coordinator.session.isCapturing)
+        #expect(await counters.pauseCalls == 1)
+
+        coordinator.togglePause()  // paused -> capturing
+        await coordinator.settle()
+        #expect(coordinator.session.isCapturing)
+        #expect(await counters.resumeCalls == 1)
+
+        coordinator.toggleSession()  // stop
+        await coordinator.settle()
     }
 }

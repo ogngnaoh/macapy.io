@@ -11,10 +11,17 @@ let package = Package(
     products: [
         .library(name: "AppShell", targets: ["AppShell"])
     ],
+    dependencies: [
+        // PersistKit's one external dependency (SPEC §5 sanctioned; slice 4).
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.1")
+    ],
     targets: [
         .target(name: "CaptureKit"),
         .target(name: "TranscribeKit", dependencies: ["CaptureKit"]),
-        .target(name: "PersistKit"),
+        .target(name: "PersistKit", dependencies: [
+            "TranscribeKit",
+            .product(name: "GRDB", package: "GRDB.swift"),
+        ]),
         .target(name: "AgentKit"),
         .target(name: "ProviderKit"),
         .target(
@@ -27,6 +34,7 @@ let package = Package(
             dependencies: ["TranscribeKit", "CaptureKit"],
             resources: [.copy("Fixtures")]
         ),
-        .testTarget(name: "AppShellTests", dependencies: ["AppShell"]),
+        .testTarget(name: "AppShellTests", dependencies: ["AppShell", "PersistKit"]),
+        .testTarget(name: "PersistKitTests", dependencies: ["PersistKit", "TranscribeKit", "CaptureKit"]),
     ]
 )
