@@ -142,12 +142,12 @@ User-live:
 
 - [x] Slice doc committed before any Swift code (e40abec)
 - [x] Acceptance checks user-reviewed 2026-07-16 (front-loaded batch gate)
-- [ ] Builder: de-risk spike (fixture + failing integration test first, then engine to green)
-- [ ] Builder: CaptureKit types + BufferConverter (+ tests red→green)
-- [ ] Builder: MicCapture
-- [ ] Builder: TranscribeKit types + STTEngine + SpeechAnalyzerEngine
-- [ ] Builder: TranscriptStore (+ tests red→green)
-- [ ] Builder: MeetingPipeline + coordinator factory + panel rendering + Info.plist
+- [x] Builder: de-risk spike (probe PASSED — real engine runs under `swift test`; evolved into check-1 test)
+- [x] Builder: CaptureKit types + BufferConverter (tests red 884e5c3 → green b064b03)
+- [x] Builder: MicCapture (b064b03)
+- [x] Builder: TranscribeKit types + STTEngine + SpeechAnalyzerEngine (b064b03)
+- [x] Builder: TranscriptStore (tests red 884e5c3 → green b064b03)
+- [x] Builder: MeetingPipeline + coordinator factory + panel rendering + Info.plist (b064b03)
 - [ ] Critic pass (concurrency: actor isolation, AudioChunk ownership, stream teardown/drain)
 - [ ] Verifier: independent re-run of checks 1–5 with evidence
 - [ ] Live checks 6–8 walked with the user
@@ -156,3 +156,7 @@ User-live:
 ## Notes / dead ends
 
 (append as work proceeds)
+
+- 2026-07-16 (builder, probe): file-fed SpeechAnalyzer under `swift test` needs **no mic/speech TCC**; en model was already installed on this machine, so the `prepare()` download branch is coded but **unexercised** — clean machines hit the one-time network install (live check 8 sequenced after it). Preferred analyzer format (queried): **16kHz Int16 mono interleaved** — SPEC's 16k rate was right, but it's Int16 not Float; querying stays mandatory. Probe transcript of fox.wav verbatim-correct, 24 volatiles / 2 finals, volatile-before-final confirmed (0.78s).
+- 2026-07-16 (builder, deviations from this doc — doc intentionally unedited by builder): (1) Segment times taken from `result.range` (whole-result CMTimeRange) as primary instead of per-run `.audioTimeRange` attributes — one t_start/t_end per segment is all M1 needs; attribute still requested. (2) `MeetingPipeline` gained `onFailure` callback + synchronous `markStopped()` — decision 8's "pipeline logs and stops the session" had no channel in the listed signature. (3) `AppShellCoordinator.init` gained `panel:`/`installHotKey:` injection (production defaults) + `PanelPresenting` seam so check-4 tests run headless without NSPanel/Carbon. (4) AVAudioFormat is not Sendable → a fresh format is reconstructed per source inside `start()` (exact for standard PCM; would drop a custom channel layout — note for slice 3).
+- 2026-07-16 (builder, self-flagged check change): single-chunk BufferConverter frame bound loosened between red and green (`>1400` → `>1200`): a lone 4800-frame 48k→16k chunk yields 1365 frames because the resampler's group delay holds ~235 samples in filter state (emitted with the next chunk); the multi-chunk test proves total-sample conservation. Flagged for independent scrutiny per verification convention — builder must not self-verify a changed check.

@@ -2,19 +2,19 @@
 
 ## Start here next session
 
-Slices 2–5 docs **approved by the user 2026-07-16** (front-loaded review done). Slice 2 is in build: builder subagent dispatched, starting with the de-risk spike (fixture wav → real SpeechAnalyzer under `swift test`, check 1 in slice-02 doc). If resuming: check slice-02 checklist for last completed role, then continue the sequence builder → critic → verifier → user live checks → ship ritual. Execution model: per slice, builder subagent (TDD, inherit model for 2–3 / sonnet for 4–5) → critic pass (2–3 only) → independent verifier re-runs machine checks → user-walked live checks → ship ritual. Orchestrator owns docs and commits.
+Slice 2 build is **done and green** (red 884e5c3 → green b064b03; 22 tests, xcodebuild clean; probe: real engine runs under `swift test`, no TCC, model was preinstalled). Critic + verifier dispatched in parallel. If resuming: read slice-02 checklist + Notes (builder deviations recorded there), collect critic findings and verifier verdicts, resolve any defects (re-verify after fixes), then walk live checks 6–8 with the user and do the ship ritual. Execution model: per slice, builder subagent (TDD, inherit model for 2–3 / sonnet for 4–5) → critic pass (2–3 only) → independent verifier re-runs machine checks → user-walked live checks → ship ritual. Orchestrator owns docs and commits.
 
 ## Current state
 
-- Slice 1 shipped 2026-07-16, all checks verified (slice-01 doc). Skeleton: menu bar accessory, ⌥⌘M non-activating panel, `SessionController` (idle ⇄ capturing), `AppShellCoordinator.syncPanel()` is the start/stop funnel.
-- Planning session (2026-07-16): SpeechAnalyzer + process-tap APIs **validated against SDK 26.5** (Xcode 26.6) — key signatures and gotchas recorded in slice-02/03 docs; SPEC §6 amendment candidates listed in milestone Integration notes (query format not 16kHz; STTEngine prepare/preferredInputFormat; String+TimeInterval events; @MainActor store).
-- Slice docs 2–5 written in slice-01 format, acceptance checks numbered and split machine-verifiable vs user-live. Not yet user-reviewed.
+- Slice 1 shipped 2026-07-16. Slices 2–5 docs approved by the user 2026-07-16 (front-loaded review, commit e7905ba); acceptance checks are pre-implementation and user-reviewed.
+- Slice 2 code-complete at b064b03: CaptureKit (AudioChunk/protocol/BufferConverter/MicCapture), TranscribeKit (STTEngine/SpeechAnalyzerEngine/TranscriptStore), AppShell MeetingPipeline + coordinator factory injection + panel volatile/final rendering, mic usage string. Builder deviations + probe findings recorded in slice-02 Notes (result.range times; onFailure/markStopped; panel/hotkey injection seams; AVAudioFormat non-Sendable; queried format = 16kHz Int16 mono).
+- Builder self-flagged one loosened test assertion (BufferConverter single-chunk frame bound — resampler group delay); needs independent scrutiny, not builder's word.
 - Build: `xcodebuild -project macapy.xcodeproj -scheme macapy build`; tests: `swift test`; Xcode 26 selected.
 
 ## Open concerns
 
-- SpeechAnalyzer **accuracy** still unproven (API shape is validated; quality is not) — slice 2 spike + live checks are the proof point; STTEngine protocol is the escape hatch.
-- Unknown: whether the real engine runs under `swift test` (asset download; possible TCC on SPM test processes). Spike fails loudly and rescopes to `swift run`/user-live if blocked.
-- Speech-model asset install needs network once — zero-network check must run after it.
-- Mic TCC re-prompts on ad-hoc-signed rebuilds (slice 2); process-tap TCC key name to verify hands-on (slice 3); sandbox decision planned → unsandboxed, confirm hands-on in slice 3.
+- SpeechAnalyzer accuracy on real meetings still unproven — live checks 6–8 + slice-3 dogfood are the proof.
+- `prepare()` asset-download branch unexercised (model preinstalled here) — clean-machine behavior unknown; zero-network check must run after one-time install.
+- Rapid-toggle/teardown concurrency in coordinator+pipeline is the highest-risk area (fake-driven test passes; critic focusing there).
+- Mic TCC re-prompts on ad-hoc-signed rebuilds (watch in live checks); process-tap TCC key + unsandboxed decision to confirm hands-on in slice 3.
 - 7 NEEDS-CLARIFICATION markers in PRD/SPEC stand — none block M1.
