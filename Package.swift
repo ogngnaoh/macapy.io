@@ -13,13 +13,19 @@ let package = Package(
     ],
     targets: [
         .target(name: "CaptureKit"),
-        .target(name: "TranscribeKit"),
+        .target(name: "TranscribeKit", dependencies: ["CaptureKit"]),
         .target(name: "PersistKit"),
         .target(name: "AgentKit"),
         .target(name: "ProviderKit"),
         .target(
             name: "AppShell",
             dependencies: ["CaptureKit", "TranscribeKit", "PersistKit", "AgentKit", "ProviderKit"]
+        ),
+        .testTarget(name: "CaptureKitTests", dependencies: ["CaptureKit"]),
+        .testTarget(
+            name: "TranscribeKitTests",
+            dependencies: ["TranscribeKit", "CaptureKit"],
+            resources: [.copy("Fixtures")]
         ),
         .testTarget(name: "AppShellTests", dependencies: ["AppShell"]),
     ]
