@@ -1,6 +1,6 @@
 # Milestone 02 — Understanding
 
-**Status:** pending (activates when M1's close-out pass ships 01)
+**Status:** active (since 2026-07-17 — M1 shipped)
 **Planned:** 2026-07-17 (interview-driven planning session; decisions in Integration notes)
 **References:** ../../PRD.md (FR-008, FR-009 partial — review only, FR-010, FR-013 completes, FR-014, FR-015), ../../SPEC.md §6.3–6.4, G3, G5, G6
 
