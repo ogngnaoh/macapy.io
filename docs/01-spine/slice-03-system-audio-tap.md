@@ -63,7 +63,7 @@ User-live:
 ## Checklist
 
 - [x] Acceptance checks user-reviewed 2026-07-16 (front-loaded batch gate)
-- [ ] Config step: entitlements/sandbox decision + usage key + user-walked TCC prompt (exact key recorded in Notes)
+- [x] Config step: entitlements/sandbox decision + usage key verified & shipped (ef5ec58; key + technique in Notes) — user TCC walk pending
 - [ ] Builder: SystemAudioCapture (tap, aggregate device, IOProc; tests where fakeable)
 - [ ] Builder: pipeline second source + panel You/Them labels (dual-fake test red→green)
 - [ ] Builder: concurrent real-engine fixture test
@@ -75,3 +75,5 @@ User-live:
 ## Notes / dead ends
 
 (append as work proceeds)
+
+- 2026-07-17 (builder, Phase A — config/TCC de-risk, ef5ec58): usage key **`NSAudioCaptureUsageDescription`** confirmed (service `kTCCServiceAudioCapture`). Verification technique worth reusing: TCC keys are NOT in public SDK headers anywhere — the authoritative mapping is the adjacent service→key string pairs inside `/System/Library/PrivateFrameworks/TCC.framework/Support/tccd`. Tap API availability re-confirmed in SDK 26.5 (create/destroy macos 14.2+, `bundleIDs`/`processRestoreEnabled` 26.0+). Key verified present in the **built** bundle; codesign shows no sandbox entitlement (unsandboxed decision recorded in entitlements comment). Phase A tap: mono global mixdown excluding own PID, `.unmuted`, auto-start aggregate device, deliberately **no-op IOProc** (yields nothing) — the checkpoint only proves prompt-appears-and-grant-survives. Gotcha: `CATapDescription.uuid.uuidString` *is* the tap UID for the aggregate's tap list — no runtime `kAudioTapPropertyUID` query needed. Note: from Phase A on, production spins up two concurrent SpeechAnalyzers (system one gets an empty stream and finalizes cleanly); the real concurrent-resource proof stays machine check 2 in Phase B.
