@@ -87,8 +87,15 @@ final class AppShellCoordinator {
         stopping.markStopped()  // synchronous: a suspended start() bails at its checkpoint
         let inFlightStart = startTask
         startTask = nil
+        // Chain behind the previous teardown so every outstanding stop is
+        // serialized. Because a start awaits the *latest* stopTask, and the
+        // latest transitively awaits the whole chain, no later start's reset()
+        // can run while any earlier pipeline's drain is still writing to the
+        // shared store — even with two or more teardowns in flight.
+        let previousStop = stopTask
         stopTask = Task {
             inFlightStart?.cancel()
+            await previousStop?.value
             await stopping.stop()
         }
     }
