@@ -64,9 +64,9 @@ User-live:
 
 - [x] Acceptance checks user-reviewed 2026-07-16 (front-loaded batch gate)
 - [x] Config step: entitlements/sandbox decision + usage key verified & shipped (ef5ec58; key + technique in Notes); user walked the TCC prompt 2026-07-17 — prompt shown with our string, grant OK, no crash (live check 4 PASS early)
-- [ ] Builder: SystemAudioCapture (tap, aggregate device, IOProc; tests where fakeable)
-- [ ] Builder: pipeline second source + panel You/Them labels (dual-fake test red→green)
-- [ ] Builder: concurrent real-engine fixture test
+- [x] Builder: SystemAudioCapture (tap, aggregate device, real IOProc → convert → yield) (Phase B green 882c929)
+- [x] Builder: pipeline second source + panel You/Them labels (red 0e21e94 → green 882c929)
+- [x] Builder: concurrent real-engine fixture test (train.wav second fixture; no crosstalk; machine check 2 satisfied)
 - [ ] Critic pass (IOProc real-time safety, teardown ordering, tap lifecycle)
 - [ ] Verifier: independent re-run of checks 1–3 with evidence
 - [ ] Live checks 4–8 walked with the user
@@ -76,4 +76,5 @@ User-live:
 
 (append as work proceeds)
 
+- 2026-07-17 (builder, Phase B, red 0e21e94 → green 882c929): Tap native format **queried** via `kAudioTapPropertyFormat` (mirrors the mic-format lesson); if live system audio is silent/garbled, the first suspect is switching to the aggregate device's input-stream format instead. IOProc wraps the `AudioBufferList` no-copy (`AVAudioPCMBuffer(pcmFormat:bufferListNoCopy:)`, valid only during the callback) → synchronous convert → yields a fresh owned buffer (AudioChunk rule holds). Panel label is an inline bold `AttributedString` prefix — `Text + Text` is deprecated in macOS 26. `PanelView.speakerLabel(for:)` added as a testable seam (label *rendering* stays user-walked). RED-shape honesty: only the panel-label test was compile-red; the interleave and concurrent-engine tests validate architecture slice 2 already built and pass against the pre-GREEN tree — builder demonstrated non-vacuity by neutralizing the panel test; verifier to audit independently. Two concurrent real SpeechAnalyzers proven, disjoint-keyword fixtures (fox/train), no crosstalk.
 - 2026-07-17 (builder, Phase A — config/TCC de-risk, ef5ec58): usage key **`NSAudioCaptureUsageDescription`** confirmed (service `kTCCServiceAudioCapture`). Verification technique worth reusing: TCC keys are NOT in public SDK headers anywhere — the authoritative mapping is the adjacent service→key string pairs inside `/System/Library/PrivateFrameworks/TCC.framework/Support/tccd`. Tap API availability re-confirmed in SDK 26.5 (create/destroy macos 14.2+, `bundleIDs`/`processRestoreEnabled` 26.0+). Key verified present in the **built** bundle; codesign shows no sandbox entitlement (unsandboxed decision recorded in entitlements comment). Phase A tap: mono global mixdown excluding own PID, `.unmuted`, auto-start aggregate device, deliberately **no-op IOProc** (yields nothing) — the checkpoint only proves prompt-appears-and-grant-survives. Gotcha: `CATapDescription.uuid.uuidString` *is* the tap UID for the aggregate's tap list — no runtime `kAudioTapPropertyUID` query needed. Note: from Phase A on, production spins up two concurrent SpeechAnalyzers (system one gets an empty stream and finalizes cleanly); the real concurrent-resource proof stays machine check 2 in Phase B.
