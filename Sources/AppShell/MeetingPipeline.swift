@@ -1,13 +1,25 @@
 import AVFoundation
 import CaptureKit
 import Foundation
+import PersistKit
 import TranscribeKit
 import os
 
-/// Orchestrates one meeting's capture → transcription → store flow. `@MainActor`
-/// (created and torn down from the coordinator). Owns per-source event tasks
-/// that apply `TranscriptEvent`s to the store; `stop()` finishes the capture
-/// streams (which makes each engine finalize) and awaits the tail drain.
+/// How a meeting's transcript is persisted (slice-04 doc decision 2/4):
+/// `.persistent` writes through the given, app-lifetime `MeetingStore`;
+/// `.ephemeral` writes to a fresh, private in-memory database that's
+/// discarded when the meeting ends — same write path, zero disk rows by
+/// construction.
+enum PersistenceMode {
+    case persistent(MeetingStore)
+    case ephemeral
+}
+
+/// Orchestrates one meeting's capture → transcription → store → persistence
+/// flow. `@MainActor` (created and torn down from the coordinator). Owns
+/// per-source event tasks that apply `TranscriptEvent`s to the store; `stop()`
+/// finishes the capture streams (which makes each engine finalize) and awaits
+/// the tail drain, then flushes and closes out the meeting's persistence.
 @MainActor
 final class MeetingPipeline {
     private let engine: any STTEngine
@@ -17,6 +29,11 @@ final class MeetingPipeline {
     private var eventTasks: [Task<Void, Never>] = []
     private var stopped = false
     private let log = Logger(subsystem: "io.macapy.app", category: "MeetingPipeline")
+
+    private var meetingStore: MeetingStore?
+    private var meetingID: MeetingRecord.ID?
+    private var segmentWriter: SegmentWriter?
+    private var writerTask: Task<Void, Never>?
 
     /// Invoked on a mid-stream transcription failure (the coordinator stops the
     /// session). Errors thrown from `start()` propagate to the caller instead.
@@ -41,7 +58,39 @@ final class MeetingPipeline {
         stopped = true
     }
 
-    func start() async throws {
+    func start(mode: PersistenceMode) async throws {
+        let resolvedStore: MeetingStore
+        let ephemeral: Bool
+        switch mode {
+        case .persistent(let store):
+            resolvedStore = store
+            ephemeral = false
+        case .ephemeral:
+            // A fresh, private in-memory database per meeting (slice-04 doc
+            // decision 2) — never touches disk, so it's discarded for free
+            // when this pipeline (and its store reference) goes away.
+            resolvedStore = MeetingStore(database: try MacapyDatabase.inMemory())
+            ephemeral = true
+        }
+        let meeting = try await resolvedStore.beginMeeting(startedAt: Date(), ephemeral: ephemeral)
+        meetingStore = resolvedStore
+        meetingID = meeting.id
+
+        // BINDING (slice-04 doc Notes, from the slice-2 critic):
+        // `TranscriptStore.finalsStream()` has no replay and `reset()`
+        // finishes all continuations, so the `SegmentWriter` must attach
+        // *now* — before `engine.prepare()`/capture start below, i.e. before
+        // anything in this method could cause a final to be produced — or an
+        // immediate/boundary final would be silently lost. The coordinator
+        // calls `store.reset()` immediately before `start()`, so this attach
+        // always happens strictly after that reset and gets a live
+        // continuation; a fresh `SegmentWriter` is created here on every call,
+        // satisfying "re-attach after every reset" by construction.
+        let writer = SegmentWriter(store: resolvedStore, meetingID: meeting.id)
+        segmentWriter = writer
+        let finals = store.finalsStream()
+        writerTask = Task { await writer.run(consuming: finals) }
+
         try await engine.prepare(locale: locale)
         if stopped { return }
         let baseFormat = try await engine.preferredInputFormat()
@@ -92,11 +141,34 @@ final class MeetingPipeline {
         }
         // Draining: each capture stream is now finished, so each engine
         // finalizes and emits its remaining finals before ending the event
-        // stream. Awaiting the tasks guarantees those finals reached the store.
+        // stream. Awaiting the tasks guarantees those finals reached the store
+        // (and, from there, the SegmentWriter's finalsStream — see start()).
         for task in eventTasks {
             _ = await task.value
         }
         eventTasks.removeAll()
+
+        // Force the tail write now rather than waiting on the debounce window
+        // (or, worse, however long until the *next* meeting's reset() ends
+        // this stream naturally — see SegmentWriter's doc comment).
+        if let segmentWriter {
+            do {
+                try await segmentWriter.flushAndStop()
+            } catch {
+                log.error("final segment flush failed: \(error.localizedDescription)")
+            }
+        }
+        if let meetingStore, let meetingID {
+            do {
+                try await meetingStore.endMeeting(id: meetingID, endedAt: Date())
+            } catch {
+                log.error("endMeeting failed: \(error.localizedDescription)")
+            }
+        }
+        segmentWriter = nil
+        writerTask = nil
+        meetingStore = nil
+        meetingID = nil
     }
 
     func pause() async {

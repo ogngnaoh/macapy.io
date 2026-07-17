@@ -119,9 +119,15 @@ struct MeetingPipelineTests {
     private func makeCoordinator(
         engine: FakeSTTEngine, source: FakeCaptureSource
     ) -> AppShellCoordinator {
-        AppShellCoordinator(panel: FakePanel(), installHotKey: false) { store in
-            MeetingPipeline(engine: engine, sources: [source], store: store)
-        }
+        AppShellCoordinator(
+            panel: FakePanel(), installHotKey: false,
+            makePipeline: { store in
+                MeetingPipeline(engine: engine, sources: [source], store: store)
+            },
+            // In-memory: these tests exercise the pipeline/session machinery,
+            // not persistence — never touch a real on-disk database.
+            makePersistentStore: { MeetingStore(database: try MacapyDatabase.inMemory()) }
+        )
     }
 
     private func seg(_ text: String, _ source: AudioSource, _ t: TimeInterval) -> Segment {
@@ -369,7 +375,10 @@ struct MeetingPipelineTests {
         let pipeline = MeetingPipeline(engine: engine, sources: [micSource, sysSource], store: store)
 
         do {
-            try await pipeline.start()
+            // .ephemeral: this check predates persistence and isn't testing
+            // it — a mode is now mandatory, and ephemeral has no side effects
+            // requiring extra setup (slice 4 signature change).
+            try await pipeline.start(mode: .ephemeral)
         } catch {
             Issue.record("pipeline.start() threw: \(error)")
             return

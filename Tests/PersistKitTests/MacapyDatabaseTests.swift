@@ -1,3 +1,4 @@
+import Foundation
 import GRDB
 import Testing
 
@@ -8,11 +9,16 @@ import Testing
 struct MacapyDatabaseTests {
     @Test func migrationCreatesAllThreeTables() throws {
         let database = try MacapyDatabase.inMemory()
-        try database.dbWriter.read { db in
-            #expect(try db.tableExists("meetings"))
-            #expect(try db.tableExists("segments"))
-            #expect(try db.tableExists("settings"))
+        let exists = try database.dbWriter.read { db in
+            (
+                try db.tableExists("meetings"),
+                try db.tableExists("segments"),
+                try db.tableExists("settings")
+            )
         }
+        #expect(exists.0)
+        #expect(exists.1)
+        #expect(exists.2)
     }
 
     @Test func meetingsTableHasExpectedColumns() throws {
@@ -44,9 +50,10 @@ struct MacapyDatabaseTests {
         // `onDisk(at:)` would on every app launch) must not throw or duplicate.
         let database = try MacapyDatabase.inMemory()
         try MacapyDatabase.migrator.migrate(database.dbWriter)
-        try database.dbWriter.read { db in
-            #expect(try db.tableExists("meetings"))
+        let exists = try database.dbWriter.read { db in
+            try db.tableExists("meetings")
         }
+        #expect(exists)
     }
 
     @Test func onDiskCreatesContainingDirectoryAndPersistsAcrossReopen() throws {
@@ -57,7 +64,7 @@ struct MacapyDatabaseTests {
 
         let database = try MacapyDatabase.onDisk(at: dbURL)
         #expect(FileManager.default.fileExists(atPath: dbURL.path))
-        _ = try database.dbWriter.write { db in
+        try database.dbWriter.write { db in
             try MeetingStoreTestHelpers.insertProbeMeeting(db)
         }
 

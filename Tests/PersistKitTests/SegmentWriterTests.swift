@@ -9,6 +9,10 @@ import TranscribeKit
 /// threshold; a final flush at meeting end loses nothing. Also proves the
 /// BINDING attach-before-start constraint at the `TranscriptStore` boundary
 /// (see SegmentWriter.swift's doc comment and the slice-04 doc Notes).
+///
+/// `@MainActor`: `TranscriptStore` (TranscribeKit) is main-actor-isolated;
+/// the two attach-ordering tests below construct and drive one directly.
+@MainActor
 struct SegmentWriterTests {
     private func seg(_ text: String, _ t: TimeInterval) -> Segment {
         Segment(id: UUID(), source: .mic, text: text, tStart: t, tEnd: t + 1)
@@ -115,16 +119,16 @@ struct SegmentWriterTests {
         )
 
         // Attach BEFORE anything is applied — the binding ordering constraint.
-        let finals = await MainActor.run { transcriptStore.finalsStream() }
+        let finals = transcriptStore.finalsStream()
         let runTask = Task { await writer.run(consuming: finals) }
 
         let segment = Segment(id: UUID(), source: .mic, text: "immediate", tStart: 0, tEnd: 1)
-        await MainActor.run { transcriptStore.apply(.final(segment), from: .mic) }
+        transcriptStore.apply(.final(segment), from: .mic)
 
         let stored = try await waitUntilNonEmpty { try await meetingStore.segments(for: meeting.id) }
         #expect(stored.map(\.text) == ["immediate"])
 
-        await MainActor.run { transcriptStore.reset() }  // ends the finals stream
+        transcriptStore.reset()  // ends the finals stream
         _ = await runTask.value
     }
 
@@ -136,20 +140,29 @@ struct SegmentWriterTests {
     @Test func aFinalAppliedBeforeAttachIsNotDeliveredToALateAttach() async throws {
         let transcriptStore = TranscriptStore()
         let early = Segment(id: UUID(), source: .mic, text: "too-early", tStart: 0, tEnd: 1)
-        await MainActor.run { transcriptStore.apply(.final(early), from: .mic) }
+        transcriptStore.apply(.final(early), from: .mic)
 
         // Attach only now — after the final above was already applied.
-        let finals = await MainActor.run { transcriptStore.finalsStream() }
-        var received: [Segment] = []
+        let finals = transcriptStore.finalsStream()
+        let received = Received()
         let collectTask = Task {
-            for await segment in finals { received.append(segment) }
+            for await segment in finals { await received.append(segment) }
         }
 
         let late = Segment(id: UUID(), source: .mic, text: "on-time", tStart: 1, tEnd: 2)
-        await MainActor.run { transcriptStore.apply(.final(late), from: .mic) }
-        await MainActor.run { transcriptStore.reset() }
+        transcriptStore.apply(.final(late), from: .mic)
+        transcriptStore.reset()
         _ = await collectTask.value
 
-        #expect(received.map(\.text) == ["on-time"], "a late attach must miss finals applied before it")
+        let texts = await received.texts
+        #expect(texts == ["on-time"], "a late attach must miss finals applied before it")
     }
+}
+
+/// Thread-safe accumulator for the late-attach test above (a plain captured
+/// `var` mutated inside a `Task {}` trips Swift 6's capture checker even when
+/// both sides are MainActor-isolated).
+private actor Received {
+    private(set) var texts: [String] = []
+    func append(_ segment: Segment) { texts.append(segment.text) }
 }

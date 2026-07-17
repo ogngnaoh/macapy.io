@@ -53,7 +53,7 @@ struct PanelView: View {
                 }
             }
 
-            Text("⌥⌘M to stop")
+            Text("⌥⌘M to stop · ⌥⌘P to \(session.isPaused ? "resume" : "pause")")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
         }
@@ -89,6 +89,10 @@ struct PanelView: View {
         case .capturing:
             Label("Capturing", systemImage: "waveform")
                 .font(.headline)
+        case .paused:
+            Label("Paused", systemImage: "pause.circle")
+                .font(.headline)
+                .foregroundStyle(.orange)
         }
     }
 }

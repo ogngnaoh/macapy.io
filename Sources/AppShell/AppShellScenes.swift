@@ -16,8 +16,19 @@ public struct AppShellScenes: Scene {
         }
 
         Window("History", id: WindowID.history) {
-            HistoryPlaceholderView()
-                .regularWindowPresence(coordinator.activationPolicy)
+            Group {
+                if let store = coordinator.historyStore() {
+                    HistoryView(store: store)
+                } else {
+                    ContentUnavailableView(
+                        "History Unavailable",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text("Couldn't open the meeting database.")
+                    )
+                    .frame(minWidth: 480, minHeight: 320)
+                }
+            }
+            .regularWindowPresence(coordinator.activationPolicy)
         }
         .defaultLaunchBehavior(.suppressed)
         .restorationBehavior(.disabled)

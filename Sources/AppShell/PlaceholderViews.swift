@@ -1,17 +1,7 @@
 import SwiftUI
 
-/// Verification surface only — the real past-meetings list arrives with
-/// persistence in slice 4.
-struct HistoryPlaceholderView: View {
-    var body: some View {
-        ContentUnavailableView(
-            "No meetings yet",
-            systemImage: "clock",
-            description: Text("Past meetings will appear here once persistence lands (slice 4).")
-        )
-        .frame(minWidth: 480, minHeight: 320)
-    }
-}
+// HistoryPlaceholderView is gone — HistoryView.swift (slice 4) is the real
+// past-meetings list + read-only transcript detail.
 
 struct SettingsPlaceholderView: View {
     var body: some View {
