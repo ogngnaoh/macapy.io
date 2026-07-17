@@ -77,7 +77,8 @@ User-live:
 - [x] Verifier: checks 1–4 **all PASS** (2026-07-17) — percentile constants hand-derived (non-circular), red confirmed, no test weakening, 0 flakes ×3
 - [x] Root-cause investigation (Phase 1, 2026-07-17): **anchor theory refuted** — both anchors identical and honest (0/775 samples exceed fed audio). True cause: FixturePlaybackSource pacing bug (yield-before-sleep → every chunk visible ~one chunkDuration early). Earlier "SpeechAnalyzer startup transient / forward-looking window" theories retracted.
 - [x] Pacing fix + reporting layer shipped (fix 22e9116, reporting a537a09): sleep-then-yield; chunk-precision test proven red 12/12 against pre-fix code; fed-audio clamp (inert on real data, as expected); excludedNegative fields in Stats/HarnessReport; 74/74 ×3. Fresh debug long-fixture run: p50 39.1ms / p95 93.5ms / 0 exclusions — physically plausible shape restored
-- [ ] Focused re-verify of the pacing/measurement fix (incl. independent raw-sample re-dump)
+- [x] Focused re-verify: **PASS, blocker lifted** (2026-07-17) — independent raw re-dump 0/775 negatives (p50≈38.6ms, p95≈95.3ms debug); red reproduced by inverting the fix (12/12 early); both test adaptations legitimate (wiring test vacuity-probed by severing the wiring); 74/74 ×3
+- [x] Exclusion tripwire tightened 0.25 → 0.05 per verifier recommendation (e784b1e, orchestrator; suite green)
 - [ ] Focused re-verify of the measurement fix
 - [ ] Live checks 5–6 walked with the user; G1 number recorded in milestone.md
 - [ ] Ship rituals: milestone table, integration notes, handoff, final commit

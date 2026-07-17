@@ -14,8 +14,8 @@ Slice 5 (latency instrumentation + fixture harness proving G1 + diagnostics basi
 
 ## Open concerns
 
-- **BLOCKER (active): G1 measurement anchor invalid** — volatile `range.end` is forward-looking (98.2% of long-fixture samples negative; p95 itself negative; passG1=true is a false proof). Builder investigating per-run `.audioTimeRange` attributes vs a fed-audio clamp as the honest anchor; negatives will be excluded-and-counted in the report either way. Authoritative release run (live check 5) blocked until the fix re-verifies. If both anchors prove dishonest, the fallback design escalates to the orchestrator/user.
-- G1 (<1s speech-to-visible) is still **unmeasured** — slice 5 is the proof; if p95 ≥ 1s on base Apple Silicon the milestone's headline claim fails and we tune (chunk size, volatile reporting) before close-out.
+- ~~G1 measurement blocker~~ **RESOLVED 2026-07-17**: root cause was a harness pacing bug (yield-before-sleep), NOT SpeechAnalyzer — timestamps proven honest (0/775 exceed fed audio). Fixed (22e9116 + a537a09), independently re-verified (0 negatives, debug p95 ≈ 86–95ms), tripwire tightened (e784b1e). Authoritative release run is GO.
+- G1 release number still unrecorded — user runs `swift run -c release macapy-latency Tests/TranscribeKitTests/Fixtures/long-meeting.wav` (≈3 min, real-time paced) and the JSON gets recorded in milestone.md (exit criterion 1). Debug shape suggests comfortable pass.
 - Real-meeting accuracy/robustness unproven until the close-out dogfood.
 - Clean-machine model download path unexercised (model preinstalled here).
 - Backlog (milestone notes): mid-capture format listener; TCC-denial-silent onboarding (M5); unbounded-stream memory watch under analyzer stall.
