@@ -9,12 +9,11 @@ import os
 /// still hears the call and capture works with headphones connected (milestone
 /// exit criterion 3) — nothing about output routing changes.
 ///
-/// **Slice-3 Phase A (this commit) is deliberately minimal:** it builds and
-/// starts the whole tap → aggregate → IOProc chain so the first session start
-/// triggers the system-audio TCC prompt (`NSAudioCaptureUsageDescription` /
-/// `kTCCServiceAudioCapture`), but the IOProc is a no-op and the audio stream
-/// yields nothing. The real IOProc → `BufferConverter` → yield path, plus
-/// callback-safe teardown ordering, lands in Phase B under the critic's review.
+/// The IOProc runs on a Core Audio real-time thread: it touches no actor state
+/// and no `self`, only a boxed converter + the (Sendable) stream continuation —
+/// the same discipline as `MicCapture`. `BufferConverter` allocates a fresh
+/// output buffer per call, so every yielded chunk is a buffer the producer will
+/// never look at again (the `AudioChunk` ownership rule holds by construction).
 public actor SystemAudioCapture: AudioCaptureSource {
     public nonisolated let source: AudioSource = .system
 
@@ -29,50 +28,62 @@ public actor SystemAudioCapture: AudioCaptureSource {
     public init() {}
 
     public func start(format: AVAudioFormat) async throws -> AsyncStream<AudioChunk> {
-        // `format` is the analyzer's preferred format (16kHz Int16 mono). Phase A
-        // accepts it but does not convert yet — no chunks are produced. Phase B
-        // converts the tap's native format to this via BufferConverter.
-        _ = format
-
+        // 1) Create the process tap (excludes our own process).
         let (tap, tapUUID) = try createProcessTap()
         self.tapID = tap
+
         do {
+            // 2) The tap's native format is what the IOProc delivers; convert
+            //    from it to the analyzer's requested `format` (16kHz Int16 mono).
+            let nativeFormat = try tapStreamFormat(tap)
+            let converter = try BufferConverter(from: nativeFormat, to: format)
+
+            // 3) Aggregate device wrapping the tap, so we can run an IOProc.
             let aggregate = try createAggregateDevice(tapUUID: tapUUID)
             self.aggregateID = aggregate
 
-            // The IOProc runs on a real-time audio thread — it must not touch
-            // actor state or `self`. Phase A: no-op (return without reading).
+            // 4) The stream the IOProc feeds. Created before the IOProc so the
+            //    callback has a live continuation to yield into.
+            let (stream, continuation) = AsyncStream<AudioChunk>.makeStream(bufferingPolicy: .unbounded)
+            self.continuation = continuation
+
+            // 5) IOProc. The block runs on a real-time audio thread and captures
+            //    only `context` (an @unchecked Sendable box whose sole user, after
+            //    start, is that thread) — never `self` or actor state.
+            let context = IOProcContext(
+                converter: converter, nativeFormat: nativeFormat, continuation: continuation)
             var procID: AudioDeviceIOProcID?
             let createStatus = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregate, nil) {
-                _, _, _, _, _ in
-                // Phase B: wrap inInputData in an AVAudioPCMBuffer, convert, yield.
+                _, inInputData, _, _, _ in
+                context.handle(inInputData)
             }
             guard createStatus == noErr, let procID else {
                 throw CaptureError.processTapFailed(stage: "AudioDeviceCreateIOProcID", status: createStatus)
             }
             self.ioProcID = procID
 
+            // 6) Start pulling audio (this is where the tap actually runs).
             let startStatus = AudioDeviceStart(aggregate, procID)
             guard startStatus == noErr else {
                 throw CaptureError.processTapFailed(stage: "AudioDeviceStart", status: startStatus)
             }
+
+            running = true
+            log.info("system-audio tap started")
+            return stream
         } catch {
-            // Roll back anything already created so a partial start leaves no
-            // orphaned Core Audio objects behind.
+            // Roll back everything already created so a partial start leaves no
+            // orphaned Core Audio objects and no dangling continuation.
             teardownCoreAudio()
+            continuation?.finish()
+            continuation = nil
             throw error
         }
-
-        running = true
-        let (stream, continuation) = AsyncStream<AudioChunk>.makeStream(bufferingPolicy: .unbounded)
-        self.continuation = continuation
-        log.info("system-audio tap started (Phase A: no chunks yielded yet)")
-        return stream
     }
 
     public func pause() async {
         guard running, aggregateID != AudioObjectID(kAudioObjectUnknown), let ioProcID else { return }
-        AudioDeviceStop(aggregateID, ioProcID)
+        AudioDeviceStop(aggregateID, ioProcID)  // returns once the IOProc is no longer running
         running = false
     }
 
@@ -85,6 +96,8 @@ public actor SystemAudioCapture: AudioCaptureSource {
 
     public func stop() async {
         teardownCoreAudio()
+        // Finish only after the IOProc is guaranteed stopped (teardownCoreAudio
+        // calls AudioDeviceStop first), so no yield can race the finish.
         continuation?.finish()
         continuation = nil
     }
@@ -133,12 +146,17 @@ public actor SystemAudioCapture: AudioCaptureSource {
         return newAggregateID
     }
 
-    /// Tears down IOProc → aggregate device → tap, in outside-in order, ignoring
-    /// individual failures (best-effort cleanup). Phase B hardens the ordering
-    /// against in-flight callbacks.
+    /// Tears down IOProc → aggregate device → tap, in outside-in order.
+    ///
+    /// Ordering is the safety-critical part: `AudioDeviceStop` returns only once
+    /// the IOProc is no longer executing, so after it no callback can touch the
+    /// converter or continuation; only then do we destroy the IOProc, the
+    /// aggregate device, and finally the tap. Best-effort — individual failures
+    /// are ignored (there is nothing to recover to) but the object IDs are
+    /// cleared so a double `stop()` is a no-op.
     private func teardownCoreAudio() {
         if aggregateID != AudioObjectID(kAudioObjectUnknown), let ioProcID {
-            AudioDeviceStop(aggregateID, ioProcID)
+            AudioDeviceStop(aggregateID, ioProcID)          // waits out any in-flight callback
             AudioDeviceDestroyIOProcID(aggregateID, ioProcID)
         }
         ioProcID = nil
@@ -154,6 +172,23 @@ public actor SystemAudioCapture: AudioCaptureSource {
     }
 
     // MARK: - Core Audio queries
+
+    /// The tap's native stream format — the format the IOProc's input buffers
+    /// arrive in (typically 32-bit float mono at the output device's rate).
+    private func tapStreamFormat(_ tap: AudioObjectID) throws -> AVAudioFormat {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioTapPropertyFormat,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain)
+        var asbd = AudioStreamBasicDescription()
+        var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+        let status = AudioObjectGetPropertyData(tap, &address, 0, nil, &size, &asbd)
+        guard status == noErr, asbd.mSampleRate > 0,
+              let format = AVAudioFormat(streamDescription: &asbd) else {
+            throw CaptureError.processTapFailed(stage: "kAudioTapPropertyFormat", status: status)
+        }
+        return format
+    }
 
     /// Our own process's Core Audio process-object ID, so the global tap can
     /// exclude us (we must not capture our own output). Returns nil if the
@@ -175,5 +210,36 @@ public actor SystemAudioCapture: AudioCaptureSource {
             return nil
         }
         return processObject
+    }
+
+    /// Carries the non-Sendable converter + format across the real-time IOProc
+    /// block boundary. The audio thread is its only user once capture is
+    /// running, so `@unchecked Sendable` is sound (same rationale as
+    /// `MicCapture.ConverterBox`). `handle` runs entirely on that thread.
+    private final class IOProcContext: @unchecked Sendable {
+        let converter: BufferConverter
+        let nativeFormat: AVAudioFormat
+        let continuation: AsyncStream<AudioChunk>.Continuation
+
+        init(
+            converter: BufferConverter,
+            nativeFormat: AVAudioFormat,
+            continuation: AsyncStream<AudioChunk>.Continuation
+        ) {
+            self.converter = converter
+            self.nativeFormat = nativeFormat
+            self.continuation = continuation
+        }
+
+        /// Real-time thread: wrap the incoming buffer list (no copy), convert to
+        /// the target format (a fresh owned buffer), and yield it. The no-copy
+        /// wrapper is only read synchronously inside `convert`; the underlying
+        /// buffer-list memory is owned by Core Audio and valid for the callback.
+        func handle(_ inInputData: UnsafePointer<AudioBufferList>) {
+            guard let input = AVAudioPCMBuffer(pcmFormat: nativeFormat, bufferListNoCopy: inInputData),
+                  input.frameLength > 0,
+                  let converted = try? converter.convert(input) else { return }
+            continuation.yield(AudioChunk(buffer: converted, time: nil))
+        }
     }
 }
