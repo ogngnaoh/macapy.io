@@ -142,15 +142,22 @@ final class MeetingPipeline {
         // Draining: each capture stream is now finished, so each engine
         // finalizes and emits its remaining finals before ending the event
         // stream. Awaiting the tasks guarantees those finals reached the store
-        // (and, from there, the SegmentWriter's finalsStream — see start()).
+        // (and, from there, the SegmentWriter's finalsStream — see start()) —
+        // every final for this meeting has been synchronously yielded by the
+        // time this loop returns.
         for task in eventTasks {
             _ = await task.value
         }
         eventTasks.removeAll()
 
-        // Force the tail write now rather than waiting on the debounce window
-        // (or, worse, however long until the *next* meeting's reset() ends
-        // this stream naturally — see SegmentWriter's doc comment).
+        // End this meeting's finals stream now (not at the *next* meeting's
+        // reset()) so the SegmentWriter's trailing flush runs immediately.
+        // AsyncStream guarantees every value yielded above is delivered to
+        // the writer before it observes this as "ended" — flushAndStop()
+        // deterministically waits on exactly that, no actor-scheduling
+        // assumptions involved (see SegmentWriter's doc comment for the race
+        // this replaced).
+        store.finishFinalsStreams()
         if let segmentWriter {
             do {
                 try await segmentWriter.flushAndStop()
