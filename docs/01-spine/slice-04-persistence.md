@@ -103,3 +103,5 @@ User-live:
 ## Notes / dead ends
 
 (append as work proceeds)
+
+- 2026-07-17 (from slice-2 critic, binding on this slice's design): `TranscriptStore.finalsStream()` has **no replay** — `apply(.final:)` yields only to already-attached continuations, and `reset()` finishes all continuations. The `SegmentWriter` therefore MUST attach `finalsStream()` **before** `pipeline.start()` for each meeting and re-attach after every `reset()`, or early/boundary finals are silently lost. Add an explicit test for the attach-before-start ordering and for a final emitted immediately after start.
