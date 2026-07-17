@@ -1,6 +1,6 @@
 # Slice 3 — System-Audio Process Tap → Dual-Stream You/Them
 
-**Status:** active
+**Status:** shipped 2026-07-17 (live check 8, real-meeting dogfood, deferred to milestone close-out by agreement)
 **Plan approved:** 2026-07-16 (front-loaded batch review of slices 2–5; acceptance checks reviewed before implementation)
 **References:** ../../SPEC.md §6.1, §6.4, ./milestone.md, ./slice-02-mic-live-transcript.md
 
@@ -69,8 +69,9 @@ User-live:
 - [x] Builder: concurrent real-engine fixture test (train.wav second fixture; no crosstalk; machine check 2 satisfied)
 - [x] Critic pass (2026-07-17): **no critical/major**; 1 MINOR (mid-capture format change unhandled — exercised via strengthened live check 7 instead of speculative fix); RT-safety/teardown/rollback/aggregate-leak all cleared (private tap+aggregate auto-destroyed by coreaudiod even on crash)
 - [x] Verifier: checks 1–3 **all PASS** (2026-07-17) — non-vacuity proven by injected-bug failure; red independently reproduced (compile failure at 0e21e94); zero test changes red→green; 3× suite runs, 0 flakes; clean-DerivedData build verified
-- [ ] Live checks 4–8 walked with the user
-- [ ] Ship rituals: milestone table, integration notes (incl. sandbox + usage-key findings), handoff, final commit
+- [x] Live checks 4–7 walked with the user (2026-07-17): TCC prompt+grant ✓, video→Them ✓, speak→You ✓, headphones ✓, mid-capture device switch → transcription stayed sane (critic's format-change concern not reproduced → backlog note)
+- [x] Live check 8 (real-meeting dogfood) deferred to milestone close-out (user agreement)
+- [x] Ship rituals: milestone table, integration notes (incl. sandbox + usage-key findings), handoff, final commit
 
 ## Notes / dead ends
 
