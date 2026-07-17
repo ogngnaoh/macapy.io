@@ -150,7 +150,8 @@ User-live:
 - [x] Builder: MeetingPipeline + coordinator factory + panel rendering + Info.plist (b064b03)
 - [x] Critic pass (2026-07-17) — 1 MAJOR found (teardown chaining, see Notes); tap/engine-teardown/failure-path/buffering all cleared
 - [x] Fix MAJOR: serialize outstanding teardowns (builder, TDD: red 30bd2de → green 1dd43fc; 23/23 ×3)
-- [ ] Re-verify after fix (verifier re-run of affected checks 4–5 + audit of the new regression test; critic confirms finding closed)
+- [x] Critic re-check: **FINDING CLOSED** (2026-07-17) — empirically red at pre-fix commit, green at 1dd43fc; no new defect (no deadlock cycle; cancel-ordering safe; hang-propagation pre-existed)
+- [ ] Re-verify after fix (verifier re-run of affected checks 4–5 + audit of the new regression test)
 - [x] Verifier: independent re-run of checks 1–5 — **all PASS** (2026-07-17, fresh-context subagent; suite run twice, no flakiness; slice-1 tests byte-identical since 2dc5dbf)
 - [ ] Live checks 6–8 walked with the user
 - [ ] Ship rituals: milestone table, integration notes, handoff, final commit
