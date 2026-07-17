@@ -34,6 +34,17 @@ struct G1BudgetTests {
             report.p95Ms < 1_500,
             "debug-config regression ceiling breached: p95=\(report.p95Ms)ms"
         )
+        // Post negative-latency-blocker fix (FixturePlaybackSource's
+        // real-time pacing + the harness's fed-audio clamp), this run
+        // should exclude ~none of its volatile samples — a debug-config
+        // sample run measured 0/24 excluded. A generous, non-flaky ceiling
+        // here still catches a regression back to the pacing bug (which
+        // excluded the large majority of samples), without over-fitting to
+        // "exactly zero" on every possible machine/run.
+        #expect(
+            report.excludedNegativeFraction < 0.25,
+            "too many excluded negative-latency samples (\(report.excludedNegativeCount)/\(report.nVolatile))"
+        )
         // passG1 (the strict <1000ms check) is intentionally not asserted
         // here: debug builds are legitimately slower than the release
         // harness run that actually proves G1.

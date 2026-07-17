@@ -84,4 +84,69 @@ struct LatencyRecorderTests {
         #expect(approxEqual(report.volatile.p95Ms, 500))
         #expect(approxEqual(report.volatile.maxMs, 500))
     }
+
+    // MARK: - Negative-latency exclusion (slice-5 blocker postmortem)
+
+    /// A sample whose `audioTEnd` (seconds) exceeds its arrival offset —
+    /// i.e. a negative-latency sample, the kind the blocker traced to a
+    /// pacing bug (since fixed) and now guards against structurally via
+    /// exclusion.
+    private func negativeSample(_ recorder: LatencyRecorder, kind: LatencyRecorder.Kind, arrivalMs: Double, audioTEndSeconds: Double) {
+        recorder.record(kind: kind, audioTEnd: audioTEndSeconds, arrivalWall: arrival(afterMs: arrivalMs))
+    }
+
+    @Test func negativeLatencySamplesAreExcludedFromPercentilesButCountedVisibly() {
+        let recorder = LatencyRecorder(sessionStart: sessionStart)
+        // Two valid (non-negative) volatile samples: 100ms, 300ms.
+        recorder.record(kind: .volatile, audioTEnd: 0, arrivalWall: arrival(afterMs: 100))
+        recorder.record(kind: .volatile, audioTEnd: 0, arrivalWall: arrival(afterMs: 300))
+        // Three negative-latency volatile samples (audioTEnd exceeds the
+        // arrival offset) — e.g. arrival at +100ms but audioTEnd claims
+        // 1000ms of audio already recognized: latency = 100 - 1000 = -900ms.
+        negativeSample(recorder, kind: .volatile, arrivalMs: 100, audioTEndSeconds: 1.0)
+        negativeSample(recorder, kind: .volatile, arrivalMs: 200, audioTEndSeconds: 1.0)
+        negativeSample(recorder, kind: .volatile, arrivalMs: 50, audioTEndSeconds: 0.2)
+
+        let report = recorder.report()
+        // Percentiles computed from the 2 valid samples only.
+        #expect(report.volatile.count == 2)
+        #expect(approxEqual(report.volatile.maxMs, 300))
+        // The 3 negative samples are counted, not silently dropped.
+        #expect(report.volatile.excludedNegativeCount == 3)
+        #expect(report.volatile.totalCount == 5)
+        #expect(approxEqual(report.volatile.excludedNegativeFraction, 3.0 / 5.0, tolerance: 0.001))
+    }
+
+    @Test func allNegativeSamplesYieldZeroedPercentilesButNonzeroExcludedCount() {
+        let recorder = LatencyRecorder(sessionStart: sessionStart)
+        negativeSample(recorder, kind: .volatile, arrivalMs: 10, audioTEndSeconds: 5.0)
+        negativeSample(recorder, kind: .volatile, arrivalMs: 20, audioTEndSeconds: 5.0)
+
+        let report = recorder.report()
+        #expect(report.volatile.count == 0)
+        #expect(report.volatile.p50Ms == 0)
+        #expect(report.volatile.p95Ms == 0)
+        #expect(report.volatile.maxMs == 0)
+        #expect(report.volatile.excludedNegativeCount == 2)
+        #expect(report.volatile.totalCount == 2)
+        #expect(approxEqual(report.volatile.excludedNegativeFraction, 1.0, tolerance: 0.001))
+    }
+
+    @Test func statsWithNoSamplesAtAllHaveZeroTotalCountAndZeroFraction() {
+        let recorder = LatencyRecorder(sessionStart: sessionStart)
+        let report = recorder.report()
+        #expect(report.volatile.totalCount == 0)
+        #expect(report.volatile.excludedNegativeFraction == 0)
+    }
+
+    @Test func excludedNegativesAreTrackedIndependentlyPerKind() {
+        let recorder = LatencyRecorder(sessionStart: sessionStart)
+        negativeSample(recorder, kind: .volatile, arrivalMs: 10, audioTEndSeconds: 5.0)
+        recorder.record(kind: .final, audioTEnd: 0, arrivalWall: arrival(afterMs: 100))
+
+        let report = recorder.report()
+        #expect(report.volatile.excludedNegativeCount == 1)
+        #expect(report.final.excludedNegativeCount == 0)
+        #expect(report.final.count == 1)
+    }
 }

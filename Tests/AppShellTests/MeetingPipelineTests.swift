@@ -531,6 +531,18 @@ struct MeetingPipelineTests {
     /// into its injected `LatencyRecorder` at the same hook point events
     /// reach the store — the recorder should show samples of both kinds
     /// after a run that scripts both event types.
+    ///
+    /// Deviation (slice-5 blocker fix, additive): asserts on `totalCount`
+    /// (valid + excluded), not `count` (valid only). `FakeSTTEngine` fires
+    /// its scripted `.volatile(tEnd: 0.5)` essentially instantly — a real
+    /// capture source could never deliver 500ms of recognized audio in
+    /// ~0ms of wall time, so the computed latency for that one synthetic
+    /// sample is legitimately negative and gets excluded by the same
+    /// negative-latency guard the harness path uses. This test's actual
+    /// concern is wiring (did *something* reach the recorder), not
+    /// latency-value plausibility, so `totalCount` is the correct
+    /// assertion — `count` would make it flaky-by-construction against its
+    /// own unrealistic fixture data.
     @Test func pipelineRecordsVolatileAndFinalArrivalsIntoInjectedRecorder() async throws {
         let counters = Counters()
         let engine = FakeSTTEngine(
@@ -549,8 +561,8 @@ struct MeetingPipelineTests {
         await waitUntil("segment applied") { store.segments.map(\.text) == ["hello world"] }
 
         let report = recorder.report()
-        #expect(report.volatile.count >= 1, "expected the volatile event to be recorded")
-        #expect(report.final.count == 1, "expected the final event to be recorded")
+        #expect(report.volatile.totalCount >= 1, "expected the volatile event to be recorded")
+        #expect(report.final.totalCount == 1, "expected the final event to be recorded")
 
         await pipeline.stop()
     }

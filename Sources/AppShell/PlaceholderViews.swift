@@ -49,9 +49,14 @@ struct DiagnosticsSectionView: View {
         .task { await pollLoop() }
     }
 
+    /// `stats.count` is the valid (non-negative-latency) sample count used
+    /// for the percentiles — excluded samples are surfaced separately
+    /// rather than silently absorbed into that number (slice-05
+    /// negative-latency blocker postmortem).
     private func statLine(_ label: String, _ stats: LatencyReport.Stats) -> some View {
-        Text(
-            "\(label): \(stats.count) events — p50 \(formatMs(stats.p50Ms))"
+        let excludedSuffix = stats.excludedNegativeCount > 0 ? ", \(stats.excludedNegativeCount) excluded" : ""
+        return Text(
+            "\(label): \(stats.count) events\(excludedSuffix) — p50 \(formatMs(stats.p50Ms))"
                 + " / p95 \(formatMs(stats.p95Ms)) / max \(formatMs(stats.maxMs))"
         )
     }
