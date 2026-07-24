@@ -1,0 +1,89 @@
+<!-- @dsCard group="Directional (M4/M5)" name="Onboarding & permissions (M5)" -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macapy — onboarding (M5, directional)</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body { display:flex; flex-direction:column; }
+  .mock-stage { flex-wrap: wrap; }
+  .onb { width: 460px; }
+  .onb-body { padding: 36px 40px 32px; text-align: center; }
+  .onb h1 { font-size: var(--text-display); font-weight: 700; letter-spacing: -0.01em; margin-bottom: 10px; }
+  .onb p { font-size: var(--text-body); line-height: 1.55; color: var(--text-2); }
+  .onb-steps { display:flex; gap:6px; justify-content:center; margin-bottom: 22px; }
+  .onb-steps i { width: 20px; height: 3px; border-radius: 2px; background: var(--hairline-strong); }
+  .onb-steps i.done { background: var(--signal); }
+  .perm { display:flex; align-items:center; gap:12px; text-align:left; border:1px solid var(--hairline); border-radius: var(--r-card); padding: 12px 14px; margin: 18px 0 0; background: var(--surface); }
+  .perm-name { font-weight: 600; font-size: var(--text-body); }
+  .perm-sub { font-size: var(--text-small); color: var(--text-2); margin-top: 2px; line-height: 1.4; }
+</style>
+
+<div class="scheme-light mock-stage">
+  <div>
+    <div class="mock-caption">Onboarding · permissions</div>
+    <div class="macwin onb">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span></div>
+      <div class="onb-body">
+        <div class="onb-steps"><i class="done"></i><i class="done"></i><i></i></div>
+        <h1>macapy hears, this Mac keeps</h1>
+        <p>Two permissions make live transcription work.<br>Audio is processed in memory and never written anywhere.</p>
+        <div class="perm">
+          <span class="chip approved" style="text-transform:none">Granted</span>
+          <div><div class="perm-name">Microphone</div><div class="perm-sub">Your side of the meeting.</div></div>
+        </div>
+        <div class="perm">
+          <div style="flex:1"><div class="perm-name">System audio</div><div class="perm-sub">What your Mac plays — the other side of the meeting. macOS will ask once.</div></div>
+          <span class="btn primary">Allow…</span>
+        </div>
+        <p style="margin-top:18px; font-size:var(--text-small)">No account. No cloud. An AI key is optional, later.</p>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Onboarding · ready</div>
+    <div class="macwin onb">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span></div>
+      <div class="onb-body">
+        <div class="onb-steps"><i class="done"></i><i class="done"></i><i class="done"></i></div>
+        <h1>Ready when you are</h1>
+        <p>macapy lives in your menu bar.<br>Press <span class="machine-num" style="font-size:12px">⌥⌘M</span> when your next meeting starts —<br>the transcript appears as people speak.</p>
+        <div style="margin-top:22px"><span class="btn primary">Done</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="scheme-dark mock-stage">
+  <div>
+    <div class="mock-caption">Onboarding · permissions</div>
+    <div class="macwin onb">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span></div>
+      <div class="onb-body">
+        <div class="onb-steps"><i class="done"></i><i class="done"></i><i></i></div>
+        <h1>macapy hears, this Mac keeps</h1>
+        <p>Two permissions make live transcription work.<br>Audio is processed in memory and never written anywhere.</p>
+        <div class="perm">
+          <span class="chip approved" style="text-transform:none">Granted</span>
+          <div><div class="perm-name">Microphone</div><div class="perm-sub">Your side of the meeting.</div></div>
+        </div>
+        <div class="perm">
+          <div style="flex:1"><div class="perm-name">System audio</div><div class="perm-sub">What your Mac plays — the other side of the meeting. macOS will ask once.</div></div>
+          <span class="btn primary">Allow…</span>
+        </div>
+        <p style="margin-top:18px; font-size:var(--text-small)">No account. No cloud. An AI key is optional, later.</p>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Onboarding · ready</div>
+    <div class="macwin onb">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span></div>
+      <div class="onb-body">
+        <div class="onb-steps"><i class="done"></i><i class="done"></i><i class="done"></i></div>
+        <h1>Ready when you are</h1>
+        <p>macapy lives in your menu bar.<br>Press <span class="machine-num" style="font-size:12px">⌥⌘M</span> when your next meeting starts —<br>the transcript appears as people speak.</p>
+        <div style="margin-top:22px"><span class="btn primary">Done</span></div>
+      </div>
+    </div>
+  </div>
+</div>

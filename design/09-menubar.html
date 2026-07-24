@@ -1,0 +1,92 @@
+<!-- @dsCard group="Menu bar" name="Menu bar — idle, capturing, paused" -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macapy — menu bar states</title>
+<link rel="stylesheet" href="tokens.css">
+<style> body { display:flex; flex-direction:column; } .mock-stage { flex-wrap: wrap; align-items: flex-start; } </style>
+
+<div class="scheme-light mock-stage">
+  <div>
+    <div class="mock-caption">Idle</div>
+    <div class="menu">
+      <div class="menu-item highlight">Start meeting<span class="kbd">⌥⌘M</span></div>
+      <div class="menu-item"><span style="display:flex;align-items:center;gap:8px">Ephemeral meeting <span class="toggle" style="transform:scale(0.8)"></span></span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">History<span class="kbd">⌘Y</span></div>
+      <div class="menu-item">Settings…<span class="kbd">⌘,</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">Quit macapy<span class="kbd">⌘Q</span></div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Capturing</div>
+    <div class="menu">
+      <div class="menu-state"><span class="panel-state live">Capturing</span> <span class="machine-num" style="font-size:9.5px;color:var(--text-3);margin-left:6px">00:14:32</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">Stop meeting<span class="kbd">⌥⌘M</span></div>
+      <div class="menu-item">Pause capture<span class="kbd">⌥⌘P</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">History<span class="kbd">⌘Y</span></div>
+      <div class="menu-item">Settings…<span class="kbd">⌘,</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">Quit macapy<span class="kbd">⌘Q</span></div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Paused</div>
+    <div class="menu">
+      <div class="menu-state"><span class="panel-state quiet">Paused</span> <span class="machine-num" style="font-size:9.5px;color:var(--text-3);margin-left:6px">00:21:07</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">Stop meeting<span class="kbd">⌥⌘M</span></div>
+      <div class="menu-item">Resume capture<span class="kbd">⌥⌘P</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">History<span class="kbd">⌘Y</span></div>
+      <div class="menu-item">Settings…<span class="kbd">⌘,</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">Quit macapy<span class="kbd">⌘Q</span></div>
+    </div>
+  </div>
+</div>
+
+<div class="scheme-dark mock-stage">
+  <div>
+    <div class="mock-caption">Idle</div>
+    <div class="menu">
+      <div class="menu-item highlight">Start meeting<span class="kbd">⌥⌘M</span></div>
+      <div class="menu-item"><span style="display:flex;align-items:center;gap:8px">Ephemeral meeting <span class="toggle" style="transform:scale(0.8)"></span></span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">History<span class="kbd">⌘Y</span></div>
+      <div class="menu-item">Settings…<span class="kbd">⌘,</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">Quit macapy<span class="kbd">⌘Q</span></div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Capturing</div>
+    <div class="menu">
+      <div class="menu-state"><span class="panel-state live">Capturing</span> <span class="machine-num" style="font-size:9.5px;color:var(--text-3);margin-left:6px">00:14:32</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">Stop meeting<span class="kbd">⌥⌘M</span></div>
+      <div class="menu-item">Pause capture<span class="kbd">⌥⌘P</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">History<span class="kbd">⌘Y</span></div>
+      <div class="menu-item">Settings…<span class="kbd">⌘,</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">Quit macapy<span class="kbd">⌘Q</span></div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Paused</div>
+    <div class="menu">
+      <div class="menu-state"><span class="panel-state quiet">Paused</span> <span class="machine-num" style="font-size:9.5px;color:var(--text-3);margin-left:6px">00:21:07</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">Stop meeting<span class="kbd">⌥⌘M</span></div>
+      <div class="menu-item">Resume capture<span class="kbd">⌥⌘P</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">History<span class="kbd">⌘Y</span></div>
+      <div class="menu-item">Settings…<span class="kbd">⌘,</span></div>
+      <div class="menu-sep"></div>
+      <div class="menu-item">Quit macapy<span class="kbd">⌘Q</span></div>
+    </div>
+  </div>
+</div>

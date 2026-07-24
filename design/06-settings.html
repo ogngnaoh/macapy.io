@@ -1,0 +1,122 @@
+<!-- @dsCard group="Windows" name="Settings — General, Providers, Spend, Diagnostics" -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macapy — settings</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body { display:flex; flex-direction:column; }
+  .mock-stage { flex-wrap: wrap; }
+  .macwin { width: 560px; }
+  .settings-body { padding: 20px 28px 28px; }
+  .provider-row { display:flex; align-items:center; gap:10px; padding: 9px 12px; border:1px solid var(--hairline); border-radius: var(--r-card); margin-bottom:8px; background: var(--surface); }
+  .provider-row.active { border-color: var(--hairline-strong); background: var(--raised); }
+  .provider-name { font-weight: 600; font-size: var(--text-body); }
+  .provider-sub { font-size: var(--text-small); color: var(--text-2); margin-top: 1px; }
+  .cap-meter { height: 6px; border-radius: 3px; background: var(--sunken); overflow: hidden; margin: 8px 0 4px; }
+  .cap-meter b { display:block; height:100%; width:56%; background: var(--signal); border-radius: 3px; }
+  .stat-grid { display:grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+</style>
+
+<div class="scheme-light mock-stage">
+  <div>
+    <div class="mock-caption">Settings · General</div>
+    <div class="macwin">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span><span class="win-title">Settings</span></div>
+      <div class="settings-tabs"><span class="settings-tab active">General</span><span class="settings-tab">Providers</span><span class="settings-tab">Spend</span><span class="settings-tab">Diagnostics</span></div>
+      <div class="settings-body">
+        <div class="form-row"><span class="form-label">Start / stop meeting</span><span class="machine-num" style="font-size:11px">⌥⌘M</span></div>
+        <div class="form-row"><span class="form-label">Pause / resume capture</span><span class="machine-num" style="font-size:11px">⌥⌘P</span></div>
+        <div class="form-row"><span class="form-label">Start meetings ephemeral</span><span class="toggle"></span><span class="form-note">Ephemeral meetings keep nothing — no transcript, no history, no rows on disk.</span></div>
+        <div class="form-row"><span class="form-label">AI features</span><span class="toggle on"></span><span class="form-note">Off makes macapy a pure local transcriber. Capture and history never depend on this.</span></div>
+        <div class="form-row"><span class="form-label"></span><span class="btn destructive">Delete all meeting data…</span></div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Settings · Providers</div>
+    <div class="macwin">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span><span class="win-title">Settings</span></div>
+      <div class="settings-tabs"><span class="settings-tab">General</span><span class="settings-tab active">Providers</span><span class="settings-tab">Spend</span><span class="settings-tab">Diagnostics</span></div>
+      <div class="settings-body">
+        <div class="provider-row active">
+          <div style="flex:1"><div class="provider-name">DeepSeek</div><div class="provider-sub">Servers in China; prompts may be used for training on the first-party API.</div></div>
+          <span class="chip you" style="text-transform:none">Active</span>
+        </div>
+        <div class="provider-row"><div style="flex:1"><div class="provider-name">OpenAI</div></div><span class="chip">Set up</span></div>
+        <div class="provider-row"><div style="flex:1"><div class="provider-name">OpenRouter</div></div><span class="chip">Set up</span></div>
+        <div class="provider-row"><div style="flex:1"><div class="provider-name">Ollama</div><div class="provider-sub">Local — no key needed.</div></div><span class="chip">Set up</span></div>
+        <div class="form-row" style="margin-top:12px"><span class="form-label">API key</span><input class="field mono" style="max-width:230px" value="••••••••••••••••••••"><span class="btn subtle">Remove</span></div>
+        <div class="form-row"><span class="form-label"></span><span class="form-note">Stored only in the macOS Keychain — never in the database, settings, or logs.</span></div>
+        <div class="form-row"><span class="form-label">Fast model</span><input class="field mono" style="max-width:230px" value="deepseek-chat"></div>
+        <div class="form-row"><span class="form-label">Deep model</span><input class="field mono" style="max-width:230px" value="deepseek-reasoner"></div>
+        <div class="form-row"><span class="form-label"></span><span class="btn">Test connection</span><span class="form-note">Streams a short reply to verify the key and models.</span></div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Settings · Spend</div>
+    <div class="macwin">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span><span class="win-title">Settings</span></div>
+      <div class="settings-tabs"><span class="settings-tab">General</span><span class="settings-tab">Providers</span><span class="settings-tab active">Spend</span><span class="settings-tab">Diagnostics</span></div>
+      <div class="settings-body">
+        <div class="form-row" style="padding-bottom:0"><span class="form-label">This meeting</span><span class="machine-num" style="font-size:14px">$0.14</span><span class="form-note">of $0.25 cap</span></div>
+        <div class="form-row" style="padding-top:0"><span class="form-label"></span><div style="flex:1;max-width:280px"><div class="cap-meter"><b></b></div><div class="form-note">When the cap is reached, AI features halt with a notice. Capture and transcription never stop.</div></div></div>
+        <table class="data-table" style="margin-top:14px">
+          <tr><th>Purpose</th><th>Model</th><th class="num">Tokens</th><th class="num">Est. cost</th></tr>
+          <tr><td>artifact</td><td>deepseek-reasoner</td><td class="num">18,204</td><td class="num">$0.09</td></tr>
+          <tr><td>classifier</td><td>deepseek-chat</td><td class="num">31,876</td><td class="num">$0.04</td></tr>
+          <tr><td>generation</td><td>deepseek-reasoner</td><td class="num">2,911</td><td class="num">$0.01</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Settings · Diagnostics</div>
+    <div class="macwin">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span><span class="win-title">Settings</span></div>
+      <div class="settings-tabs"><span class="settings-tab">General</span><span class="settings-tab">Providers</span><span class="settings-tab">Spend</span><span class="settings-tab active">Diagnostics</span></div>
+      <div class="settings-body">
+        <div class="stat-grid">
+          <div class="stat"><span class="machine">Speech → visible p50</span><div class="stat-num">32.9<small> ms</small></div></div>
+          <div class="stat"><span class="machine">Speech → visible p95</span><div class="stat-num">85.4<small> ms</small></div></div>
+          <div class="stat"><span class="machine">Memory</span><div class="stat-num">212<small> MB</small></div></div>
+          <div class="stat"><span class="machine">Artifacts G3</span><div class="stat-num">22<small> s</small></div></div>
+          <div class="stat"><span class="machine">Dropped chunks</span><div class="stat-num">0</div></div>
+          <div class="stat"><span class="machine">STT errors</span><div class="stat-num">0</div></div>
+        </div>
+        <span class="form-note">Budgets: transcript &lt; 1s · suggestion &lt; 3s · artifacts &lt; 60s · memory &lt; 400 MB. Everything measured on this Mac; nothing is reported anywhere.</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="scheme-dark mock-stage">
+  <div>
+    <div class="mock-caption">Settings · Providers (no key yet — quiet setup)</div>
+    <div class="macwin">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span><span class="win-title">Settings</span></div>
+      <div class="settings-tabs"><span class="settings-tab">General</span><span class="settings-tab active">Providers</span><span class="settings-tab">Spend</span><span class="settings-tab">Diagnostics</span></div>
+      <div class="settings-body">
+        <div class="empty" style="padding:20px 16px 24px">
+          <h4>No provider configured</h4>
+          <p>macapy works fully without one — live transcription and history are on-device.<br>Add a key to unlock summaries, action items, and in-meeting suggestions.</p>
+        </div>
+        <div class="provider-row"><div style="flex:1"><div class="provider-name">DeepSeek</div><div class="provider-sub">Servers in China; prompts may be used for training on the first-party API.</div></div><span class="chip">Set up</span></div>
+        <div class="provider-row"><div style="flex:1"><div class="provider-name">OpenAI</div></div><span class="chip">Set up</span></div>
+        <div class="provider-row"><div style="flex:1"><div class="provider-name">Ollama</div><div class="provider-sub">Local — no key needed.</div></div><span class="chip">Set up</span></div>
+      </div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Settings · Spend (cap reached)</div>
+    <div class="macwin">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span><span class="win-title">Settings</span></div>
+      <div class="settings-tabs"><span class="settings-tab">General</span><span class="settings-tab">Providers</span><span class="settings-tab active">Spend</span><span class="settings-tab">Diagnostics</span></div>
+      <div class="settings-body">
+        <div class="form-row" style="padding-bottom:0"><span class="form-label">This meeting</span><span class="machine-num" style="font-size:14px;color:var(--live)">$0.25</span><span class="form-note">cap reached — AI paused, capture unaffected</span></div>
+        <div class="form-row" style="padding-top:0"><span class="form-label"></span><div style="flex:1;max-width:280px"><div class="cap-meter"><b style="width:100%"></b></div><div class="form-note">Raise the cap to resume AI features for this meeting.</div></div></div>
+        <div class="form-row"><span class="form-label">Per-meeting cap</span><input class="field mono" style="max-width:90px" value="$0.25"><span class="btn">Raise for this meeting</span></div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,136 @@
+<!-- @dsCard group="Foundations" name="Design system — Quiet instrument" -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macapy — design system</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body { display: flex; flex-wrap: wrap; }
+  .half { flex: 1 1 480px; min-width: 480px; padding: 40px 44px 64px; background: var(--bg); }
+  h1 { font-size: var(--text-display); font-weight: 700; letter-spacing: -0.01em; }
+  .tagline { font-family: var(--font-machine); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-2); margin: 6px 0 36px; }
+  h2 { font-family: var(--font-machine); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 36px 0 14px; border-bottom: 1px solid var(--hairline); padding-bottom: 6px; }
+  .swatches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .swatch b { display: block; height: 44px; border-radius: 6px; border: 1px solid var(--hairline); }
+  .swatch .machine-num { font-size: 9px; color: var(--text-2); display: block; margin-top: 5px; }
+  .swatch small { font-size: 10px; color: var(--text-3); }
+  .type-row { display: flex; align-items: baseline; gap: 16px; padding: 7px 0; }
+  .type-row .machine { width: 132px; flex: none; font-size: 8.5px; }
+  .demo-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px; }
+  .box { border: 1px solid var(--hairline); border-radius: var(--r-card); background: var(--surface); padding: 4px 0; }
+</style>
+
+<div class="scheme-light half">
+  <h1>macapy</h1>
+  <div class="tagline">Quiet instrument · light</div>
+
+  <h2>Palette</h2>
+  <div class="swatches">
+    <div class="swatch"><b style="background:#16191d"></b><span class="machine-num">ink #16191D</span><br><small>text / darkest surface</small></div>
+    <div class="swatch"><b style="background:#23272c"></b><span class="machine-num">carbon #23272C</span><br><small>dark surfaces</small></div>
+    <div class="swatch"><b style="background:#6b7683"></b><span class="machine-num">slate #6B7683</span><br><small>secondary, volatile</small></div>
+    <div class="swatch"><b style="background:#eef0f2"></b><span class="machine-num">fog #EEF0F2</span><br><small>light window bg</small></div>
+    <div class="swatch"><b style="background:#fbfbfc"></b><span class="machine-num">paper #FBFBFC</span><br><small>light panel / cards</small></div>
+    <div class="swatch"><b style="background:#f2a33c"></b><span class="machine-num">signal #F2A33C</span><br><small>live + primary only</small></div>
+  </div>
+
+  <h2>Type — machine speaks mono, humans speak SF</h2>
+  <div class="type-row"><span class="machine">display · SF 22/700</span><span style="font-size:22px;font-weight:700;letter-spacing:-0.01em">Meeting understood</span></div>
+  <div class="type-row"><span class="machine">title · SF 15/600</span><span style="font-size:15px;font-weight:600">Payments API migration sync</span></div>
+  <div class="type-row"><span class="machine">body · SF 13/400</span><span style="font-size:13px">We hold the legacy consumer until reconciliation passes clean.</span></div>
+  <div class="type-row"><span class="machine">small · SF 11/400</span><span style="font-size:11px;color:var(--text-2)">47 minutes · 3 speakers · 4 action items</span></div>
+  <div class="type-row"><span class="machine">machine · MM 9.5/600</span><span class="machine" style="width:auto">capturing · 00:14:32 · p95 85.36 ms</span></div>
+
+  <h2>Transcript line — volatile settles to final</h2>
+  <div class="box">
+    <div class="tx"><span class="tx-who">S1</span><span class="tx-text">The backfill has to finish before we flip the flag.</span></div>
+    <div class="tx"><span class="tx-who you">You</span><span class="tx-text">Agreed — I'll draft the runbook this week.</span></div>
+    <div class="tx"><span class="tx-who">S2</span><span class="tx-text"><span class="volatile">and if the ledger backfill lands before Thurs</span></span></div>
+  </div>
+
+  <h2>Controls</h2>
+  <div class="demo-row">
+    <span class="btn primary">Start meeting</span>
+    <span class="btn">Generate artifacts</span>
+    <span class="btn subtle">Not now</span>
+    <span class="btn destructive">Delete meeting</span>
+  </div>
+  <div class="demo-row">
+    <span class="chip you">You</span><span class="chip">S1</span><span class="chip">S2</span>
+    <span class="chip draft">Draft</span><span class="chip approved">Approved</span><span class="chip rejected">Rejected</span>
+    <span class="toggle on"></span><span class="toggle"></span>
+  </div>
+  <div class="demo-row" style="max-width:340px"><input class="field" value="Search meetings, transcripts, artifacts"></div>
+
+  <h2>Signal strip — the signature</h2>
+  <div class="panel" style="width:340px">
+    <div class="signal-strip animated">
+      <i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="them"></i>
+    </div>
+    <div class="panel-head"><span class="panel-state live">Capturing</span><span class="panel-timer">00:14:32</span></div>
+  </div>
+  <p class="form-note" style="margin-top:8px">Driven by real audio level — amber ticks are your mic, slate ticks are them. Doubles as the recording indicator. Reduced motion: steady amber dot.</p>
+
+  <h2>List row & empty state</h2>
+  <div class="box" style="padding:0">
+    <div class="row"><div class="row-main"><div class="row-title">Payments API migration sync</div><div class="row-sub">Jul 24 · 47m · 3 speakers</div></div><span class="row-meta">4 items</span></div>
+    <div class="empty" style="border-top:1px solid var(--hairline)"><h4>No meetings yet</h4><p>Press ⌥⌘M when your next meeting starts.<br>Everything stays on this Mac.</p></div>
+  </div>
+</div>
+
+<div class="scheme-dark half">
+  <h1>macapy</h1>
+  <div class="tagline">Quiet instrument · dark</div>
+
+  <h2>Palette</h2>
+  <div class="swatches">
+    <div class="swatch"><b style="background:#16191d"></b><span class="machine-num">ink #16191D</span><br><small>sunken / wells</small></div>
+    <div class="swatch"><b style="background:#23272c"></b><span class="machine-num">carbon #23272C</span><br><small>panel / cards</small></div>
+    <div class="swatch"><b style="background:#8b95a1"></b><span class="machine-num">slate-2 #8B95A1</span><br><small>secondary, volatile</small></div>
+    <div class="swatch"><b style="background:#1c2024"></b><span class="machine-num">bg #1C2024</span><br><small>dark window bg</small></div>
+    <div class="swatch"><b style="background:#e8eaed"></b><span class="machine-num">text #E8EAED</span><br><small>primary text</small></div>
+    <div class="swatch"><b style="background:#f2a33c"></b><span class="machine-num">signal #F2A33C</span><br><small>live + primary only</small></div>
+  </div>
+
+  <h2>Type — machine speaks mono, humans speak SF</h2>
+  <div class="type-row"><span class="machine">display · SF 22/700</span><span style="font-size:22px;font-weight:700;letter-spacing:-0.01em">Meeting understood</span></div>
+  <div class="type-row"><span class="machine">title · SF 15/600</span><span style="font-size:15px;font-weight:600">Payments API migration sync</span></div>
+  <div class="type-row"><span class="machine">body · SF 13/400</span><span style="font-size:13px">We hold the legacy consumer until reconciliation passes clean.</span></div>
+  <div class="type-row"><span class="machine">small · SF 11/400</span><span style="font-size:11px;color:var(--text-2)">47 minutes · 3 speakers · 4 action items</span></div>
+  <div class="type-row"><span class="machine">machine · MM 9.5/600</span><span class="machine" style="width:auto">capturing · 00:14:32 · p95 85.36 ms</span></div>
+
+  <h2>Transcript line — volatile settles to final</h2>
+  <div class="box">
+    <div class="tx"><span class="tx-who">S1</span><span class="tx-text">The backfill has to finish before we flip the flag.</span></div>
+    <div class="tx"><span class="tx-who you">You</span><span class="tx-text">Agreed — I'll draft the runbook this week.</span></div>
+    <div class="tx"><span class="tx-who">S2</span><span class="tx-text"><span class="volatile">and if the ledger backfill lands before Thurs</span></span></div>
+  </div>
+
+  <h2>Controls</h2>
+  <div class="demo-row">
+    <span class="btn primary">Start meeting</span>
+    <span class="btn">Generate artifacts</span>
+    <span class="btn subtle">Not now</span>
+    <span class="btn destructive">Delete meeting</span>
+  </div>
+  <div class="demo-row">
+    <span class="chip you">You</span><span class="chip">S1</span><span class="chip">S2</span>
+    <span class="chip draft">Draft</span><span class="chip approved">Approved</span><span class="chip rejected">Rejected</span>
+    <span class="toggle on"></span><span class="toggle"></span>
+  </div>
+  <div class="demo-row" style="max-width:340px"><input class="field" value="Search meetings, transcripts, artifacts"></div>
+
+  <h2>Signal strip — the signature</h2>
+  <div class="panel" style="width:340px">
+    <div class="signal-strip animated">
+      <i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="them"></i>
+    </div>
+    <div class="panel-head"><span class="panel-state live">Capturing</span><span class="panel-timer">00:14:32</span></div>
+  </div>
+  <p class="form-note" style="margin-top:8px">Driven by real audio level — amber ticks are your mic, slate ticks are them. Doubles as the recording indicator. Reduced motion: steady amber dot.</p>
+
+  <h2>List row & empty state</h2>
+  <div class="box" style="padding:0">
+    <div class="row"><div class="row-main"><div class="row-title">Payments API migration sync</div><div class="row-sub">Jul 24 · 47m · 3 speakers</div></div><span class="row-meta">4 items</span></div>
+    <div class="empty" style="border-top:1px solid var(--hairline)"><h4>No meetings yet</h4><p>Press ⌥⌘M when your next meeting starts.<br>Everything stays on this Mac.</p></div>
+  </div>
+</div>

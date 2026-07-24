@@ -2,21 +2,20 @@
 
 ## Start here next session
 
-Kickoff gate passed and test-pollution fix landed, both 2026-07-24 (records + evidence in ./milestone.md Integration notes). First act now: **begin slice 1 with the aesthetic-direction interview** (frontend-design skill) — do not generate mockups before that interview. Small leftover chore first if not yet done: delete the 2 junk meetings dated 2026-07-24 from the production DB (written by the fix's RED run; deletion was permission-blocked in-session — one-liner sqlite delete, owner-run).
+Slice 1 is mid-flight at its review gate: the full mockup bundle is synced to the Claude Design project **"macapy — Quiet instrument"** (id 551c0adb-9714-4d9b-86aa-5b6ed268d78f) — the author reviews it in the browser, feedback gets folded into `design/` and re-synced, then approval unlocks the SwiftUI translation (`Sources/AppShell/Design/` tokens + components, then reskin). Do not start the SwiftUI translation before browser approval (slice-01 check 3).
 
 ## Current state
 
-- Milestone fully planned 2026-07-17; kickoff gate passed 2026-07-24 (all five slice docs' acceptance checks user-approved, four amendments folded in). Slices: 1 design pass, 2 ProviderKit, 3 post-meeting agent, 4 diarization + memory watch, 5 history & search. All pending; nothing built.
-- Test-pollution defect **fixed 2026-07-24**: `makePersistentStore` has no default anymore (compile-time kill of the class); offending test injects in-memory; full suite green with production DB row count unchanged across the run. The gate's machine-check precondition is cleared.
-- M1 criterion 4 (zero-network during a full meeting) remains owner-attested; slice-2 live check 11 (real full-length no-key meeting, monitor running throughout) is the designated check that retires it.
-- Key planning decisions: DeepSeek is the only live-verified provider (author's key; quirkiest profile — good stress test); no EventKit in M2 (approve = status flip only); speaker labels automatic, no renaming; memory watch folded into slice 4; format listener + diagnostics fed-clock stay backlog.
-- Environment gotcha: repo moved `personal-projects/` → `my-projects/` — stale SwiftPM module caches caused build fatals; fixed by deleting `.build/**/ModuleCache` (keeps the GRDB checkout).
+- Kickoff gate passed and test-pollution fix landed 2026-07-24 (records in ./milestone.md Integration notes). Machine checks may now count as evidence.
+- Slice 1 active: aesthetic direction "Quiet instrument" interviewed, approved, and recorded in slice-01 Notes (graphite + VU-amber signal; machine-speaks-mono/humans-speak-SF; signal-strip signature; volatile = slate + dotted baseline). Mockups for every inventory screen (light + dark) live in `design/` — shared `tokens.css`, bundled Martian Mono — and are uploaded to the Claude Design project. Awaiting author browser review.
+- Slices 2–5 pending. M1 criterion 4 retirement rides on slice-2 live check 11 (real full-length no-key meeting, monitor running).
+- Key decisions: DeepSeek only live-verified provider; no EventKit in M2; auto speaker labels; memory watch in slice 4.
 
 ## Open concerns
 
-- 2 junk rows (2026-07-24, sub-second, from the fix's RED run) await owner deletion — the only non-real rows in the DB; the one real meeting (2026-07-17, 50 segments) must survive.
-- Author needs a working DeepSeek key + small balance before slice 2's live checks (slice 1 needs none).
-- FluidAudio must be vetted before slice 4 adds it — license/size/maintenance **plus** (gate amendment) an empirical two-voice `say`-fixture separation run before committing to that fixture design.
-- Slice-1 scope risk: "whole product" mockups can balloon — M4/M5 screens are directional only; the design *system* is the durable artifact. Timebox iteration rounds.
-- Claude Design → SwiftUI is a hand-translation; side-by-side sign-off (slice-1 check 4) is the honesty check.
-- 7 NEEDS-CLARIFICATION markers in PRD/SPEC still stand; none block M2 as planned.
+- 2 junk rows (2026-07-24, sub-second, from the pollution-fix RED run) may still await owner deletion from the production DB (delete was permission-blocked for Claude; keep the one real 2026-07-17 meeting). Check count: 3 = pending, 1 = done.
+- Claude Design pane rendering of shared-asset references (`tokens.css`, fonts) is unverified — if cards render unstyled in the pane, inline the CSS per file and re-sync.
+- Author needs a working DeepSeek key + small balance before slice 2's live checks.
+- FluidAudio vetting before slice 4: license/size/maintenance + empirical two-voice `say`-fixture separation run.
+- Slice-1 scope: M4/M5 mockups are directional only; timebox iteration rounds. Claude Design → SwiftUI is a hand-translation; side-by-side sign-off (check 4) is the honesty check.
+- 7 NEEDS-CLARIFICATION markers in PRD/SPEC still stand; none block M2.

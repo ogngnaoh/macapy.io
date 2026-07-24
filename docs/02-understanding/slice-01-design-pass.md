@@ -43,10 +43,10 @@ User-live:
 ## Checklist
 
 - [x] Acceptance checks user-reviewed (M2 kickoff gate — approved 2026-07-24, amendments in ./milestone.md Integration notes)
-- [ ] Aesthetic-direction interview (frontend-design skill) → direction recorded in Notes
-- [ ] Design system (tokens + components) built locally, light + dark
-- [ ] All inventory screens mocked
-- [ ] Claude Design project created; `/design-sync` upload
+- [x] Aesthetic-direction interview (frontend-design skill) → direction recorded in Notes (2026-07-24, "Quiet instrument" — user-approved)
+- [x] Design system (tokens + components) built locally, light + dark (2026-07-24, `design/` at repo root: `tokens.css` + bundled Martian Mono)
+- [x] All inventory screens mocked (2026-07-24, `design/0*.html` — every screen in both light and dark)
+- [x] Claude Design project created; `/design-sync` upload (2026-07-24, project "macapy — Quiet instrument", id 551c0adb-9714-4d9b-86aa-5b6ed268d78f, 12 files)
 - [ ] Author browser review → iterate → approval (record project link + date)
 - [ ] SwiftUI translation: `AppShell/Design/` tokens + components
 - [ ] Reskin panel / History / Settings / menu bar
@@ -55,4 +55,5 @@ User-live:
 
 ## Notes / dead ends
 
-(append as work proceeds)
+- 2026-07-24 (mockups built + synced): full bundle in `design/` (shared `tokens.css`, latin-subset Martian Mono woff2 bundled, 10 screen files, every screen light + dark side by side); synced to Claude Design project "macapy — Quiet instrument". Self-critique via headless-Chrome screenshots before sync caught: uniform signal-strip ticks read as decorative dashes when static → fixed with narrow ticks at varied heights (reads as a level meter even frozen); button text wrapping. Transcript fiction ("Payments API migration sync") reused consistently across panel/history/detail/search so screens read as one product; diagnostics use M1's real numbers (p50 32.97 / p95 85.36). Awaiting author browser review.
+- 2026-07-24 (aesthetic direction — interviewed and approved): **"Quiet instrument."** Interview outcomes: native bones + own voice; calm-instrument panel; graphite + live signal color world; SF + one character face. Direction: palette `ink #16191D`, `carbon #23272C`, `slate #6B7683`, `fog #EEF0F2`, `paper #FBFBFC`, `signal #F2A33C` (VU-meter amber — live/capturing/primary only, never decoration; darkened variant for text-on-light contrast). Type: **machine speaks mono, humans speak SF** — SF for all UI chrome *and* transcript text; Martian Mono (OFL, bundled; license re-verified at build) reserved for the machine's voice: timestamps, speaker chips, timer, latency/spend numerals, wordmark. Volatile vs. final: volatile = `slate` + dotted baseline, final = `ink`, no baseline (two cues, no italics — retires the M1 `.secondary`-alone miss). Signature element: the **signal strip** — 2–3px tick-meter on the panel's top edge driven by real audio level (amber = mic/you, slate = them); doubles as recording indicator; reduced-motion fallback = steady amber dot. Panel: thin mono header strip (state + timer), bottom-anchored caption-style transcript, mono speaker gutter; copilot moments = one quiet card earning attention by contrast. Windows stay HIG-native; identity via type discipline + where amber may appear. Anti-default check recorded: no cream/serif/terracotta, not black+acid-green (light mode co-equal), hairlines instrument-grade with native continuous corners.

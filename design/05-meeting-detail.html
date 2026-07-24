@@ -1,0 +1,104 @@
+<!-- @dsCard group="Windows" name="Meeting detail — transcript, artifacts, review" -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macapy — meeting detail</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body { display:flex; flex-direction:column; }
+  .macwin { width: 860px; }
+  .detail { display: flex; min-height: 480px; }
+  .transcript-pane { flex: 1.2; border-right: 1px solid var(--hairline); padding: 12px 0; overflow: hidden; }
+  .artifacts-pane { flex: 1; padding: 16px; background: var(--surface); }
+  .art-section { margin-bottom: 20px; }
+  .art-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .art-item {
+    border: 1px solid var(--hairline); border-radius: var(--r-card);
+    padding: 10px 12px; margin-bottom: 8px; background: var(--raised);
+  }
+  .art-item p { font-size: var(--text-body); line-height: 1.5; }
+  .art-item .meta { font-family: var(--font-machine); font-size: 8.5px; color: var(--text-3); margin-top: 6px; }
+  .art-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .pending-note { display:flex; align-items:center; gap:10px; padding: 10px 12px; border: 1px dashed var(--hairline-strong); border-radius: var(--r-card); color: var(--text-2); font-size: var(--text-small); }
+</style>
+
+<div class="scheme-light mock-stage">
+  <div>
+    <div class="mock-caption">Meeting detail — drafts under review · light</div>
+    <div class="macwin">
+      <div class="titlebar">
+        <span class="tl"><b></b><b></b><b></b></span>
+        <span class="win-title">Payments API migration sync</span>
+        <span class="machine-num" style="font-size:9.5px;color:var(--text-3);margin-left:8px">Jul 24 · 47m 12s</span>
+        <span class="toolbar-spacer"></span>
+        <span class="btn subtle">Delete…</span>
+      </div>
+      <div class="detail">
+        <div class="transcript-pane">
+          <div class="tx-time">00:13</div>
+          <div class="tx"><span class="tx-who">S1</span><span class="tx-text">If we cut over on the 3rd, the ledger backfill has to be done first — that's the hard dependency.</span></div>
+          <div class="tx"><span class="tx-who you">You</span><span class="tx-text">I can own the backfill runbook. Draft by Tuesday, dry run Wednesday.</span></div>
+          <div class="tx"><span class="tx-who">S2</span><span class="tx-text">Then let's keep the legacy consumer running until reconciliation passes seven clean days.</span></div>
+          <div class="tx"><span class="tx-who">S1</span><span class="tx-text">Agreed. Flag stays off until then.</span></div>
+          <div class="tx-time">00:14</div>
+          <div class="tx"><span class="tx-who">S2</span><span class="tx-text">One more thing — the retry queue. Dead-letter backlog has been growing since Monday.</span></div>
+          <div class="tx"><span class="tx-who">S1</span><span class="tx-text">Put it in the runbook scope, not a separate workstream.</span></div>
+          <div class="tx"><span class="tx-who you">You</span><span class="tx-text">Fine, but then the dry run slips to Thursday.</span></div>
+        </div>
+        <div class="artifacts-pane">
+          <div class="art-section">
+            <div class="art-head"><span class="machine">Summary</span><span class="chip draft">Draft</span><span class="machine-num" style="font-size:8.5px;color:var(--text-3);margin-left:auto">drafted in 22s</span></div>
+            <div class="art-item"><p>Cutover to the v2 ledger API is planned for Aug 3 behind a flag, gated on the backfill and seven clean reconciliation days. The retry queue's dead-letter growth was folded into the runbook scope, moving the dry run to Thursday.</p></div>
+          </div>
+          <div class="art-section">
+            <div class="art-head"><span class="machine">Decisions · 2</span></div>
+            <div class="art-item"><p>Cut over Aug 3 behind a flag, gated on the backfill.</p>
+              <div class="art-actions"><span class="chip approved">Approved</span></div></div>
+            <div class="art-item"><p>Keep the legacy consumer until reconciliation passes 7 clean days.</p>
+              <div class="art-actions"><span class="btn" style="padding:3px 10px">Approve</span><span class="btn subtle" style="padding:3px 10px">Reject</span></div></div>
+          </div>
+          <div class="art-section" style="margin-bottom:0">
+            <div class="art-head"><span class="machine">Action items · 2</span></div>
+            <div class="art-item"><p>Draft the backfill runbook, including retry-queue cleanup.</p><div class="meta">Owner · You — due Thu Jul 30</div>
+              <div class="art-actions"><span class="btn" style="padding:3px 10px">Approve</span><span class="btn subtle" style="padding:3px 10px">Reject</span></div></div>
+            <div class="art-item"><p>Set up the reconciliation report and share daily.</p><div class="meta">Owner · S2 (unnamed) — no deadline stated</div>
+              <div class="art-actions"><span class="chip rejected">Rejected</span></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="scheme-dark mock-stage">
+  <div>
+    <div class="mock-caption">Meeting detail — artifacts pending (provider was offline) · dark</div>
+    <div class="macwin">
+      <div class="titlebar">
+        <span class="tl"><b></b><b></b><b></b></span>
+        <span class="win-title">Design review — panel reskin</span>
+        <span class="machine-num" style="font-size:9.5px;color:var(--text-3);margin-left:8px">Jul 23 · 32m 40s</span>
+        <span class="toolbar-spacer"></span>
+        <span class="btn subtle">Delete…</span>
+      </div>
+      <div class="detail">
+        <div class="transcript-pane">
+          <div class="tx-time">00:02</div>
+          <div class="tx"><span class="tx-who">S1</span><span class="tx-text">The volatile treatment finally reads at a glance now.</span></div>
+          <div class="tx"><span class="tx-who you">You</span><span class="tx-text">The dotted baseline was the missing cue — color alone never carried it.</span></div>
+          <div class="tx"><span class="tx-who">S1</span><span class="tx-text">Ship the tokens first, then reskin screen by screen.</span></div>
+          <div class="tx-time">00:04</div>
+          <div class="tx"><span class="tx-who you">You</span><span class="tx-text">Agreed — tokens land this week, panel next.</span></div>
+        </div>
+        <div class="artifacts-pane">
+          <div class="art-section">
+            <div class="art-head"><span class="machine">Artifacts</span></div>
+            <div class="pending-note">
+              <span>Artifacts weren't generated — no provider was reachable when this meeting ended. The transcript is complete and safe.</span>
+            </div>
+            <div class="art-actions" style="margin-top:10px"><span class="btn primary">Generate artifacts</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,103 @@
+<!-- @dsCard group="Panel" name="Floating panel — idle, starting, paused, ephemeral" -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macapy — panel states</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body { display:flex; flex-direction:column; }
+  .mock-stage { flex-wrap: wrap; }
+</style>
+
+<div class="scheme-light mock-stage">
+  <div>
+    <div class="mock-caption">Starting</div>
+    <div class="panel">
+      <div class="signal-strip"><span class="signal-dot" style="background:var(--text-3)"></span></div>
+      <div class="panel-head"><span class="panel-state quiet">Starting</span><span class="panel-timer">00:00:00</span></div>
+      <div class="empty" style="padding:24px">
+        <p>Listening for your mic and meeting audio…</p>
+      </div>
+      <div class="panel-foot">⌥⌘M to stop</div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Paused</div>
+    <div class="panel">
+      <div class="signal-strip"><span class="signal-dot" style="background:var(--text-3)"></span></div>
+      <div class="panel-head"><span class="panel-state quiet">Paused</span><span class="panel-timer">00:21:07</span></div>
+      <div class="panel-body" style="opacity:0.55">
+        <div class="tx"><span class="tx-who">S2</span><span class="tx-text">…keep the legacy consumer running until reconciliation passes seven clean days.</span></div>
+        <div class="tx"><span class="tx-who">S1</span><span class="tx-text">Agreed. Flag stays off until then.</span></div>
+      </div>
+      <div class="empty" style="padding:10px 24px 14px; border-top:1px solid var(--hairline)">
+        <p>Capture is stopped. Nothing is being heard.</p>
+      </div>
+      <div class="panel-foot">⌥⌘M to stop · ⌥⌘P to resume</div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Live · ephemeral meeting</div>
+    <div class="panel">
+      <div class="signal-strip animated">
+        <i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="them"></i>
+      </div>
+      <div class="panel-head">
+        <span class="panel-state live">Capturing</span>
+        <span class="chip" style="margin-left:6px">Ephemeral</span>
+        <span class="panel-timer">00:03:11</span>
+      </div>
+      <div class="panel-body">
+        <div class="tx"><span class="tx-who">S1</span><span class="tx-text">This one's off the record — nothing persists after we hang up.</span></div>
+        <div class="tx"><span class="tx-who you">You</span><span class="tx-text">Right — this meeting leaves no rows on disk.</span></div>
+      </div>
+      <div class="panel-foot">Nothing from this meeting is saved</div>
+    </div>
+  </div>
+</div>
+
+<div class="scheme-dark mock-stage">
+  <div>
+    <div class="mock-caption">Starting</div>
+    <div class="panel">
+      <div class="signal-strip"><span class="signal-dot" style="background:var(--text-3)"></span></div>
+      <div class="panel-head"><span class="panel-state quiet">Starting</span><span class="panel-timer">00:00:00</span></div>
+      <div class="empty" style="padding:24px">
+        <p>Listening for your mic and meeting audio…</p>
+      </div>
+      <div class="panel-foot">⌥⌘M to stop</div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Paused</div>
+    <div class="panel">
+      <div class="signal-strip"><span class="signal-dot" style="background:var(--text-3)"></span></div>
+      <div class="panel-head"><span class="panel-state quiet">Paused</span><span class="panel-timer">00:21:07</span></div>
+      <div class="panel-body" style="opacity:0.55">
+        <div class="tx"><span class="tx-who">S2</span><span class="tx-text">…keep the legacy consumer running until reconciliation passes seven clean days.</span></div>
+        <div class="tx"><span class="tx-who">S1</span><span class="tx-text">Agreed. Flag stays off until then.</span></div>
+      </div>
+      <div class="empty" style="padding:10px 24px 14px; border-top:1px solid var(--hairline)">
+        <p>Capture is stopped. Nothing is being heard.</p>
+      </div>
+      <div class="panel-foot">⌥⌘M to stop · ⌥⌘P to resume</div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Live · ephemeral meeting</div>
+    <div class="panel">
+      <div class="signal-strip animated">
+        <i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="them"></i>
+      </div>
+      <div class="panel-head">
+        <span class="panel-state live">Capturing</span>
+        <span class="chip" style="margin-left:6px">Ephemeral</span>
+        <span class="panel-timer">00:03:11</span>
+      </div>
+      <div class="panel-body">
+        <div class="tx"><span class="tx-who">S1</span><span class="tx-text">This one's off the record — nothing persists after we hang up.</span></div>
+        <div class="tx"><span class="tx-who you">You</span><span class="tx-text">Right — this meeting leaves no rows on disk.</span></div>
+      </div>
+      <div class="panel-foot">Nothing from this meeting is saved</div>
+    </div>
+  </div>
+</div>

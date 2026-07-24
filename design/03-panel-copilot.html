@@ -1,0 +1,133 @@
+<!-- @dsCard group="Panel" name="Floating panel — M3 copilot states (directional-firm)" -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macapy — panel, copilot states</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body { display:flex; flex-direction:column; }
+  .mock-stage { flex-wrap: wrap; }
+  .rolling {
+    padding: 5px 12px;
+    border-bottom: 1px solid var(--hairline);
+    font-size: var(--text-small);
+    color: var(--text-2);
+    display: flex; gap: 8px; align-items: baseline;
+  }
+  .rolling .machine { font-size: 8px; flex: none; }
+  .querybar {
+    display: flex; gap: 8px; align-items: center;
+    padding: 8px 12px;
+    border-top: 1px solid var(--hairline);
+  }
+  .dismiss-ring { margin-left: auto; width: 12px; height: 12px; border-radius: 6px; border: 1.5px solid var(--text-3); border-top-color: transparent; transform: rotate(35deg); }
+</style>
+
+<div class="scheme-light mock-stage">
+  <div>
+    <div class="mock-caption">Copilot moment — suggested answer</div>
+    <div class="panel">
+      <div class="signal-strip animated">
+        <i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="them"></i>
+      </div>
+      <div class="panel-head"><span class="panel-state live">Capturing</span><span class="panel-timer">00:26:48</span></div>
+      <div class="panel-body">
+        <div class="tx"><span class="tx-who">S1</span><span class="tx-text">Hoang, where are we on the backfill runbook?</span></div>
+        <div class="moment">
+          <div class="moment-kind">Suggested answer <span class="dismiss-ring"></span></div>
+          <div class="moment-body">Draft is done; dry run is tomorrow. The open risk is the retry queue — you flagged it at 00:14 and nobody owned it.</div>
+          <div class="moment-meta">from 00:13–00:15 · fades if ignored</div>
+        </div>
+      </div>
+      <div class="panel-foot">⌥⌘M to stop · ⌥⌘P to pause</div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Catch-up glance + rolling summary</div>
+    <div class="panel">
+      <div class="signal-strip animated">
+        <i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="them"></i>
+      </div>
+      <div class="panel-head"><span class="panel-state live">Capturing</span><span class="panel-timer">00:31:02</span></div>
+      <div class="rolling"><span class="machine">So far</span><span>Cutover Aug 3 behind a flag; legacy consumer stays until 7 clean days; you own the runbook.</span></div>
+      <div class="panel-body">
+        <div class="moment">
+          <div class="moment-kind" style="color:var(--text-2)">Last 90 seconds</div>
+          <div class="moment-body">S2 raised the retry queue: dead-letter growth since Monday. S1 wants it in the runbook scope. Nobody has taken it yet.</div>
+        </div>
+      </div>
+      <div class="panel-foot">⌥⌘M to stop · ⌥⌘P to pause</div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Query box — streaming</div>
+    <div class="panel">
+      <div class="signal-strip animated">
+        <i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="them"></i>
+      </div>
+      <div class="panel-head"><span class="panel-state live">Capturing</span><span class="panel-timer">00:38:19</span></div>
+      <div class="panel-body">
+        <div class="moment">
+          <div class="moment-kind" style="color:var(--text-2)">You asked · what did we decide about the flag?</div>
+          <div class="moment-body">Two decisions so far: cut over Aug 3 behind a flag, and keep it off until reconciliation passes seven clean days<span class="volatile">, with S2 owning the recon repor</span></div>
+        </div>
+      </div>
+      <div class="querybar"><input class="field" placeholder="Ask about this meeting"><span class="btn subtle">⏎</span></div>
+      <div class="panel-foot">Answers use this meeting only</div>
+    </div>
+  </div>
+</div>
+
+<div class="scheme-dark mock-stage">
+  <div>
+    <div class="mock-caption">Copilot moment — suggested answer</div>
+    <div class="panel">
+      <div class="signal-strip animated">
+        <i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="them"></i>
+      </div>
+      <div class="panel-head"><span class="panel-state live">Capturing</span><span class="panel-timer">00:26:48</span></div>
+      <div class="panel-body">
+        <div class="tx"><span class="tx-who">S1</span><span class="tx-text">Hoang, where are we on the backfill runbook?</span></div>
+        <div class="moment">
+          <div class="moment-kind">Suggested answer <span class="dismiss-ring"></span></div>
+          <div class="moment-body">Draft is done; dry run is tomorrow. The open risk is the retry queue — you flagged it at 00:14 and nobody owned it.</div>
+          <div class="moment-meta">from 00:13–00:15 · fades if ignored</div>
+        </div>
+      </div>
+      <div class="panel-foot">⌥⌘M to stop · ⌥⌘P to pause</div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Catch-up glance + rolling summary</div>
+    <div class="panel">
+      <div class="signal-strip animated">
+        <i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="them"></i>
+      </div>
+      <div class="panel-head"><span class="panel-state live">Capturing</span><span class="panel-timer">00:31:02</span></div>
+      <div class="rolling"><span class="machine">So far</span><span>Cutover Aug 3 behind a flag; legacy consumer stays until 7 clean days; you own the runbook.</span></div>
+      <div class="panel-body">
+        <div class="moment">
+          <div class="moment-kind" style="color:var(--text-2)">Last 90 seconds</div>
+          <div class="moment-body">S2 raised the retry queue: dead-letter growth since Monday. S1 wants it in the runbook scope. Nobody has taken it yet.</div>
+        </div>
+      </div>
+      <div class="panel-foot">⌥⌘M to stop · ⌥⌘P to pause</div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">Query box — streaming</div>
+    <div class="panel">
+      <div class="signal-strip animated">
+        <i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i></i><i class="you"></i><i class="them"></i><i></i><i class="them"></i><i class="you"></i><i></i><i class="them"></i><i></i><i class="them"></i>
+      </div>
+      <div class="panel-head"><span class="panel-state live">Capturing</span><span class="panel-timer">00:38:19</span></div>
+      <div class="panel-body">
+        <div class="moment">
+          <div class="moment-kind" style="color:var(--text-2)">You asked · what did we decide about the flag?</div>
+          <div class="moment-body">Two decisions so far: cut over Aug 3 behind a flag, and keep it off until reconciliation passes seven clean days<span class="volatile">, with S2 owning the recon repor</span></div>
+        </div>
+      </div>
+      <div class="querybar"><input class="field" placeholder="Ask about this meeting"><span class="btn subtle">⏎</span></div>
+      <div class="panel-foot">Answers use this meeting only</div>
+    </div>
+  </div>
+</div>

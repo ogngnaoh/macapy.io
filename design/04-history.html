@@ -1,0 +1,89 @@
+<!-- @dsCard group="Windows" name="History — list, search, empty" -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macapy — history</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body { display:flex; flex-direction:column; }
+  .mock-stage { flex-wrap: wrap; }
+  .macwin { width: 560px; }
+  .result-group { padding: 8px 16px 4px; }
+  .result-group .machine { font-size: 8.5px; }
+  .passage { padding: 8px 16px; border-bottom: 1px solid var(--hairline); }
+  .passage .tx-text { font-size: var(--text-small); color: var(--text-2); margin-top: 3px; }
+  .passage .tx-text mark { background: var(--signal-soft); color: var(--text); border-radius: 2px; padding: 0 1px; }
+</style>
+
+<div class="scheme-light mock-stage">
+  <div>
+    <div class="mock-caption">History — list</div>
+    <div class="macwin">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span><span class="win-title">History</span><span class="toolbar-spacer"></span><span class="searchfield">⌕ Search meetings</span></div>
+      <div class="row selected"><div class="row-main"><div class="row-title">Payments API migration sync</div><div class="row-sub">Today · 47m · 3 speakers</div></div><span class="row-meta">4 items</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">Design review — panel reskin</div><div class="row-sub">Yesterday · 32m · 2 speakers</div></div><span class="row-meta">2 items</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">Meeting Jul 22, 2026 at 9:30 AM</div><div class="row-sub">Jul 22 · 58m · 4 speakers</div></div><span class="row-meta">6 items</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">1:1 with Dana</div><div class="row-sub">Jul 21 · 26m · 2 speakers</div></div><span class="row-meta">1 item</span></div>
+      <div class="row" style="border-bottom:none"><div class="row-main"><div class="row-title">Meeting Jul 17, 2026 at 12:26 AM</div><div class="row-sub">Jul 17 · 2m · 2 speakers</div></div><span class="row-meta">—</span></div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">History — search results</div>
+    <div class="macwin">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span><span class="win-title">History</span><span class="toolbar-spacer"></span><span class="searchfield" style="color:var(--text)">⌕ retry queue</span></div>
+      <div class="result-group"><span class="machine">Meetings · 1</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">Payments API migration sync</div><div class="row-sub">Today · 47m · matches in transcript and action items</div></div><span class="row-meta">3 hits</span></div>
+      <div class="result-group"><span class="machine">Transcript passages · 2</span></div>
+      <div class="passage"><div class="row-title" style="font-size:12px">Payments API migration sync · 00:14</div><div class="tx-text">S2 — the <mark>retry queue</mark> is growing its dead-letter backlog since Monday, someone needs to own it…</div></div>
+      <div class="passage"><div class="row-title" style="font-size:12px">Payments API migration sync · 00:31</div><div class="tx-text">S1 — put the <mark>retry queue</mark> inside the runbook scope, not a separate workstream…</div></div>
+      <div class="result-group"><span class="machine">Artifacts · 1</span></div>
+      <div class="passage" style="border-bottom:none"><div class="row-title" style="font-size:12px">Action item · draft</div><div class="tx-text">Own the <mark>retry queue</mark> dead-letter cleanup — unassigned, surfaced at 00:14</div></div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">History — empty</div>
+    <div class="macwin" style="width:420px">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span><span class="win-title">History</span></div>
+      <div class="empty" style="padding:56px 40px">
+        <h4>No meetings yet</h4>
+        <p>Press ⌥⌘M when your next meeting starts.<br>Capture, transcription, and history all work<br>with zero setup — everything stays on this Mac.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="scheme-dark mock-stage">
+  <div>
+    <div class="mock-caption">History — list</div>
+    <div class="macwin">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span><span class="win-title">History</span><span class="toolbar-spacer"></span><span class="searchfield">⌕ Search meetings</span></div>
+      <div class="row selected"><div class="row-main"><div class="row-title">Payments API migration sync</div><div class="row-sub">Today · 47m · 3 speakers</div></div><span class="row-meta">4 items</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">Design review — panel reskin</div><div class="row-sub">Yesterday · 32m · 2 speakers</div></div><span class="row-meta">2 items</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">Meeting Jul 22, 2026 at 9:30 AM</div><div class="row-sub">Jul 22 · 58m · 4 speakers</div></div><span class="row-meta">6 items</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">1:1 with Dana</div><div class="row-sub">Jul 21 · 26m · 2 speakers</div></div><span class="row-meta">1 item</span></div>
+      <div class="row" style="border-bottom:none"><div class="row-main"><div class="row-title">Meeting Jul 17, 2026 at 12:26 AM</div><div class="row-sub">Jul 17 · 2m · 2 speakers</div></div><span class="row-meta">—</span></div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">History — search results</div>
+    <div class="macwin">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span><span class="win-title">History</span><span class="toolbar-spacer"></span><span class="searchfield" style="color:var(--text)">⌕ retry queue</span></div>
+      <div class="result-group"><span class="machine">Meetings · 1</span></div>
+      <div class="row"><div class="row-main"><div class="row-title">Payments API migration sync</div><div class="row-sub">Today · 47m · matches in transcript and action items</div></div><span class="row-meta">3 hits</span></div>
+      <div class="result-group"><span class="machine">Transcript passages · 2</span></div>
+      <div class="passage"><div class="row-title" style="font-size:12px">Payments API migration sync · 00:14</div><div class="tx-text">S2 — the <mark>retry queue</mark> is growing its dead-letter backlog since Monday, someone needs to own it…</div></div>
+      <div class="passage"><div class="row-title" style="font-size:12px">Payments API migration sync · 00:31</div><div class="tx-text">S1 — put the <mark>retry queue</mark> inside the runbook scope, not a separate workstream…</div></div>
+      <div class="result-group"><span class="machine">Artifacts · 1</span></div>
+      <div class="passage" style="border-bottom:none"><div class="row-title" style="font-size:12px">Action item · draft</div><div class="tx-text">Own the <mark>retry queue</mark> dead-letter cleanup — unassigned, surfaced at 00:14</div></div>
+    </div>
+  </div>
+  <div>
+    <div class="mock-caption">History — empty</div>
+    <div class="macwin" style="width:420px">
+      <div class="titlebar"><span class="tl"><b></b><b></b><b></b></span><span class="win-title">History</span></div>
+      <div class="empty" style="padding:56px 40px">
+        <h4>No meetings yet</h4>
+        <p>Press ⌥⌘M when your next meeting starts.<br>Capture, transcription, and history all work<br>with zero setup — everything stays on this Mac.</p>
+      </div>
+    </div>
+  </div>
+</div>
