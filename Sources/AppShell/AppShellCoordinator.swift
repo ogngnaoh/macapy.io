@@ -40,11 +40,16 @@ final class AppShellCoordinator {
     /// an on-disk GRDB store under `~/Library/Application Support/macapy/`.
     /// Injected apart so tests can drive the shell with fakes, no panel, no
     /// global hotkeys, and no real disk access.
+    ///
+    /// `makePersistentStore` has no default on purpose: a defaulted production
+    /// store let a test silently write into the real on-disk database (M1
+    /// close-out defect). Every caller — the app's composition root included —
+    /// must now choose its store explicitly.
     init(
         panel: PanelPresenting = FloatingPanelController(),
         installHotKey: Bool = true,
         makePipeline: @escaping @MainActor (TranscriptStore) -> MeetingPipeline = AppShellCoordinator.productionPipeline,
-        makePersistentStore: @escaping @MainActor () throws -> MeetingStore = AppShellCoordinator.productionMeetingStore
+        makePersistentStore: @escaping @MainActor () throws -> MeetingStore
     ) {
         self.panel = panel
         self.makePipeline = makePipeline

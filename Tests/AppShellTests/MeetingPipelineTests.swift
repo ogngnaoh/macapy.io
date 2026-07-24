@@ -298,32 +298,36 @@ struct MeetingPipelineTests {
             Segment(id: UUID(), source: .mic, text: text, tStart: t, tEnd: t + 1)
         }
 
-        let coordinator = AppShellCoordinator(panel: FakePanel(), installHotKey: false) { store in
-            callCount.count += 1
-            let source = FakeCaptureSource(source: .mic, counters: counters)
-            switch callCount.count {
-            case 1:
-                // P1: emits a live final, then a slow (delayed) tail final.
-                let engine = FakeSTTEngine(
-                    live: [.mic: [.final(mkSeg("p1-live", 0))]],
-                    drain: [.mic: [.final(mkSeg("p1-tail", 10))]],
-                    counters: counters,
-                    drainDelayNanos: 40_000_000
-                )
-                return MeetingPipeline(engine: engine, sources: [source], store: store)
-            case 3:
-                // P3: the final meeting.
-                let engine = FakeSTTEngine(
-                    live: [.mic: [.final(mkSeg("p3-live", 0))]],
-                    counters: counters
-                )
-                return MeetingPipeline(engine: engine, sources: [source], store: store)
-            default:
-                // P2: no events; it never gets past its start gate before OFF.
-                let engine = FakeSTTEngine(counters: counters)
-                return MeetingPipeline(engine: engine, sources: [source], store: store)
-            }
-        }
+        let coordinator = AppShellCoordinator(
+            panel: FakePanel(), installHotKey: false,
+            makePipeline: { store in
+                callCount.count += 1
+                let source = FakeCaptureSource(source: .mic, counters: counters)
+                switch callCount.count {
+                case 1:
+                    // P1: emits a live final, then a slow (delayed) tail final.
+                    let engine = FakeSTTEngine(
+                        live: [.mic: [.final(mkSeg("p1-live", 0))]],
+                        drain: [.mic: [.final(mkSeg("p1-tail", 10))]],
+                        counters: counters,
+                        drainDelayNanos: 40_000_000
+                    )
+                    return MeetingPipeline(engine: engine, sources: [source], store: store)
+                case 3:
+                    // P3: the final meeting.
+                    let engine = FakeSTTEngine(
+                        live: [.mic: [.final(mkSeg("p3-live", 0))]],
+                        counters: counters
+                    )
+                    return MeetingPipeline(engine: engine, sources: [source], store: store)
+                default:
+                    // P2: no events; it never gets past its start gate before OFF.
+                    let engine = FakeSTTEngine(counters: counters)
+                    return MeetingPipeline(engine: engine, sources: [source], store: store)
+                }
+            },
+            makePersistentStore: { MeetingStore(database: try MacapyDatabase.inMemory()) }
+        )
 
         coordinator.toggleSession()  // ON#1 — start P1
         await waitUntil("P1 live final applied") { coordinator.store.segments.map(\.text) == ["p1-live"] }

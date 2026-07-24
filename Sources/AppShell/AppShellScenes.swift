@@ -6,7 +6,8 @@ import SwiftUI
 /// opens at launch (accessory app).
 @MainActor
 public struct AppShellScenes: Scene {
-    @State private var coordinator = AppShellCoordinator()
+    @State private var coordinator = AppShellCoordinator(
+        makePersistentStore: AppShellCoordinator.productionMeetingStore)
 
     public init() {}
 
