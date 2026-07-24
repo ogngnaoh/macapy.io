@@ -35,11 +35,11 @@ User-live:
 
 9. Enter the DeepSeek key in Providers settings → test connection streams a reply; the key is visible in Keychain Access (service `io.macapy.app`) and nowhere on disk; deleting it in-app removes it.
 10. Spend tab shows the ledger rows and est. cost from check 9's calls.
-11. Meeting run with **no key configured**: capture/transcript/history fully work, AI surfaces show the quiet setup prompt, `lsof -i -a -p $(pgrep -x macapy)` stays empty (milestone exit criterion 3).
+11. Meeting run with **no key configured** — a real, full-length meeting with the network monitor running throughout: capture/transcript/history fully work, AI surfaces show the quiet setup prompt, `lsof -i -a -p $(pgrep -x macapy)` stays empty for the duration (milestone exit criterion 3). Passing this formally retires M1 exit criterion 4 (zero-network, owner-attested until now — amendment from kickoff gate 2026-07-24).
 
 ## Checklist
 
-- [ ] Acceptance checks user-reviewed (M2 kickoff gate)
+- [x] Acceptance checks user-reviewed (M2 kickoff gate — approved 2026-07-24, amendments in ./milestone.md Integration notes)
 - [ ] Fake OpenAI-compatible server fixture (test target)
 - [ ] `LLMProvider` + `OpenAICompatibleClient` SSE streaming (TDD against fake server)
 - [ ] Endpoint profiles + quirks descriptors (built-ins incl. DeepSeek quirks)

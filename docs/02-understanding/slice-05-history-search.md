@@ -34,7 +34,7 @@ User-live:
 
 ## Checklist
 
-- [ ] Acceptance checks user-reviewed (M2 kickoff gate)
+- [x] Acceptance checks user-reviewed (M2 kickoff gate — approved 2026-07-24, amendments in ./milestone.md Integration notes)
 - [ ] FTS5 migration + incremental index maintenance (TDD)
 - [ ] Seeding generator + realistic-scale fixture DB
 - [ ] Search query layer + ranking

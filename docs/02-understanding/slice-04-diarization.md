@@ -10,7 +10,7 @@ The plan for this slice is also its record.
 
 ### Decisions (planning, 2026-07-17)
 
-1. **FluidAudio** (second external SPM dep after GRDB — license, size, and maintenance posture vetted and recorded in Notes before adding). Diarization runs on the **them stream only**; the mic stream is the user by definition (M1's you/them split is untouched).
+1. **FluidAudio** (second external SPM dep after GRDB — license, size, and maintenance posture vetted and recorded in Notes before adding). Vetting also includes an **empirical sanity run against the two-voice `say` fixture** before the slice commits to that fixture design — check 1 silently assumes TTS voices separate well under diarization, and that assumption must be tested first (amendment from kickoff gate 2026-07-24). Diarization runs on the **them stream only**; the mic stream is the user by definition (M1's you/them split is untouched).
 2. **Schema migration adds `speakers`** (SPEC §6.2: label, embedding BLOB, camelCase); `segments.speakerId` starts being populated for them-segments. Within-meeting clustering only; labels are automatic ("Speaker 1", "Speaker 2", …). No renaming, no cross-meeting identity (M4 non-goal).
 3. **Rendering:** speaker chips per the slice-1 design in panel and meeting detail; segments without a speaker (mic side, or pre-cluster confidence) render exactly as in M1.
 4. **Pipeline placement:** diarization consumes the same them-stream audio the analyzer gets (fan-out in TranscribeKit), attributes speaker ids to final segments by time overlap; volatile rendering never waits on diarization (G1 must be unaffected).
@@ -34,8 +34,8 @@ User-live:
 
 ## Checklist
 
-- [ ] Acceptance checks user-reviewed (M2 kickoff gate)
-- [ ] FluidAudio vetting note (license/size/maintenance) + dep added
+- [x] Acceptance checks user-reviewed (M2 kickoff gate — approved 2026-07-24, amendments in ./milestone.md Integration notes)
+- [ ] FluidAudio vetting note (license/size/maintenance) + empirical two-voice `say`-fixture separation run + dep added
 - [ ] `speakers` migration + segment attribution by time overlap (TDD)
 - [ ] Them-stream fan-out + diarization actor
 - [ ] Two-voice fixture + clustering tests

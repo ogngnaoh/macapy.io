@@ -38,11 +38,11 @@ User-live:
 3. Every screen in the inventory exists as a card in the Claude Design project and the author has approved each (browser review).
 4. Side-by-side: running app vs. approved mockups for panel, History, Settings, menu bar — author signs off, in **both light and dark** mode.
 5. Volatile → final transition remains unmistakable at a glance during a real capture; panel readable at its compact size.
-6. Keyboard operability and VoiceOver labels preserved on all reskinned controls.
+6. Keyboard operability and VoiceOver labels **present** on all reskinned controls — completing coverage where M1 left it partial, not merely preserving what existed (amendment from kickoff gate 2026-07-24).
 
 ## Checklist
 
-- [ ] Acceptance checks user-reviewed (M2 kickoff gate)
+- [x] Acceptance checks user-reviewed (M2 kickoff gate — approved 2026-07-24, amendments in ./milestone.md Integration notes)
 - [ ] Aesthetic-direction interview (frontend-design skill) → direction recorded in Notes
 - [ ] Design system (tokens + components) built locally, light + dark
 - [ ] All inventory screens mocked
