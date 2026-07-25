@@ -17,7 +17,7 @@ protocol PanelPresenting {
 @MainActor
 final class FloatingPanelController: PanelPresenting {
     private var panel: NSPanel?
-    private static let panelSize = NSSize(width: 320, height: 160)
+    private static let panelSize = NSSize(width: 340, height: 380)
 
     func show(session: SessionController, store: TranscriptStore) {
         if panel == nil {

@@ -4,7 +4,9 @@ import TranscribeKit
 
 /// Minimal past-meetings list (verification surface, not the full M2 history
 /// feature — slice-04 doc decision 8): fetch-on-appear from `MeetingStore`,
-/// no `ValueObservation`. Replaces `HistoryPlaceholderView`.
+/// no `ValueObservation`. Reskinned to the "Quiet instrument" system: native
+/// window furniture (List, split view) stays system-styled; text, gutters,
+/// and empty states draw from Design tokens.
 struct HistoryView: View {
     let store: MeetingStore
 
@@ -17,26 +19,27 @@ struct HistoryView: View {
             List(meetings, selection: $selectedID) { meeting in
                 VStack(alignment: .leading, spacing: 2) {
                     Text(meeting.title)
+                        .font(UIType.bodySemibold)
+                        .foregroundStyle(DesignTokens.text)
                     Text(meeting.startedAt, format: .dateTime)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(UIType.small)
+                        .foregroundStyle(DesignTokens.textSecondary)
                 }
+                .padding(.vertical, 2)
                 .tag(meeting.id)
             }
             .navigationTitle("History")
             .overlay {
                 if meetings.isEmpty {
                     if let loadError {
-                        ContentUnavailableView(
-                            "Couldn't load history",
-                            systemImage: "exclamationmark.triangle",
-                            description: Text(loadError)
+                        EmptyStateView(
+                            title: "Couldn't load history",
+                            message: loadError
                         )
                     } else {
-                        ContentUnavailableView(
-                            "No meetings yet",
-                            systemImage: "clock",
-                            description: Text("Past meetings appear here once one ends.")
+                        EmptyStateView(
+                            title: "No meetings yet",
+                            message: "Press ⌥⌘M when your next meeting starts.\nEverything stays on this Mac."
                         )
                     }
                 }
@@ -45,7 +48,10 @@ struct HistoryView: View {
             if let selectedMeeting {
                 MeetingTranscriptView(store: store, meeting: selectedMeeting)
             } else {
-                ContentUnavailableView("Select a Meeting", systemImage: "text.bubble")
+                EmptyStateView(
+                    title: "Select a meeting",
+                    message: "Its transcript opens here."
+                )
             }
         }
         .frame(minWidth: 480, minHeight: 320)
@@ -67,7 +73,8 @@ struct HistoryView: View {
 }
 
 /// Read-only transcript for one persisted meeting — reopened, not re-editable
-/// (exit criterion 2's "reopenable from the list").
+/// (M1 exit criterion 2's "reopenable from the list"). Same caption treatment
+/// as the live panel: mono attribution gutter, SF text.
 private struct MeetingTranscriptView: View {
     let store: MeetingStore
     let meeting: MeetingRecord
@@ -77,26 +84,32 @@ private struct MeetingTranscriptView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 0) {
                 ForEach(segments) { segment in
-                    Text("\(PanelView.speakerLabel(for: segment.source)): \(segment.text)")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    TranscriptLineView(
+                        speaker: PanelView.speakerLabel(for: segment.source),
+                        isYou: segment.source == .mic,
+                        text: segment.text,
+                        isVolatile: false
+                    )
                 }
             }
-            .padding()
+            .padding(.vertical, DesignTokens.Space.s3)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .navigationTitle(meeting.title)
         .overlay {
             if segments.isEmpty {
                 if let loadError {
-                    ContentUnavailableView(
-                        "Couldn't load transcript",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text(loadError)
+                    EmptyStateView(
+                        title: "Couldn't load transcript",
+                        message: loadError
                     )
                 } else {
-                    ContentUnavailableView("No Transcript", systemImage: "text.bubble")
+                    EmptyStateView(
+                        title: "No transcript",
+                        message: "This meeting has no captured lines."
+                    )
                 }
             }
         }

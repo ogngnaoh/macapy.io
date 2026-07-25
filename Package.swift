@@ -30,7 +30,10 @@ let package = Package(
         .target(name: "ProviderKit"),
         .target(
             name: "AppShell",
-            dependencies: ["CaptureKit", "TranscribeKit", "PersistKit", "AgentKit", "ProviderKit"]
+            dependencies: ["CaptureKit", "TranscribeKit", "PersistKit", "AgentKit", "ProviderKit"],
+            // Martian Mono (OFL, license alongside): the design system's
+            // "machine voice" face, registered at startup by FontRegistrar.
+            resources: [.copy("Resources/Fonts")]
         ),
         // Shared by the LatencyHarness executable and G1BudgetTests
         // (slice-05 doc layout) — one `runHarness(fixtureURL:)` code path,

@@ -8,10 +8,13 @@ struct SettingsPlaceholderView: View {
     let coordinator: AppShellCoordinator
 
     var body: some View {
+        // Native grouped Form on purpose — Settings keeps system window
+        // furniture (slice-01 Notes); the M2 provider slice builds the real
+        // tabbed screens to the approved design.
         Form {
             Section("Settings") {
-                Text("Full settings arrive with the provider layer (M2).")
-                    .foregroundStyle(.secondary)
+                Text("Providers, spend, and diagnostics arrive with M2's provider layer.")
+                    .foregroundStyle(DesignTokens.textSecondary)
             }
             Section("Diagnostics") {
                 DiagnosticsSectionView(coordinator: coordinator)
@@ -40,10 +43,10 @@ struct DiagnosticsSectionView: View {
                     statLine("Volatile", report.volatile)
                     statLine("Final", report.final)
                 }
-                .font(.system(.callout, design: .monospaced))
+                .font(MachineType.number(11))
             } else {
                 Text("No active meeting.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DesignTokens.textSecondary)
             }
         }
         .task { await pollLoop() }

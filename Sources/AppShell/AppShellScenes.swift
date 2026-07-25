@@ -9,11 +9,18 @@ public struct AppShellScenes: Scene {
     @State private var coordinator = AppShellCoordinator(
         makePersistentStore: AppShellCoordinator.productionMeetingStore)
 
-    public init() {}
+    public init() {
+        FontRegistrar.registerIfNeeded()
+    }
 
     public var body: some Scene {
-        MenuBarExtra("macapy", systemImage: "waveform") {
+        // Brand mark variant A ("Cluster") as a monochrome template glyph —
+        // it stays template in every session state (slice-01 decision; the
+        // panel itself is the capture indicator).
+        MenuBarExtra {
             MenuBarMenu(coordinator: coordinator)
+        } label: {
+            Image(nsImage: SignalMark.menuBarImage)
         }
 
         Window("History", id: WindowID.history) {
@@ -21,10 +28,9 @@ public struct AppShellScenes: Scene {
                 if let store = coordinator.historyStore() {
                     HistoryView(store: store)
                 } else {
-                    ContentUnavailableView(
-                        "History Unavailable",
-                        systemImage: "exclamationmark.triangle",
-                        description: Text("Couldn't open the meeting database.")
+                    EmptyStateView(
+                        title: "History unavailable",
+                        message: "Couldn't open the meeting database."
                     )
                     .frame(minWidth: 480, minHeight: 320)
                 }

@@ -27,6 +27,15 @@ final class SessionController {
         return false
     }
 
+    /// When the current session began — survives pause/resume, nil while
+    /// idle. The panel header's meeting timer reads this.
+    var startedAt: Date? {
+        switch state {
+        case .idle: return nil
+        case .capturing(let startedAt), .paused(let startedAt): return startedAt
+        }
+    }
+
     /// Starts a session. Returns false (and changes nothing) if one is already running.
     @discardableResult
     func start(now: Date = Date()) -> Bool {

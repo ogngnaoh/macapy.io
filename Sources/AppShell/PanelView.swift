@@ -2,11 +2,10 @@ import CaptureKit
 import SwiftUI
 import TranscribeKit
 
-/// Functional-minimal live transcript (milestone non-goal: no visual design
-/// investment until the dedicated frontend design session). Finalized segments
-/// render solid; the trailing per-source volatile lines render italic-secondary.
-/// Each line is prefixed with a bold You/Them speaker label derived from its
-/// source (slice 3).
+/// The floating panel, reskinned to the approved "Quiet instrument" system
+/// (slice-01): signal strip on the top edge, mono state header with meeting
+/// timer, bottom-anchored caption-style transcript with attribution gutters.
+/// Volatile lines carry slate + dotted baseline and settle to ink.
 struct PanelView: View {
     @Environment(SessionController.self) private var session
     @Environment(TranscriptStore.self) private var store
@@ -21,53 +20,88 @@ struct PanelView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(spacing: 0) {
+            SignalStripView(mode: session.isCapturing ? .live : .quiet)
             header
-
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(store.segments) { segment in
-                            labeledLine(source: segment.source, text: segment.text)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .id(segment.id)
-                        }
-                        ForEach(volatileLines, id: \.source) { line in
-                            // Italic + secondary: color alone is too subtle against
-                            // the panel background to read as "not yet final".
-                            labeledLine(source: line.source, text: line.text)
-                                .italic()
-                                .foregroundStyle(.secondary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        Color.clear.frame(height: 1).id(Self.bottomAnchor)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .font(.callout)
-                }
-                .onChange(of: store.segments.count) { _, _ in
-                    proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
-                }
-                .onChange(of: volatileLines.map(\.text)) { _, _ in
-                    proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
-                }
+            transcript
+            if session.isPaused {
+                pausedNote
             }
-
-            Text("⌥⌘M to stop · ⌥⌘P to \(session.isPaused ? "resume" : "pause")")
-                .font(.caption2)
-                .foregroundStyle(.tertiary)
+            footer
         }
-        .padding()
-        .frame(width: 320, height: 160, alignment: .topLeading)
+        .frame(width: 340, height: 380)
+        .background(DesignTokens.surface)
     }
 
-    /// A transcript line: a bold You/Them prefix + the text, as one inline
-    /// `Text`. Volatile styling (italic/secondary) is applied by the caller on
-    /// the whole composed line.
-    private func labeledLine(source: AudioSource, text: String) -> Text {
-        var label = AttributedString("\(Self.speakerLabel(for: source)) ")
-        label.inlinePresentationIntent = .stronglyEmphasized
-        return Text(label + AttributedString(text))
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(session.isPaused ? "Paused" : "Capturing")
+                .font(MachineType.label())
+                .textCase(.uppercase)
+                .tracking(0.8)
+                .foregroundStyle(session.isPaused ? DesignTokens.textSecondary : DesignTokens.live)
+            Spacer()
+            if let startedAt = session.startedAt {
+                MeetingTimerText(startedAt: startedAt)
+            }
+        }
+        .padding(.horizontal, DesignTokens.Space.s3)
+        .padding(.vertical, DesignTokens.Space.s2)
+        .overlay(alignment: .bottom) { Divider().overlay(DesignTokens.hairline) }
+    }
+
+    private var transcript: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(store.segments) { segment in
+                        TranscriptLineView(
+                            speaker: Self.speakerLabel(for: segment.source),
+                            isYou: segment.source == .mic,
+                            text: segment.text,
+                            isVolatile: false
+                        )
+                        .id(segment.id)
+                    }
+                    ForEach(volatileLines, id: \.source) { line in
+                        TranscriptLineView(
+                            speaker: Self.speakerLabel(for: line.source),
+                            isYou: line.source == .mic,
+                            text: line.text,
+                            isVolatile: true
+                        )
+                    }
+                    Color.clear.frame(height: 1).id(Self.bottomAnchor)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, DesignTokens.Space.s2)
+            }
+            .onChange(of: store.segments.count) { _, _ in
+                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+            }
+            .onChange(of: volatileLines.map(\.text)) { _, _ in
+                proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
+            }
+        }
+    }
+
+    private var pausedNote: some View {
+        Text("Capture is stopped. Nothing is being heard.")
+            .font(UIType.small)
+            .foregroundStyle(DesignTokens.textSecondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, DesignTokens.Space.s2)
+            .overlay(alignment: .top) { Divider().overlay(DesignTokens.hairline) }
+    }
+
+    private var footer: some View {
+        Text("⌥⌘M to stop · ⌥⌘P to \(session.isPaused ? "resume" : "pause")")
+            .font(UIType.small)
+            .foregroundStyle(DesignTokens.textTertiary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DesignTokens.Space.s3)
+            .padding(.vertical, DesignTokens.Space.s2)
+            .overlay(alignment: .top) { Divider().overlay(DesignTokens.hairline) }
     }
 
     private static let bottomAnchor = "transcript-bottom"
@@ -77,22 +111,5 @@ struct PanelView: View {
         store.volatile
             .sorted { $0.key.rawValue < $1.key.rawValue }
             .map(\.value)
-    }
-
-    @ViewBuilder
-    private var header: some View {
-        switch session.state {
-        case .idle:
-            Text("Idle")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-        case .capturing:
-            Label("Capturing", systemImage: "waveform")
-                .font(.headline)
-        case .paused:
-            Label("Paused", systemImage: "pause.circle")
-                .font(.headline)
-                .foregroundStyle(.orange)
-        }
     }
 }
