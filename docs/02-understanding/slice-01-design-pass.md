@@ -47,7 +47,7 @@ User-live:
 - [x] Design system (tokens + components) built locally, light + dark (2026-07-24, `design/` at repo root: `tokens.css` + bundled Martian Mono)
 - [x] All inventory screens mocked (2026-07-24, `design/0*.html` — every screen in both light and dark)
 - [x] Claude Design project created; `/design-sync` upload (2026-07-24, project "macapy — Quiet instrument", id 551c0adb-9714-4d9b-86aa-5b6ed268d78f, 12 files)
-- [ ] Author browser review → iterate → approval (record project link + date)
+- [x] Author browser review → iterate → approval (2026-07-25: all cards approved in project "macapy — Quiet instrument" 551c0adb-9714-4d9b-86aa-5b6ed268d78f; brand mark = variant A "Cluster"; acceptance check 3 satisfied)
 - [ ] SwiftUI translation: `AppShell/Design/` tokens + components
 - [ ] Reskin panel / History / Settings / menu bar
 - [ ] Checks 1–2 (machine) + 3–6 (live) pass
