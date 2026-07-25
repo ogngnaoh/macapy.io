@@ -1,0 +1,190 @@
+<!-- @dsCard group="Foundations" name="Brand — wordmark lockup + signal mark variants" -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macapy — brand</title>
+<link rel="stylesheet" href="tokens.css">
+<style>
+  body { display:flex; flex-wrap:wrap; }
+  .half { flex:1 1 480px; min-width:480px; padding: 40px 44px 56px; background: var(--bg); }
+  h2 { font-family: var(--font-machine); font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); margin: 34px 0 14px; border-bottom: 1px solid var(--hairline); padding-bottom: 6px; }
+  h2:first-child { margin-top: 0; }
+  .lockup { font-family: var(--font-machine); font-weight: 700; font-size: 30px; letter-spacing: -0.02em; color: var(--text); }
+  .lockup span { color: var(--text-2); font-weight: 450; }
+  .lockup-small { font-family: var(--font-machine); font-weight: 700; font-size: 14px; color: var(--text); }
+  .lockup-small span { color: var(--text-2); font-weight: 450; }
+  .variants { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .variant { border: 1px solid var(--hairline); border-radius: var(--r-card); background: var(--surface); padding: 18px 14px 12px; text-align: center; }
+  .variant .machine { display:block; margin-top: 14px; font-size: 8px; }
+  .apps { display: flex; gap: 18px; align-items: flex-end; flex-wrap: wrap; }
+  .app-demo { text-align: center; }
+  .app-demo .machine { display: block; margin-top: 8px; font-size: 8px; }
+  .menubar { width: 210px; height: 26px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--hairline); justify-content: flex-end; }
+  .menubar .clock { font-size: 11px; font-weight: 500; }
+  .appicon { width: 96px; height: 96px; border-radius: 22px; background: linear-gradient(175deg, #2b3036 0%, #16191d 100%); display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 18px rgba(0,0,0,0.28); }
+  .favicon { width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; }
+  .note { font-size: var(--text-small); color: var(--text-2); line-height: 1.5; margin-top: 10px; max-width: 430px; }
+</style>
+
+<div class="scheme-light half">
+  <h2>Wordmark lockup</h2>
+  <div class="lockup">macapy<span>.io</span></div>
+  <p class="note">In-app chrome says <b>macapy</b> alone. The full lockup — ink wordmark, slate suffix, Martian Mono — appears only at brand moments: onboarding welcome, About, README, website.</p>
+
+  <h2>Mark variants — from the signal strip</h2>
+  <div class="variants">
+    <div class="variant">
+      <svg width="66" height="36" viewBox="0 0 44 24" fill="none" role="img" aria-label="Cluster mark">
+        <rect x="0"  y="14" width="4" height="10" rx="2" fill="var(--text)"/>
+        <rect x="8"  y="8"  width="4" height="16" rx="2" fill="var(--text)"/>
+        <rect x="16" y="2"  width="4" height="22" rx="2" fill="var(--signal)"/>
+        <rect x="24" y="12" width="4" height="12" rx="2" fill="var(--text)"/>
+        <rect x="32" y="6"  width="4" height="18" rx="2" fill="var(--text)"/>
+      </svg>
+      <span class="machine">A · Cluster — level frozen mid-word</span>
+    </div>
+    <div class="variant">
+      <svg width="66" height="36" viewBox="0 0 44 24" fill="none" role="img" aria-label="On-the-line mark">
+        <rect x="0" y="21" width="44" height="2.5" rx="1.25" fill="var(--text)"/>
+        <rect x="8"  y="7"  width="4" height="11" rx="2" fill="var(--text)"/>
+        <rect x="20" y="3"  width="4" height="15" rx="2" fill="var(--signal)"/>
+        <rect x="32" y="9"  width="4" height="9"  rx="2" fill="var(--text)"/>
+      </svg>
+      <span class="machine">B · On the line — ticks over the strip</span>
+    </div>
+    <div class="variant">
+      <svg width="66" height="36" viewBox="0 0 44 24" role="img" aria-label="m-dot monogram">
+        <text x="2" y="21" font-family="'Martian Mono', monospace" font-weight="700" font-size="24" fill="var(--text)">m</text>
+        <circle cx="28" cy="19" r="3" fill="var(--signal)"/>
+      </svg>
+      <span class="machine">C · m-dot — terminal monogram</span>
+    </div>
+  </div>
+
+  <h2>Applications (shown with variant A)</h2>
+  <div class="apps">
+    <div class="app-demo">
+      <div class="appicon">
+        <svg width="52" height="30" viewBox="0 0 44 24" fill="none">
+          <rect x="0"  y="14" width="4" height="10" rx="2" fill="#eef0f2"/>
+          <rect x="8"  y="8"  width="4" height="16" rx="2" fill="#eef0f2"/>
+          <rect x="16" y="2"  width="4" height="22" rx="2" fill="#f2a33c"/>
+          <rect x="24" y="12" width="4" height="12" rx="2" fill="#eef0f2"/>
+          <rect x="32" y="6"  width="4" height="18" rx="2" fill="#eef0f2"/>
+        </svg>
+      </div>
+      <span class="machine">App icon — carbon squircle, constant in both modes</span>
+    </div>
+    <div class="app-demo">
+      <div class="menubar" style="background:rgba(246,246,247,0.9)">
+        <svg width="20" height="11" viewBox="0 0 44 24" fill="none">
+          <rect x="0"  y="14" width="4" height="10" rx="2" fill="#1a1a1a"/>
+          <rect x="8"  y="8"  width="4" height="16" rx="2" fill="#1a1a1a"/>
+          <rect x="16" y="2"  width="4" height="22" rx="2" fill="#1a1a1a"/>
+          <rect x="24" y="12" width="4" height="12" rx="2" fill="#1a1a1a"/>
+          <rect x="32" y="6"  width="4" height="18" rx="2" fill="#1a1a1a"/>
+        </svg>
+        <span class="clock" style="color:#1a1a1a">Fri 9:41</span>
+      </div>
+      <span class="machine">Menu bar — monochrome template glyph</span>
+    </div>
+    <div class="app-demo">
+      <div class="favicon">
+        <svg width="14" height="9" viewBox="0 0 44 24" fill="none">
+          <rect x="0"  y="14" width="4" height="10" rx="2" fill="var(--text)"/>
+          <rect x="8"  y="8"  width="4" height="16" rx="2" fill="var(--text)"/>
+          <rect x="16" y="2"  width="4" height="22" rx="2" fill="var(--signal)"/>
+          <rect x="24" y="12" width="4" height="12" rx="2" fill="var(--text)"/>
+          <rect x="32" y="6"  width="4" height="18" rx="2" fill="var(--text)"/>
+        </svg>
+      </div>
+      <span class="machine">Favicon 16px</span>
+    </div>
+    <div class="app-demo">
+      <span class="lockup-small">macapy<span>.io</span></span>
+      <span class="machine">README / website lockup</span>
+    </div>
+  </div>
+  <p class="note">Capturing state can tint the menu bar glyph's tall tick amber (color menu bar icons are legitimate on macOS 26 for state, e.g. recording indicators) — or stay template-monochrome; decide at build.</p>
+</div>
+
+<div class="scheme-dark half">
+  <h2>Wordmark lockup</h2>
+  <div class="lockup">macapy<span>.io</span></div>
+  <p class="note">In-app chrome says <b>macapy</b> alone. The full lockup — fog wordmark, slate suffix, Martian Mono — appears only at brand moments: onboarding welcome, About, README, website.</p>
+
+  <h2>Mark variants — from the signal strip</h2>
+  <div class="variants">
+    <div class="variant">
+      <svg width="66" height="36" viewBox="0 0 44 24" fill="none" role="img" aria-label="Cluster mark">
+        <rect x="0"  y="14" width="4" height="10" rx="2" fill="var(--text)"/>
+        <rect x="8"  y="8"  width="4" height="16" rx="2" fill="var(--text)"/>
+        <rect x="16" y="2"  width="4" height="22" rx="2" fill="var(--signal)"/>
+        <rect x="24" y="12" width="4" height="12" rx="2" fill="var(--text)"/>
+        <rect x="32" y="6"  width="4" height="18" rx="2" fill="var(--text)"/>
+      </svg>
+      <span class="machine">A · Cluster — level frozen mid-word</span>
+    </div>
+    <div class="variant">
+      <svg width="66" height="36" viewBox="0 0 44 24" fill="none" role="img" aria-label="On-the-line mark">
+        <rect x="0" y="21" width="44" height="2.5" rx="1.25" fill="var(--text)"/>
+        <rect x="8"  y="7"  width="4" height="11" rx="2" fill="var(--text)"/>
+        <rect x="20" y="3"  width="4" height="15" rx="2" fill="var(--signal)"/>
+        <rect x="32" y="9"  width="4" height="9"  rx="2" fill="var(--text)"/>
+      </svg>
+      <span class="machine">B · On the line — ticks over the strip</span>
+    </div>
+    <div class="variant">
+      <svg width="66" height="36" viewBox="0 0 44 24" role="img" aria-label="m-dot monogram">
+        <text x="2" y="21" font-family="'Martian Mono', monospace" font-weight="700" font-size="24" fill="var(--text)">m</text>
+        <circle cx="28" cy="19" r="3" fill="var(--signal)"/>
+      </svg>
+      <span class="machine">C · m-dot — terminal monogram</span>
+    </div>
+  </div>
+
+  <h2>Applications (shown with variant A)</h2>
+  <div class="apps">
+    <div class="app-demo">
+      <div class="appicon">
+        <svg width="52" height="30" viewBox="0 0 44 24" fill="none">
+          <rect x="0"  y="14" width="4" height="10" rx="2" fill="#eef0f2"/>
+          <rect x="8"  y="8"  width="4" height="16" rx="2" fill="#eef0f2"/>
+          <rect x="16" y="2"  width="4" height="22" rx="2" fill="#f2a33c"/>
+          <rect x="24" y="12" width="4" height="12" rx="2" fill="#eef0f2"/>
+          <rect x="32" y="6"  width="4" height="18" rx="2" fill="#eef0f2"/>
+        </svg>
+      </div>
+      <span class="machine">App icon — carbon squircle, constant in both modes</span>
+    </div>
+    <div class="app-demo">
+      <div class="menubar" style="background:rgba(30,32,36,0.92)">
+        <svg width="20" height="11" viewBox="0 0 44 24" fill="none">
+          <rect x="0"  y="14" width="4" height="10" rx="2" fill="#ececec"/>
+          <rect x="8"  y="8"  width="4" height="16" rx="2" fill="#ececec"/>
+          <rect x="16" y="2"  width="4" height="22" rx="2" fill="#ececec"/>
+          <rect x="24" y="12" width="4" height="12" rx="2" fill="#ececec"/>
+          <rect x="32" y="6"  width="4" height="18" rx="2" fill="#ececec"/>
+        </svg>
+        <span class="clock" style="color:#ececec">Fri 9:41</span>
+      </div>
+      <span class="machine">Menu bar — monochrome template glyph</span>
+    </div>
+    <div class="app-demo">
+      <div class="favicon">
+        <svg width="14" height="9" viewBox="0 0 44 24" fill="none">
+          <rect x="0"  y="14" width="4" height="10" rx="2" fill="var(--text)"/>
+          <rect x="8"  y="8"  width="4" height="16" rx="2" fill="var(--text)"/>
+          <rect x="16" y="2"  width="4" height="22" rx="2" fill="var(--signal)"/>
+          <rect x="24" y="12" width="4" height="12" rx="2" fill="var(--text)"/>
+          <rect x="32" y="6"  width="4" height="18" rx="2" fill="var(--text)"/>
+        </svg>
+      </div>
+      <span class="machine">Favicon 16px</span>
+    </div>
+    <div class="app-demo">
+      <span class="lockup-small">macapy<span>.io</span></span>
+      <span class="machine">README / website lockup</span>
+    </div>
+  </div>
+  <p class="note">Capturing state can tint the menu bar glyph's tall tick amber (color menu bar icons are legitimate on macOS 26 for state, e.g. recording indicators) — or stay template-monochrome; decide at build.</p>
+</div>
