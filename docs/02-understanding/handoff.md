@@ -2,20 +2,19 @@
 
 ## Start here next session
 
-Slice 1 is mid-flight at its review gate: the full mockup bundle is synced to the Claude Design project **"macapy — Quiet instrument"** (id 551c0adb-9714-4d9b-86aa-5b6ed268d78f) — the author reviews it in the browser, feedback gets folded into `design/` and re-synced, then approval unlocks the SwiftUI translation (`Sources/AppShell/Design/` tokens + components, then reskin). Do not start the SwiftUI translation before browser approval (slice-01 check 3).
+Slice 1 **shipped 2026-07-25**; slice 2 (ProviderKit) is **active**. First act: build the fake OpenAI-compatible server fixture in the test target (slice-02 doc decision 6), then TDD `LLMProvider`/`OpenAICompatibleClient` SSE streaming against it — the slice doc's front-loaded checks 1–8 are the machine gate, and the fake server is reused by slice 3 and M3. The Providers/Spend settings tabs are built to the approved mockups (`design/06-settings.html`). Before live checks 9–11: the author needs a working DeepSeek key + small balance. Live check 11 (as amended at the kickoff gate) is a real full-length no-key meeting with the network monitor running — passing it retires M1 exit criterion 4.
 
 ## Current state
 
-- Kickoff gate passed and test-pollution fix landed 2026-07-24 (records in ./milestone.md Integration notes). Machine checks may now count as evidence.
-- Slice 1 active: aesthetic direction "Quiet instrument" interviewed, approved, and recorded in slice-01 Notes (graphite + VU-amber signal; machine-speaks-mono/humans-speak-SF; signal-strip signature; volatile = slate + dotted baseline). Mockups for every inventory screen (light + dark) live in `design/` — shared `tokens.css`, bundled Martian Mono — and are uploaded to the Claude Design project. Awaiting author browser review.
-- Slices 2–5 pending. M1 criterion 4 retirement rides on slice-2 live check 11 (real full-length no-key meeting, monitor running).
-- Key decisions: DeepSeek only live-verified provider; no EventKit in M2; auto speaker labels; memory watch in slice 4.
+- Slice 1 shipped: "Quiet instrument" design system approved and translated. Sources of truth: `design/` (HTML mockups + tokens.css, synced to Claude Design project "macapy — Quiet instrument") and `Sources/AppShell/Design/` (adaptive tokens, bundled Martian Mono/OFL + FontRegistrar, SignalStripView/TranscriptLineView/MeetingTimerText/EmptyStateView/SignalMark). Panel/History/menu bar/Settings reskinned; all six acceptance checks passed (record in slice-01 doc).
+- Deferred by design: signal strip is session-state-driven — wire to real capture RMS in slice 4 (same audio path as memory watch); app icon asset → M5; menu bar glyph stays template-monochrome.
+- DB clean as of 2026-07-25: 1 real meeting + 50 segments, zero orphans (junk deleted by id; backup `macapy.sqlite.backup-20260725-precleanup` beside the DB).
+- Kickoff gate passed and test-pollution fix landed 2026-07-24 — machine checks count as evidence; `makePersistentStore` has no default (compile-time guard).
+- Slices 3–5 pending. Key decisions: DeepSeek only live-verified provider (quirkiest profile — good stress test); no EventKit in M2; auto speaker labels; memory watch in slice 4.
 
 ## Open concerns
 
-- 2 junk rows (2026-07-24, sub-second, from the pollution-fix RED run) may still await owner deletion from the production DB (delete was permission-blocked for Claude; keep the one real 2026-07-17 meeting). Check count: 3 = pending, 1 = done.
-- Claude Design pane rendering of shared-asset references (`tokens.css`, fonts) is unverified — if cards render unstyled in the pane, inline the CSS per file and re-sync.
-- Author needs a working DeepSeek key + small balance before slice 2's live checks.
-- FluidAudio vetting before slice 4: license/size/maintenance + empirical two-voice `say`-fixture separation run.
-- Slice-1 scope: M4/M5 mockups are directional only; timebox iteration rounds. Claude Design → SwiftUI is a hand-translation; side-by-side sign-off (check 4) is the honesty check.
-- 7 NEEDS-CLARIFICATION markers in PRD/SPEC still stand; none block M2.
+- DeepSeek key + small balance required before slice-2 live checks (machine checks 1–8 need none).
+- FluidAudio vetting before slice 4: license/size/maintenance **plus** empirical two-voice `say`-fixture separation run (gate amendment).
+- M1 exit criterion 4 (zero-network) still owner-attested — slice-2 live check 11 is its designated retirement.
+- 7 NEEDS-CLARIFICATION markers in PRD/SPEC stand; none block M2 as planned.

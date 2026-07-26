@@ -1,6 +1,6 @@
 # Slice 1 — Whole-Product Design Pass + SwiftUI Design System + Reskin
 
-**Status:** pending
+**Status:** shipped 2026-07-25
 **Plan written:** 2026-07-17 (M2 planning session; acceptance checks below precede implementation — user review of this doc is the first act of M2 kickoff)
 **References:** ./milestone.md (exit criterion 1), ../../SPEC.md §6.1 (app shell), PRD G1 (portfolio bar), M1 non-goal "no visual design investment … until the dedicated frontend design session" — this is that session.
 
@@ -50,8 +50,8 @@ User-live:
 - [x] Author browser review → iterate → approval (2026-07-25: all cards approved in project "macapy — Quiet instrument" 551c0adb-9714-4d9b-86aa-5b6ed268d78f; brand mark = variant A "Cluster"; acceptance check 3 satisfied)
 - [x] SwiftUI translation: `AppShell/Design/` tokens + components (2026-07-25: DesignTokens, Typography incl. FontRegistrar + UIType/MachineType, Components incl. SignalStripView / TranscriptLineView / MeetingTimerText / EmptyStateView / SignalMark)
 - [x] Reskin panel / History / Settings / menu bar (2026-07-25; panel 340×380, menu bar carries the variant-A template glyph)
-- [ ] Checks 1–2 (machine) + 3–6 (live) pass — 1–2 PASS 2026-07-25 (82 tests / 17 suites green with pre-existing tests untouched, xcodebuild clean, grep audit zero ad-hoc literals); 3 PASS (browser approval); **4–6 pending author walk**
-- [ ] Ship rituals: slice table, integration notes, handoff, commit
+- [x] Checks 1–2 (machine) + 3–6 (live) pass — 1–2 PASS 2026-07-25 (82 tests / 17 suites green with pre-existing tests untouched, xcodebuild clean, grep audit zero ad-hoc literals); 3 PASS (browser approval); 4–6 PASS 2026-07-25 (author-walked: side-by-side both modes, volatile-at-a-glance, keyboard/VoiceOver — "looks good")
+- [x] Ship rituals: slice table, integration notes, handoff, commit (2026-07-25)
 
 ## Notes / dead ends
 
