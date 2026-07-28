@@ -21,4 +21,11 @@ DerivedData/
 # Secrets (never committed; real keys live in Keychain)
 *.pem
 *.key
-.env
+.env*
+!.env.example
+
+# Personal Claude Code config. NEVER track: the permission allowlist records
+# approved commands verbatim, so a secret typed inline on the command line
+# lands here. This is exactly how PGPASSWORD leaked to the public remote
+# (commit 7be9733). Shared config belongs in .claude/settings.json instead.
+.claude/settings.local.json
