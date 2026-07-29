@@ -2,6 +2,7 @@ import CaptureKit
 import Foundation
 import Observation
 import PersistKit
+import ProviderKit
 import TranscribeKit
 import os
 
@@ -26,8 +27,12 @@ final class AppShellCoordinator {
 
     @ObservationIgnored private let panel: PanelPresenting
     @ObservationIgnored private let makePipeline: @MainActor (TranscriptStore) -> MeetingPipeline
-    @ObservationIgnored private let makePersistentStore: @MainActor () throws -> MeetingStore
+    @ObservationIgnored private let makeDatabase: @MainActor () throws -> MacapyDatabase
+    @ObservationIgnored private var cachedDatabase: MacapyDatabase?
     @ObservationIgnored private var cachedPersistentStore: MeetingStore?
+    @ObservationIgnored private var cachedSettingsStore: SettingsStore?
+    @ObservationIgnored private var cachedSpendLedger: SpendLedgerStore?
+    @ObservationIgnored private var cachedProviderSettingsModel: ProviderSettingsModel?
     @ObservationIgnored private var hotKey: HotKey?
     @ObservationIgnored private var pauseHotKey: HotKey?
     @ObservationIgnored private var pipeline: MeetingPipeline?
@@ -41,19 +46,22 @@ final class AppShellCoordinator {
     /// Injected apart so tests can drive the shell with fakes, no panel, no
     /// global hotkeys, and no real disk access.
     ///
-    /// `makePersistentStore` has no default on purpose: a defaulted production
-    /// store let a test silently write into the real on-disk database (M1
-    /// close-out defect). Every caller — the app's composition root included —
-    /// must now choose its store explicitly.
+    /// `makeDatabase` has no default on purpose: a defaulted production store
+    /// let a test silently write into the real on-disk database (M1 close-out
+    /// defect). Every caller — the app's composition root included — must
+    /// choose its database explicitly. It vends the *database* rather than a
+    /// `MeetingStore` because slice 2 added two more stores over the same
+    /// connection (settings, spend ledger), and they must not each open their
+    /// own.
     init(
         panel: PanelPresenting = FloatingPanelController(),
         installHotKey: Bool = true,
         makePipeline: @escaping @MainActor (TranscriptStore) -> MeetingPipeline = AppShellCoordinator.productionPipeline,
-        makePersistentStore: @escaping @MainActor () throws -> MeetingStore
+        makeDatabase: @escaping @MainActor () throws -> MacapyDatabase
     ) {
         self.panel = panel
         self.makePipeline = makePipeline
-        self.makePersistentStore = makePersistentStore
+        self.makeDatabase = makeDatabase
         if installHotKey {
             hotKey = HotKey.startStopMeeting { [weak self] in
                 self?.toggleSession()
@@ -77,15 +85,15 @@ final class AppShellCoordinator {
 
     /// The production on-disk database (SPEC §5): `~/Library/Application
     /// Support/macapy/macapy.sqlite`. Creates the containing directory on
-    /// first use; test wiring never calls this (see `makePersistentStore`).
-    static func productionMeetingStore() throws -> MeetingStore {
+    /// first use; test wiring never calls this (see `makeDatabase`).
+    static func productionDatabase() throws -> MacapyDatabase {
         let appSupport = try FileManager.default.url(
             for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true
         )
         let dbURL = appSupport
             .appendingPathComponent("macapy", isDirectory: true)
             .appendingPathComponent("macapy.sqlite")
-        return MeetingStore(database: try MacapyDatabase.onDisk(at: dbURL))
+        return try MacapyDatabase.onDisk(at: dbURL)
     }
 
     func toggleSession() {
@@ -185,9 +193,57 @@ final class AppShellCoordinator {
 
     private func openOrReusePersistentStore() throws -> MeetingStore {
         if let cachedPersistentStore { return cachedPersistentStore }
-        let opened = try makePersistentStore()
+        let opened = MeetingStore(database: try openOrReuseDatabase())
         cachedPersistentStore = opened
         return opened
+    }
+
+    private func openOrReuseDatabase() throws -> MacapyDatabase {
+        if let cachedDatabase { return cachedDatabase }
+        let opened = try makeDatabase()
+        cachedDatabase = opened
+        return opened
+    }
+
+    /// Provider configuration + spend, over the same connection as history.
+    /// `nil` (logged) if the database can't be opened — Settings then shows an
+    /// error state instead of crashing, exactly like History.
+    func settingsStore() -> SettingsStore? {
+        do {
+            if let cachedSettingsStore { return cachedSettingsStore }
+            let opened = SettingsStore(database: try openOrReuseDatabase())
+            cachedSettingsStore = opened
+            return opened
+        } catch {
+            log.error("failed to open settings store: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// The settings window's provider/spend state, built once and reused: the
+    /// window can be closed and reopened, and a fresh model each time would
+    /// drop the last connection-test result and re-read the ledger for nothing.
+    func providerSettingsModel() -> ProviderSettingsModel {
+        if let cachedProviderSettingsModel { return cachedProviderSettingsModel }
+        let model = ProviderSettingsModel(
+            credentials: KeychainCredentialStore(),
+            settingsStore: settingsStore(),
+            ledger: spendLedger()
+        )
+        cachedProviderSettingsModel = model
+        return model
+    }
+
+    func spendLedger() -> SpendLedgerStore? {
+        do {
+            if let cachedSpendLedger { return cachedSpendLedger }
+            let opened = SpendLedgerStore(database: try openOrReuseDatabase())
+            cachedSpendLedger = opened
+            return opened
+        } catch {
+            log.error("failed to open spend ledger: \(error.localizedDescription)")
+            return nil
+        }
     }
 
     private func teardownPipeline() {

@@ -31,6 +31,8 @@ enum DesignTokens {
     /// VU amber — the one vivid thing. Strip ticks and primary marks only,
     /// never decoration. Constant across modes.
     static let signal = Color(srgbHex: 0xF2A33C)
+    /// The amber wash behind an active chip (`--signal-soft`).
+    static let signalSoft = Color(nsColor: NSColor(srgbHex: 0xF2A33C, alpha: 0.14))
 
     // MARK: Geometry
 

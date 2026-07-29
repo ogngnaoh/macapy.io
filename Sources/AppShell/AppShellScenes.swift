@@ -7,7 +7,7 @@ import SwiftUI
 @MainActor
 public struct AppShellScenes: Scene {
     @State private var coordinator = AppShellCoordinator(
-        makePersistentStore: AppShellCoordinator.productionMeetingStore)
+        makeDatabase: AppShellCoordinator.productionDatabase)
 
     public init() {
         FontRegistrar.registerIfNeeded()
@@ -41,7 +41,7 @@ public struct AppShellScenes: Scene {
         .restorationBehavior(.disabled)
 
         Settings {
-            SettingsPlaceholderView(coordinator: coordinator)
+            SettingsWindowView(coordinator: coordinator)
                 .regularWindowPresence(coordinator.activationPolicy)
         }
     }

@@ -1,6 +1,6 @@
 # Slice 2 — ProviderKit: OpenAI-Compatible Client, Profiles, Keychain, Spend
 
-**Status:** pending
+**Status:** active (implementation started 2026-07-25)
 **Plan written:** 2026-07-17 (M2 planning session; acceptance checks precede implementation)
 **References:** ../../SPEC.md §6.3 (LLMProvider contract), §6.4, §8 (security/privacy), §10; PRD FR-014, FR-015; ./milestone.md exit criteria 3 & 6.
 
@@ -40,12 +40,12 @@ User-live:
 ## Checklist
 
 - [x] Acceptance checks user-reviewed (M2 kickoff gate — approved 2026-07-24, amendments in ./milestone.md Integration notes)
-- [ ] Fake OpenAI-compatible server fixture (test target)
-- [ ] `LLMProvider` + `OpenAICompatibleClient` SSE streaming (TDD against fake server)
-- [ ] Endpoint profiles + quirks descriptors (built-ins incl. DeepSeek quirks)
-- [ ] Keychain storage + no-key quiet path
-- [ ] `spend_ledger` migration + `SpendMeter` cap gate
-- [ ] Providers + Spend settings tabs (to slice-1 design)
+- [x] Fake OpenAI-compatible server fixture (`Sources/ProviderTestSupport`, shared target so slice 3 + M3 reuse it)
+- [x] `LLMProvider` + `OpenAICompatibleClient` SSE streaming (TDD against fake server) — checks 1, 2, 4
+- [x] Endpoint profiles + quirks descriptors (built-ins incl. DeepSeek quirks) — check 3
+- [x] Keychain storage + no-key quiet path — checks 5, 7
+- [x] `spend_ledger` migration + `SpendMeter` cap gate — check 6
+- [x] Providers + Spend settings tabs (to slice-1 design) — built; **visual sign-off is live check 9/10**
 - [ ] Critic pass (risky slice: streaming client)
 - [ ] Verifier re-runs checks 1–8 with evidence
 - [ ] Live checks 9–11 walked with author
@@ -54,3 +54,56 @@ User-live:
 ## Notes / dead ends
 
 (append as work proceeds)
+
+**2026-07-25/26 — build session 1 (machine checks 1–8 implemented; 130 tests / 26 suites green, `xcodebuild` clean).**
+
+Platform findings (each cost a probe, each worth reusing):
+
+1. **`NWListener` cannot bind here — the fake server is POSIX sockets.** Every configuration (`requiredLocalEndpoint` loopback, `requiredInterfaceType = .loopback`, plain `.tcp` on `.any`, fixed port) fails `POSIXErrorCode 22 (EINVAL)` at `start`, inside the test bundle *and* in a standalone script, sandboxed and not. A raw `socket`/`bind`/`listen` on 127.0.0.1 works first try. `FakeOpenAIServer` therefore uses BSD sockets + `poll` (50ms) for the accept loop, one thread per connection, `SO_NOSIGPIPE` set (without it, writing to a client that already hung up kills the whole test process).
+2. **A truncated SSE stream does *not* surface as a URLSession error.** The first RED run for the mid-stream-disconnect check showed the client emitting a clean `.completed` for a chunked body cut off without its terminating chunk — i.e. a half-finished artifact would have looked whole to the post-meeting agent. Fix is protocol-level, not transport-level: a stream is only complete if it delivered `[DONE]` or a `finish_reason`; otherwise `.transport("stream ended before completion")`. **Do not weaken this into trusting URLSession's error reporting.**
+3. **Keychain: file-based, not data-protection.** `kSecUseDataProtectionKeychain` returns `errSecMissingEntitlement (-34018)` from an unsigned binary, so it would make credentials untestable and break `swift test` everywhere. The file-based keychain add/read/delete all succeed with no prompt. Revisit at M5 when signing + a keychain-access-group entitlement exist.
+
+Design decisions taken during the build:
+
+4. **SPEC §6.3 amendment — `completeReportingUsage` returns `CompletedCall<T>` (value + usage);** the plain `complete(_:as:) -> T` stays as a protocol extension. Reason: FR-015 requires booking *every* call, and the metering decorator would otherwise have to downcast to the concrete client to see token counts.
+5. **Metering is a decorator (`MeteredProvider`), not logic inside the client.** The only provider the app hands out is a metered one, so "every call writes a ledger row" is structural rather than call-site discipline, and the client stays a pure transport.
+6. **Dependency edge: PersistKit → ProviderKit** (for `SpendLedger`/`SpendEntry`). The other direction would drag GRDB into the network layer.
+7. **`spend_ledger` keeps SPEC's snake_case table name with camelCase columns** (matching the M1 deviation). `meetingID` is nullable (the settings "test connection" spends money before any meeting exists) and `estCostUSD` is nullable — an unpriced model reads as "—", never as free. Its FK cascades with the meeting (exit criterion 5).
+8. **Pricing table defaults are unverified and user-editable.** `PricingTable` is keyed by model id; the est-cost math is unit-tested against explicit rates, never the shipped defaults, so a stale price list can't silently pass the test. Confirm real rates at live-check time.
+9. Built-in profile model ids (`gpt-5-nano`/`gpt-5`, `deepseek-chat`/`deepseek-reasoner`, …) are **defaults, not constants** — both tiers are overridable per profile in settings, which is the escape hatch when a provider rotates model names.
+
+TDD disclosures (verification convention — this session changed nothing that pre-existed, but its own checks are what needs review):
+
+- Assertion-level RED observed before implementation for: streaming order, mid-stream truncation, 429/5xx/401 mapping, fail→succeed recovery, structured-output decode + schema-on-the-wire + truncated/missing-field payloads, all three quirks behaviors, and the log-leak check.
+- Compile-level RED only (type didn't exist, then passed first run) for: Keychain round-trips, `ProviderRegistry` zero-network resolution, `SpendMeter`/`PricingTable`, `SpendLedgerStore`. To answer "is that test vacuous?", the cap gate was **mutation-checked**: making `authorize` a no-op turned `aCallPastTheCapIsRefusedWithTheTypedErrorAndWritesNoRow` red, restoring it turned it green.
+- One test (`malformedSSEChunkThrowsTypedErrorInsteadOfBeingSkipped`) passed on first run because chunk decoding already had to reject non-JSON to work at all — it characterizes existing behavior rather than having driven it.
+- Vacuity guards were written into the checks that could otherwise pass by doing nothing: the zero-network suite asserts a *configured* profile does reach the network exactly once; the key-leak DB check asserts 2 ledger rows really were written; the log check asserts provider log entries exist at all.
+- `swift test` writes no rows to the production DB (M1 defect fixed 2026-07-24) and no items to the production Keychain service — every credential test uses `io.macapy.tests.<uuid>` and deletes it.
+- **Pre-existing tests changed (needs review):** `MeetingPipelineTests` construction only — `AppShellCoordinator`'s injection point moved from `makePersistentStore: () -> MeetingStore` to `makeDatabase: () -> MacapyDatabase` (slice 2 needs three stores over *one* connection: meetings, settings, spend). Assertions untouched; the no-default compile-time guard against the M1 test-pollution defect is preserved.
+
+Settings UI notes:
+
+10. Tabs are General / Providers / Spend / Diagnostics per the mockup. **Deliberately not built in this slice:** "Delete all meeting data…" (slice 5 owns deletion) and the global AI-off switch — a dead control is worse than an absent one. Diagnostics keeps its M1 content plus the mockup's "measured on this Mac" note.
+11. Spend shows the most recent meeting with any spend, and says so honestly: unknown-price rows render "—", a total containing them is labelled partial, and sub-cent costs render "<$0.01" rather than "$0.00".
+12. The "test connection" call is metered like any other call and booked with `meetingID = nil` — it spends the user's money before any meeting exists, so it belongs in the ledger.
+13. **Defect found and fixed at end of session — `deleteAll()` deleted one item per call.** The file-based keychain's `SecItemDelete` removes a *single* match, so "remove every key under this service" left the rest on the machine and reported success — which would have broken FR-013's delete-everything, not just test cleanup. Found by auditing for pollution after a full run (16 stray `io.macapy.tests.*` items survived); fixed TDD (RED: `remaining → ["sk-b", "sk-c"]`) by looping until `errSecItemNotFound`, with a bound so a misbehaving keychain can't spin forever. Verified: a full `swift test` now leaves **zero** items behind, and the 16 historical strays (fake canaries only) were deleted — production service `io.macapy.app` untouched, production DB unchanged at 1 meeting / 50 segments. Lesson worth keeping: *audit for side effects after the suite is green, not only for assertions passing.*
+14. Smoke-tested: app builds and launches with the new settings scene wired, no crash. Opening the Settings window itself couldn't be automated (accessory app; `osascript` lacks Accessibility permission here), which is why the visual pass stays an author-walked live check.
+
+**2026-07-29 — credential-handling decisions (author-approved), plus a leak found and closed.**
+
+A security pass over the working tree turned up a leaked secret and forced six decisions about how credentials are handled *during development*, which had never been written down. Recorded here because slice 3 inherits all of them.
+
+15. **The leak, and what it teaches.** `.claude/settings.local.json` was **tracked** and carried a plaintext Postgres password from the dead v0 Windows stack in three entries, reachable from public `origin/main` *and* `origin/legacy`. (The value is deliberately not reproduced in these docs — writing a leaked secret into the incident report re-propagates it into every future clone and grep. It is in `git show 7be9733` for anyone who needs it.) No source file ever contained it: **Claude Code's permission allowlist records approved commands verbatim, so a secret typed inline on a command line is written into a tracked file as a side effect of granting permission.** That is an agentic-coding-specific leak channel and it is the reason for decisions 16 and 20. Fixed in 59b91f5 (entries removed, file untracked and ignored). A full-history scan across every ref for `sk-*`/`sk-ant-*`/`sk-or-v1-*`/`ghp_*`/`github_pat_*`/`AKIA*`/`AIza*`/`xox[baprs]-*`/`glpat-*`/`BEGIN PRIVATE KEY` came back clean — **no LLM API key was ever committed**, `.env` was never committed, `.env.example` holds placeholders only. Rotation is the only real remediation for a value already public; history rewriting was considered and rejected as theatre.
+16. **D1 — dev secrets come from the Keychain, never from a file in the repo.** `.envrc` (committed; contains a *lookup*, not a value) seeds `MACAPY_DEEPSEEK_KEY` from a `security` item under service `io.macapy.dev` — separate from the app's `io.macapy.app` so the scoped dev key rotates without touching real credentials. `.env` was rejected specifically because SPEC §8 promises users "keys only in Keychain": a repo whose dev setup contradicts its own security model is a credibility problem in a project meant to be read.
+17. **D4 — live tests are env-gated and skip, never fail; they never gate a ship.** `LiveCredentials.hasDeepSeek` drives `@Suite(.enabled(if:))`. `swift test` must stay green on a fresh clone with zero credentials or acceptance check 8 is a lie for everyone but the author. Machine checks 1–8 gate the slice; live checks confirm reality. The empty-string case is load-bearing and unit-tested: `.envrc` exports unconditionally, so a machine without the Keychain item yields `""`, and treating that as "present" would send `Authorization: Bearer ` and report a 401 that looks like a broken key rather than a missing one.
+18. **D3 — the spend ledger follows the meeting's database (decide before slice 3 metering lands).** `spendLedger()`/`settingsStore()` are built over the *on-disk* database while an ephemeral meeting's transcript goes to an in-memory one. Harmless today (the only `MeteredProvider` in shipping code is `testConnection`, `meetingID: nil`), but once slice 3 meters real meetings, ephemeral rows would target the persistent DB and fail the `meetings` FK. Rejected alternative "ephemeral books no rows": `SpendMeter`'s gate *sums the ledger*, so no rows means no cap enforcement — FR-015 and G5 would fail silently in exactly the mode a privacy-conscious user chose. Nullable `meetingID` was rejected as breaking the cascade-delete story.
+19. **D2 — real meeting transcripts do not go to first-party DeepSeek.** Route through OpenRouter for anything carrying real content; keep the first-party profile shipped as a *user* option with its existing data-policy note. Our own `EndpointProfile.deepSeek.dataPolicyNote` says it trains on inputs by default and stores in China; slice 3 sends real transcripts. Decide the routing before slice 3, not after a quarter of dogfooding.
+20. **D5 — guardrails moved into a tracked `.claude/settings.json`.** The deny rules previously lived only in the (now correctly untracked) personal file, so a fresh clone, a contributor, or the author on another machine inherited none of them. **Note the deliberate narrowness:** the first attempt used `Read/Edit(**/.env*)`, which also matches `.envrc` — the very file that has to be committed and read. Patterns are `.env`, `.env.*`, and `.envrc.local` (direnv's per-machine override, the one people *do* put values in). Honest limit: these are speed bumps, not walls — a script the agent runs can still read what `Bash(env)` denies. The real protection is a cheap, scoped, rotatable key and never printing it.
+21. **D6 — fixture fidelity deferred with an explicit trigger.** Hand-written `OpenAIFixtures` stay for M2. **Trigger: if live check 9 shows real DeepSeek responses diverging from the fixtures, build record/replay in slice 3; if they match, hand-written stays.** Deciding before check 9 is guessing. (`RecordingURLProtocol` is *not* a VCR — it records requests and blocks them, for the zero-network assertion in check 7.)
+22. **Latent build bug fixed in passing:** `ProviderTestSupport` imports ProviderKit in `FakeProfile.swift` but declared no dependency on it. The current build tolerates this; a clean checkout would not have. Edge now declared.
+
+23. **Defect in this session's own tests, found by the evaluator — a race in `LiveCredentialsTests`.** The first version drove real `setenv`/`unsetenv` on one process-global probe variable across five `@Test`s; swift-testing runs a suite's tests concurrently, so `--filter LiveCredentialsTests` failed roughly **one run in four** (reproduced 3 times in ~13 isolated runs). It passed all 11 *full-suite* runs — the extra scheduling noise of 159 tests hid it every time, which is precisely why "the suite is green" was not evidence here. Fixed by making the environment an injected dictionary rather than ordering the mutations: per the M1 slice-4 lesson, a test that needs serialization to pass is hiding a race, not tolerating one. **Reusable technique from the same evaluator pass:** the gate's *enabled* direction was proven without network and without running the live suite by linking the already-compiled `LiveCredentials.swift.o` into a standalone driver and running it with the variable set.
+
+24. **Verification caveat — the re-check was anchored, the first check was not.** The evaluator's *first* pass was clean by the convention's standard: fresh context, given only the work and the acceptance criteria, no author reasoning. It found both defects (the doc leak, the race). The *re-check* after the fixes was not clean in that sense — it resumed the same agent, carrying its own prior report, and the request named each defect and described how it had been fixed. That is exactly the anchoring the convention warns about, so the re-check should be read as "the author's fixes were confirmed against known findings", not as an independent re-derivation. An un-anchored fresh evaluation of the fixed tree has **not** been run. Cheap to correct if slice 2's remaining verifier pass simply covers this ground with no prior conclusion passed in.
+
+TDD disclosure for this session: `LiveCredentialsTests` was written against the absent/present cases before `LiveCredentials` existed (compile-level RED). Its non-vacuity was then checked by **mutation** — a naive `value(of:)` returning the raw environment value fails the empty and whitespace cases (the unset case survives that mutation and is disclosed as not load-bearing against it). The two `DeepSeekLiveTests` have **never been executed**: they require a real key and make real calls to `api.deepseek.com`, which is the author's to trigger. Their gate is proven in both directions without network — skip is observed directly (`Suite DeepSeekLiveTests skipped`), and the enabled branch via the standalone-driver technique in note 23.

@@ -66,6 +66,26 @@ public struct MacapyDatabase: Sendable {
                 t.column("value", .text)
             }
         }
+        // v2 (M2 slice 2): the spend ledger — one row per billed LLM call
+        // (PRD FR-015, SPEC §6.2). `meetingID` is nullable because the
+        // Providers screen's "test connection" spends money before any meeting
+        // exists; `estCostUSD` is nullable because a model with no known price
+        // must read as "—", not as free.
+        migrator.registerMigration("v2-spend-ledger") { db in
+            try db.create(table: "spend_ledger") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("meetingID", .text)
+                    .indexed()
+                    .references("meetings", onDelete: .cascade)
+                t.column("model", .text).notNull()
+                t.column("promptTokens", .integer).notNull()
+                t.column("cachedTokens", .integer).notNull()
+                t.column("completionTokens", .integer).notNull()
+                t.column("estCostUSD", .double)
+                t.column("purpose", .text).notNull()
+                t.column("at", .datetime).notNull()
+            }
+        }
         return migrator
     }
 }

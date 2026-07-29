@@ -24,6 +24,14 @@ DerivedData/
 .env*
 !.env.example
 
+# .envrc holds a Keychain *lookup*, not a value, so it is safe to commit and is
+# how live checks get their key (see Sources/ProviderTestSupport/LiveCredentials.swift).
+# .envrc.local is direnv's per-machine override — the file people do put values
+# in — so it stays ignored.
+!.envrc
+.envrc.local
+.direnv/
+
 # Personal Claude Code config. NEVER track: the permission allowlist records
 # approved commands verbatim, so a secret typed inline on the command line
 # lands here. This is exactly how PGPASSWORD leaked to the public remote

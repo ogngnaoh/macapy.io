@@ -22,12 +22,27 @@ let package = Package(
     targets: [
         .target(name: "CaptureKit"),
         .target(name: "TranscribeKit", dependencies: ["CaptureKit"]),
+        // Depends on ProviderKit for the `SpendLedger` contract and `SpendEntry`
+        // (slice 2). The edge points this way on purpose: persistence knowing a
+        // few provider value types is cheap, whereas ProviderKit depending on
+        // PersistKit would drag GRDB into what must stay a thin network layer.
         .target(name: "PersistKit", dependencies: [
             "TranscribeKit",
+            "ProviderKit",
             .product(name: "GRDB", package: "GRDB.swift"),
         ]),
         .target(name: "AgentKit"),
         .target(name: "ProviderKit"),
+        // The fake OpenAI-compatible server (slice-02 doc decision 6) lives in
+        // its own library target, not inside ProviderKitTests, because slice 3
+        // (post-meeting agent) and M3 (copilot cascade) reuse it from *their*
+        // test targets. It is deliberately absent from `products`, so the app
+        // can never link it.
+        //
+        // The ProviderKit edge is declared even though the current build
+        // tolerates its absence: `FakeProfile.swift` imports ProviderKit, and
+        // an undeclared import is a clean-checkout failure waiting to happen.
+        .target(name: "ProviderTestSupport", dependencies: ["ProviderKit"]),
         .target(
             name: "AppShell",
             dependencies: ["CaptureKit", "TranscribeKit", "PersistKit", "AgentKit", "ProviderKit"],
@@ -46,8 +61,21 @@ let package = Package(
             dependencies: ["TranscribeKit", "CaptureKit"],
             resources: [.copy("Fixtures")]
         ),
-        .testTarget(name: "AppShellTests", dependencies: ["AppShell", "PersistKit"]),
-        .testTarget(name: "PersistKitTests", dependencies: ["PersistKit", "TranscribeKit", "CaptureKit"]),
+        .testTarget(
+            name: "AppShellTests",
+            dependencies: ["AppShell", "PersistKit", "ProviderKit", "ProviderTestSupport"]
+        ),
+        // PersistKit is here for the key-leak check (acceptance check 5): the
+        // test writes a canary key, runs real calls, then greps the actual
+        // database files and the process's own log entries for it.
+        .testTarget(
+            name: "ProviderKitTests",
+            dependencies: ["ProviderKit", "ProviderTestSupport", "PersistKit"]
+        ),
+        .testTarget(
+            name: "PersistKitTests",
+            dependencies: ["PersistKit", "TranscribeKit", "CaptureKit", "ProviderKit"]
+        ),
         .testTarget(
             name: "G1BudgetTests",
             dependencies: ["LatencyHarnessLib"],

@@ -126,7 +126,7 @@ struct MeetingPipelineTests {
             },
             // In-memory: these tests exercise the pipeline/session machinery,
             // not persistence — never touch a real on-disk database.
-            makePersistentStore: { MeetingStore(database: try MacapyDatabase.inMemory()) }
+            makeDatabase: { try MacapyDatabase.inMemory() }
         )
     }
 
@@ -326,7 +326,7 @@ struct MeetingPipelineTests {
                     return MeetingPipeline(engine: engine, sources: [source], store: store)
                 }
             },
-            makePersistentStore: { MeetingStore(database: try MacapyDatabase.inMemory()) }
+            makeDatabase: { try MacapyDatabase.inMemory() }
         )
 
         coordinator.toggleSession()  // ON#1 — start P1
