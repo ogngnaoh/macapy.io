@@ -57,6 +57,7 @@ enum ProviderLog {
         case .rateLimited: return "rateLimited"
         case .server(let status, _): return "server(\(status))"
         case .http(let status, _): return "http(\(status))"
+        case .inStreamError: return "inStreamError"
         case .malformedResponse: return "malformedResponse"
         case .decodingFailed: return "decodingFailed"
         case .missingCredentials: return "missingCredentials"

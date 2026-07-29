@@ -31,6 +31,12 @@ public final class FakeOpenAIServer: @unchecked Sendable {
         /// With `truncateAfterFrames: n`, the connection closes after `n`
         /// frames without the terminating zero-length chunk.
         case sse(frames: [String], truncateAfterFrames: Int? = nil)
+        /// 200 `text/event-stream` with **byte-exact** body control: each
+        /// element is written as one chunked frame, verbatim — no `data:`
+        /// prefix or `\n\n` added. This is how a test splits a single SSE
+        /// event across separate TCP deliveries (mid-JSON, mid-UTF-8) or
+        /// carries bytes `bytes.lines` would mangle (U+2028 inside a string).
+        case sseRaw(chunks: [Data])
         /// A complete non-streaming reply with an explicit status code.
         case json(status: Int, body: String)
     }
@@ -260,6 +266,19 @@ public final class FakeOpenAIServer: @unchecked Sendable {
                 }
             }
             _ = writeAll("0\r\n\r\n", to: fd)
+
+        case .sseRaw(let chunks):
+            let head = "HTTP/1.1 200 OK\r\n"
+                + "Content-Type: text/event-stream\r\n"
+                + "Cache-Control: no-cache\r\n"
+                + "Transfer-Encoding: chunked\r\n"
+                + "Connection: close\r\n\r\n"
+            guard writeAll(head, to: fd) else { return }
+            for chunk in chunks {
+                usleep(Self.frameIntervalMicroseconds)
+                guard writeAll(Self.chunked(chunk), to: fd) else { return }
+            }
+            _ = writeAll("0\r\n\r\n", to: fd)
         }
     }
 
@@ -276,6 +295,20 @@ public final class FakeOpenAIServer: @unchecked Sendable {
     /// Writes every byte, tolerating short writes. `false` means the peer went
     /// away — the caller stops.
     @discardableResult
+    private func writeAll(_ data: Data, to fd: Int32) -> Bool {
+        var bytes = [UInt8](data)
+        var offset = 0
+        while offset < bytes.count {
+            let written = bytes.withUnsafeBytes { raw -> Int in
+                Foundation.write(fd, raw.baseAddress!.advanced(by: offset), bytes.count - offset)
+            }
+            guard written > 0 else { return false }
+            offset += written
+        }
+        return true
+    }
+
+    @discardableResult
     private func writeAll(_ text: String, to fd: Int32) -> Bool {
         var bytes = [UInt8](text.utf8)
         var offset = 0
@@ -291,6 +324,13 @@ public final class FakeOpenAIServer: @unchecked Sendable {
 
     private static func chunked(_ payload: String) -> String {
         String(payload.utf8.count, radix: 16) + "\r\n" + payload + "\r\n"
+    }
+
+    private static func chunked(_ payload: Data) -> Data {
+        var framed = Data((String(payload.count, radix: 16) + "\r\n").utf8)
+        framed.append(payload)
+        framed.append(Data("\r\n".utf8))
+        return framed
     }
 
     private static func reason(for status: Int) -> String {

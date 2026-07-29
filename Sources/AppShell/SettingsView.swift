@@ -253,8 +253,10 @@ struct SpendSettingsView: View {
 
     @ViewBuilder
     private var meetingSpend: some View {
+        // "Latest meeting", honestly: no current-meeting id reaches this tab
+        // until slice 3 meters real meetings (verifier finding V3).
         let spent = model.latestMeetingSpendUSD
-        FormRow(label: "This meeting") {
+        FormRow(label: "Latest meeting") {
             Text(SpendFormat.cost(spent))
                 .font(MachineType.number(14))
                 .foregroundStyle(DesignTokens.text)
@@ -299,7 +301,7 @@ struct SpendSettingsView: View {
             .disabled(model.settings.perMeetingCapUSD == nil)
         }
         FormRow(label: "") {
-            FormNote("Prices are your own estimates — confirm them against your provider's pricing page.")
+            FormNote("Costs are estimates from a built-in price list — check it against your provider's pricing page.")
         }
     }
 

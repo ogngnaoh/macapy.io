@@ -21,8 +21,13 @@ public struct OpenAICompatibleClient: LLMProvider {
                     try await runStream(request, into: continuation)
                     continuation.finish()
                 } catch {
-                    ProviderLog.failed(model: request.model, purpose: request.purpose, error: error)
-                    continuation.finish(throwing: error)
+                    let mapped = Self.mappedTransport(error)
+                    // Consumer-driven cancellation is not a failed LLM call;
+                    // logging it as one would make the diagnostics lie.
+                    if !(mapped is CancellationError) {
+                        ProviderLog.failed(model: request.model, purpose: request.purpose, error: mapped)
+                    }
+                    continuation.finish(throwing: mapped)
                 }
             }
             continuation.onTermination = { _ in task.cancel() }
@@ -34,7 +39,12 @@ public struct OpenAICompatibleClient: LLMProvider {
         as type: T.Type
     ) async throws -> CompletedCall<T> {
         let urlRequest = try makeURLRequest(request, streaming: false)
-        let (data, response) = try await session.data(for: urlRequest)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await session.data(for: urlRequest)
+        } catch {
+            throw Self.mappedTransport(error)
+        }
 
         guard let http = response as? HTTPURLResponse else {
             throw ProviderError.malformedResponse("response was not HTTP")
@@ -93,8 +103,11 @@ public struct OpenAICompatibleClient: LLMProvider {
         var usage: TokenUsage?
         var sawTerminator = false
 
-        for try await line in bytes.lines {
-            guard let payload = Self.ssePayload(in: line) else { continue }
+        var parser = SSEEventParser()
+        for try await byte in bytes {
+            guard let rawPayload = parser.consume(byte) else { continue }
+            let payload = rawPayload.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !payload.isEmpty else { continue } // `data:` keep-alives
             if payload == "[DONE]" {
                 sawTerminator = true
                 break
@@ -132,14 +145,6 @@ public struct OpenAICompatibleClient: LLMProvider {
         continuation.yield(.completed(Completion(finishReason: finishReason, usage: usage)))
     }
 
-    /// The payload of a `data:` line, or `nil` for the other SSE line kinds
-    /// (blank separators, `event:`/`id:`/`:` comments — heartbeat comments are
-    /// what several endpoints send to hold a connection open).
-    private static func ssePayload(in line: String) -> String? {
-        guard line.hasPrefix("data:") else { return nil }
-        return String(line.dropFirst("data:".count)).trimmingCharacters(in: .whitespaces)
-    }
-
     private struct Chunk {
         var content: String?
         /// DeepSeek's thinking stream. Kept distinct from `content` so the
@@ -153,6 +158,20 @@ public struct OpenAICompatibleClient: LLMProvider {
     private static func decodeChunk(_ payload: String) throws -> Chunk {
         guard let object = try? JSONSerialization.jsonObject(with: Data(payload.utf8)) as? [String: Any] else {
             throw ProviderError.malformedResponse("SSE chunk is not a JSON object: \(payload)")
+        }
+
+        // Failures after SSE headers are on the wire arrive in-band as a
+        // `data: {"error": …}` event under HTTP 200 (OpenRouter documents
+        // this; LiteLLM-style proxies do the same). Swallowing it would let a
+        // failed, truncated generation present as a clean completion when the
+        // server follows with `[DONE]` — the exact half-artifact failure the
+        // completion guard exists to prevent.
+        if let errorObject = object["error"] as? [String: Any] {
+            let message = errorObject["message"] as? String
+            if let code = errorObject["code"] as? Int, code >= 400 {
+                throw Self.error(status: code, message: message)
+            }
+            throw ProviderError.inStreamError(message: message)
         }
 
         var chunk = Chunk()
@@ -192,12 +211,28 @@ public struct OpenAICompatibleClient: LLMProvider {
     }
 
     static func error(status: Int, body: Data) -> ProviderError {
-        let message = errorMessage(in: body)
+        error(status: status, message: errorMessage(in: body))
+    }
+
+    static func error(status: Int, message: String?) -> ProviderError {
         switch status {
         case 429: return .rateLimited(message: message)
         case 500..<600: return .server(status: status, message: message)
         default: return .http(status: status, message: message)
         }
+    }
+
+    /// The failures URLSession itself throws (connection refused, DNS, TLS, a
+    /// mid-stream RST) must surface typed like every other failure — the
+    /// `LLMProvider` contract promises `ProviderError`, and degrade logic
+    /// switching on it cannot classify a raw `URLError`. Cancellation is left
+    /// untouched: it is the consumer's own doing, not a provider failure.
+    static func mappedTransport(_ error: Error) -> Error {
+        if error is ProviderError || error is CancellationError { return error }
+        if let urlError = error as? URLError {
+            return ProviderError.transport(urlError.localizedDescription)
+        }
+        return error
     }
 
     /// OpenAI-compatible errors carry `{"error": {"message": …}}`; anything
@@ -235,6 +270,23 @@ public struct OpenAICompatibleClient: LLMProvider {
             "messages": request.messages.map(encoded),
             "stream": streaming,
         ]
+
+        // Without this opt-in, OpenAI and OpenRouter never send the
+        // usage-bearing trailing chunk: every streamed call would report
+        // `usage == nil`, the metering decorator would book nothing, and the
+        // per-meeting cap would be blind to the generation tier (FR-015).
+        // DeepSeek volunteers usage by default and accepts the option.
+        if streaming {
+            body["stream_options"] = ["include_usage": true]
+        }
+
+        // DeepSeek V4 selects thinking per request, not via a separate model
+        // id; endpoints without the field reject unknown top-level params, so
+        // it is quirk-gated. Sent explicitly in both states rather than
+        // trusting the endpoint's default.
+        if profile.quirks.selectsThinkingViaRequestField {
+            body["thinking"] = ["type": request.thinking ? "enabled" : "disabled"]
+        }
 
         // Thinking models on some endpoints (DeepSeek) ignore sampling params
         // outright, and have rejected requests carrying them; the quirk drops

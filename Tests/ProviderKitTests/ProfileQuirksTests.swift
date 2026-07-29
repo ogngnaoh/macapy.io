@@ -144,6 +144,12 @@ struct ProfileQuirksTests {
 
         #expect(EndpointProfile.deepSeek.quirks.passesBackReasoningContent)
         #expect(EndpointProfile.deepSeek.quirks.ignoresSamplingParamsWhenThinking)
+        #expect(EndpointProfile.deepSeek.quirks.selectsThinkingViaRequestField)
+        // The V4 API retired `deepseek-chat`/`deepseek-reasoner`; thinking is a
+        // request field now, not a separate model (checked against the live
+        // pricing/API docs 2026-07-29).
+        #expect(EndpointProfile.deepSeek.fastModel == "deepseek-v4-flash")
+        #expect(EndpointProfile.deepSeek.deepModel == "deepseek-v4-pro")
         // SPEC §8: the data-jurisdiction note must be shown in setup UI.
         #expect(EndpointProfile.deepSeek.dataPolicyNote != nil)
 

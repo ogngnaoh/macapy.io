@@ -194,6 +194,12 @@ public enum ProviderError: Error, Equatable {
     case server(status: Int, message: String?)
     /// Any other non-2xx (401 bad key, 400 malformed request, …).
     case http(status: Int, message: String?)
+    /// The endpoint reported a failure *inside* an HTTP-200 SSE stream
+    /// (`data: {"error": …}`) without a usable status code. OpenRouter-style
+    /// proxies do this for upstream failures after streaming has begun; when the
+    /// in-band error carries a numeric code, it maps to
+    /// `rateLimited`/`server`/`http` instead.
+    case inStreamError(message: String?)
     /// The body was not the JSON we expect at all.
     case malformedResponse(String)
     /// A structured-output payload that didn't decode against its schema type.
@@ -222,6 +228,8 @@ public extension ProviderError {
             return "The API key was rejected\(message.map { ": \($0)" } ?? ".")"
         case .http(let status, let message):
             return "The provider refused the request (\(status))\(message.map { ": \($0)" } ?? ".")"
+        case .inStreamError(let message):
+            return "The provider failed mid-reply\(message.map { ": \($0)" } ?? ".")"
         case .malformedResponse:
             return "The endpoint replied in an unexpected format. Check the base URL."
         case .decodingFailed:

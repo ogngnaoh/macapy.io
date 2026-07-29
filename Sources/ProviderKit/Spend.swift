@@ -53,11 +53,11 @@ public struct ModelPricing: Sendable, Equatable, Codable {
     }
 }
 
-/// Model id → price. Defaults ship for the built-in profiles' default models,
-/// but every rate is user-editable in the Spend tab: provider price lists change
-/// far faster than this app ships, and a stale hardcoded number silently
-/// misreports cost (PRD FR-015 promises an *estimate* the user can trust to be
-/// current, which means letting them correct it).
+/// Model id → price. Defaults ship for the built-in profiles' default models;
+/// the Spend tab labels its numbers as estimates against these rates. Provider
+/// price lists change faster than this app ships — a Spend-tab rate editor is
+/// backlog; until it exists a stale rate is corrected via
+/// `SettingsStore.setPricing` or a new build (FR-015).
 public struct PricingTable: Sendable, Equatable, Codable {
     public var rates: [String: ModelPricing]
 
@@ -66,22 +66,29 @@ public struct PricingTable: Sendable, Equatable, Codable {
     }
 
     /// Starting rates for the built-in profiles' default models, in USD per
-    /// million tokens.
+    /// million tokens. Every built-in profile's default fast/deep model must
+    /// have an entry (`PricingDefaultsTests`) — a missing rate books rows with
+    /// no cost, and costless rows never count toward the per-meeting cap.
     ///
-    /// **These are unverified starting points, not facts.** Provider price
-    /// lists change far faster than this app ships, so the Spend tab presents
-    /// them as editable and labels them as estimates to confirm against the
-    /// provider's own pricing page. Local models are the one entry that is
-    /// certainly correct: inference on your own machine costs nothing.
+    /// **These are starting points to confirm against the provider's own
+    /// pricing page** (DeepSeek rates checked against api-docs.deepseek.com
+    /// 2026-07-29; the rest from their published lists). There is no in-app
+    /// editor yet — correcting a stale rate means `SettingsStore.setPricing`
+    /// or a new build; a Spend-tab editor is on the backlog. Local models are
+    /// the one entry certainly correct: your own machine costs nothing.
     public static let defaults = PricingTable(rates: [
-        "deepseek-chat": ModelPricing(
-            inputPerMillionUSD: 0.27, cachedInputPerMillionUSD: 0.07, outputPerMillionUSD: 1.10),
-        "deepseek-reasoner": ModelPricing(
-            inputPerMillionUSD: 0.55, cachedInputPerMillionUSD: 0.14, outputPerMillionUSD: 2.19),
+        "deepseek-v4-flash": ModelPricing(
+            inputPerMillionUSD: 0.14, cachedInputPerMillionUSD: 0.0028, outputPerMillionUSD: 0.28),
+        "deepseek-v4-pro": ModelPricing(
+            inputPerMillionUSD: 0.435, cachedInputPerMillionUSD: 0.003625, outputPerMillionUSD: 0.87),
         "gpt-5-nano": ModelPricing(
             inputPerMillionUSD: 0.05, cachedInputPerMillionUSD: 0.005, outputPerMillionUSD: 0.40),
         "gpt-5": ModelPricing(
             inputPerMillionUSD: 1.25, cachedInputPerMillionUSD: 0.125, outputPerMillionUSD: 10.00),
+        "openai/gpt-5-nano": ModelPricing(
+            inputPerMillionUSD: 0.05, cachedInputPerMillionUSD: 0.005, outputPerMillionUSD: 0.40),
+        "anthropic/claude-sonnet-4.5": ModelPricing(
+            inputPerMillionUSD: 3.00, cachedInputPerMillionUSD: 0.30, outputPerMillionUSD: 15.00),
         "llama3.2": ModelPricing(
             inputPerMillionUSD: 0, cachedInputPerMillionUSD: 0, outputPerMillionUSD: 0),
         "llama3.3": ModelPricing(
@@ -103,9 +110,13 @@ public struct PricingTable: Sendable, Equatable, Codable {
 
 /// Decides whether an AI call may proceed, and books what it cost.
 ///
-/// An actor because the copilot cascade (M3) will consult it from several tasks
-/// at once; the cap check and the booking must not interleave into a state
-/// where two calls each see themselves as the last one under the cap.
+/// **The cap's honest guarantee:** `authorize` checks *booked* spend, and a
+/// call books only on completion — so N concurrent calls can each pass the gate
+/// before any of them books, overshooting the cap by up to N in-flight call
+/// costs (one call's overshoot is inherent: cost is unknowable pre-call).
+/// Bounding that with in-flight reservations is an M3 design item, deferred
+/// until the cascade exists to size it against; nothing in shipping code
+/// constructs a capped meter yet (slice-2 critic finding).
 public actor SpendMeter {
     let ledger: any SpendLedger
     public let pricing: PricingTable
@@ -184,19 +195,32 @@ public struct MeteredProvider: LLMProvider {
                 do {
                     try await meter.authorize(meetingID: meetingID)
                     var usage: TokenUsage?
-                    for try await event in upstream.stream(request) {
-                        if case .completed(let completion) = event { usage = completion.usage }
-                        continuation.yield(event)
+                    var terminalEvent: LLMEvent?
+                    do {
+                        for try await event in upstream.stream(request) {
+                            if case .completed(let completion) = event {
+                                usage = completion.usage
+                                // Held back until the booking is written: the
+                                // consumer is contractually free to stop
+                                // reading at the terminal event, and the
+                                // booking must not race that.
+                                terminalEvent = event
+                            } else {
+                                continuation.yield(event)
+                            }
+                        }
+                    } catch {
+                        // The upstream may have delivered its billed usage
+                        // before the failure or cancellation reached us; the
+                        // original error still wins.
+                        try? await bookShielded(usage: usage, request: request)
+                        throw error
                     }
-                    // Booked only after the stream completed: a call that died
-                    // mid-stream never reported counts, and inventing zeros
-                    // would make the ledger lie about what happened.
-                    try await meter.book(
-                        usage: usage,
-                        model: request.model,
-                        purpose: request.purpose,
-                        meetingID: meetingID
-                    )
+                    // A call that died mid-stream never reported counts, and
+                    // inventing zeros would make the ledger lie — `usage == nil`
+                    // books nothing.
+                    try await bookShielded(usage: usage, request: request)
+                    if let terminalEvent { continuation.yield(terminalEvent) }
                     continuation.finish()
                 } catch {
                     continuation.finish(throwing: error)
@@ -212,12 +236,23 @@ public struct MeteredProvider: LLMProvider {
     ) async throws -> CompletedCall<T> {
         try await meter.authorize(meetingID: meetingID)
         let result = try await upstream.completeReportingUsage(request, as: type)
-        try await meter.book(
-            usage: result.usage,
-            model: request.model,
-            purpose: request.purpose,
-            meetingID: meetingID
-        )
+        try await bookShielded(usage: result.usage, request: request)
         return result
+    }
+
+    /// Books on a task detached from the caller: consumer-driven cancellation
+    /// (stopping at `.completed`, dismissing a suggestion, a torn-down view)
+    /// must not be able to cancel the ledger write for a call the provider
+    /// already billed — GRDB's async accesses honor task cancellation and
+    /// would skip the insert, silently under-counting spend against the cap.
+    private func bookShielded(usage: TokenUsage?, request: CompletionRequest) async throws {
+        guard let usage else { return }
+        let meter = meter
+        let meetingID = meetingID
+        let model = request.model
+        let purpose = request.purpose
+        try await Task.detached {
+            try await meter.book(usage: usage, model: model, purpose: purpose, meetingID: meetingID)
+        }.value
     }
 }

@@ -46,6 +46,41 @@ public enum OpenAIFixtures {
         return encode(object)
     }
 
+    /// The real-OpenAI trailing usage chunk: an **empty** `choices` array with
+    /// the usage object — sent after the finish-reason chunk, and only when the
+    /// request opted in via `stream_options.include_usage`.
+    public static func usageChunk(
+        promptTokens: Int,
+        completionTokens: Int,
+        cachedTokens: Int? = nil,
+        model: String = "fake-model"
+    ) -> String {
+        var usage: [String: Any] = [
+            "prompt_tokens": promptTokens,
+            "completion_tokens": completionTokens,
+            "total_tokens": promptTokens + completionTokens,
+        ]
+        if let cachedTokens {
+            usage["prompt_tokens_details"] = ["cached_tokens": cachedTokens]
+        }
+        return encode([
+            "id": "chatcmpl-fake",
+            "object": "chat.completion.chunk",
+            "model": model,
+            "choices": [] as [Any],
+            "usage": usage,
+        ])
+    }
+
+    /// An in-band mid-stream error event (`data: {"error": …}` under HTTP 200)
+    /// — how OpenRouter-style proxies report an upstream failure once SSE
+    /// headers are already on the wire.
+    public static func errorEvent(message: String, code: Int? = nil) -> String {
+        var error: [String: Any] = ["message": message]
+        if let code { error["code"] = code }
+        return encode(["error": error])
+    }
+
     /// A complete non-streaming chat-completion body, for `.json` responses.
     public static func completionBody(
         content: String,

@@ -59,15 +59,22 @@ public extension EndpointProfile {
     )
 
     /// The quirkiest profile, and the only one live-verified in M2 (milestone
-    /// Integration notes): thinking models require prior `reasoning_content` on
-    /// continuations and ignore sampling params while thinking.
+    /// Integration notes): thinking is selected per request (V4 retired the
+    /// separate reasoner model), continuations must carry prior
+    /// `reasoning_content` back, and sampling params are ignored while
+    /// thinking. Model ids and rates checked against api-docs.deepseek.com
+    /// 2026-07-29.
     static let deepSeek = EndpointProfile(
         id: "deepseek",
         displayName: "DeepSeek",
         baseURL: URL(string: "https://api.deepseek.com/v1")!,
-        fastModel: "deepseek-chat",
-        deepModel: "deepseek-reasoner",
-        quirks: Quirks(passesBackReasoningContent: true, ignoresSamplingParamsWhenThinking: true),
+        fastModel: "deepseek-v4-flash",
+        deepModel: "deepseek-v4-pro",
+        quirks: Quirks(
+            passesBackReasoningContent: true,
+            ignoresSamplingParamsWhenThinking: true,
+            selectsThinkingViaRequestField: true
+        ),
         dataPolicyNote: "First-party DeepSeek trains on inputs by default and stores data in China (SPEC §8)."
     )
 
@@ -98,14 +105,21 @@ public struct Quirks: Sendable, Equatable {
     public var ignoresSamplingParamsWhenThinking: Bool
     /// The endpoint needs no credentials at all (a local Ollama).
     public var requiresAPIKey: Bool
+    /// The endpoint selects thinking mode per-request via a `thinking` body
+    /// field (DeepSeek V4: `{"type": "enabled"|"disabled"}`) rather than via a
+    /// separate model id. Gated because endpoints without the field (OpenAI)
+    /// reject unknown top-level parameters.
+    public var selectsThinkingViaRequestField: Bool
 
     public init(
         passesBackReasoningContent: Bool = false,
         ignoresSamplingParamsWhenThinking: Bool = false,
-        requiresAPIKey: Bool = true
+        requiresAPIKey: Bool = true,
+        selectsThinkingViaRequestField: Bool = false
     ) {
         self.passesBackReasoningContent = passesBackReasoningContent
         self.ignoresSamplingParamsWhenThinking = ignoresSamplingParamsWhenThinking
         self.requiresAPIKey = requiresAPIKey
+        self.selectsThinkingViaRequestField = selectsThinkingViaRequestField
     }
 }

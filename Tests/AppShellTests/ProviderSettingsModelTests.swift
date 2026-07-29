@@ -79,6 +79,38 @@ struct ProviderSettingsModelTests {
         #expect(model.isConfigured, "Ollama needs no key")
     }
 
+    // MARK: - Spend tab data path (slice-2 verifier finding V1)
+
+    /// `refreshSpend` silently no-ops unless the injected ledger is the real
+    /// `SpendLedgerStore` — every other test here injects `InMemorySpendLedger`,
+    /// so without this test the Spend tab's actual data path had zero coverage:
+    /// a broken downcast would show "No AI calls yet" forever with the suite
+    /// green.
+    @Test func spendEntriesLoadThroughTheRealLedgerStore() async throws {
+        let store = SpendLedgerStore(database: try MacapyDatabase.inMemory())
+        try await store.record(SpendEntry(
+            id: UUID(),
+            meetingID: nil,
+            model: "fake-model",
+            usage: TokenUsage(promptTokens: 10, completionTokens: 2),
+            estCostUSD: 0.01,
+            purpose: .classifier,
+            at: Date()
+        ))
+        let model = ProviderSettingsModel(
+            profiles: [.deepSeek],
+            credentials: InMemoryCredentialStore(keys: [:]),
+            settingsStore: try SettingsStore(database: MacapyDatabase.inMemory()),
+            ledger: store
+        )
+
+        await model.load()
+
+        #expect(model.spendEntries.count == 1,
+                "the Spend tab must render rows from the production store type")
+        #expect(model.spendEntries.first?.model == "fake-model")
+    }
+
     @Test func theSelectedProviderSurvivesAReload() async throws {
         let store = SettingsStore(database: try MacapyDatabase.inMemory())
         let first = try model(keys: ["deepseek": "sk-1"], settingsStore: store)
