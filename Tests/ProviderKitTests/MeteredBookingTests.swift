@@ -118,6 +118,34 @@ struct MeteredBookingTests {
                 "a consumer is contractually free to stop at .completed — the row must already exist")
     }
 
+    /// Closes the fix-reviewer's criterion-1 gap: the real OpenAI shape —
+    /// usage on a separate empty-choices chunk after the finish chunk — must
+    /// book through the metering decorator, not just decode at the client.
+    @Test func theRealOpenAIUsageShapeStillBooksItsRow() async throws {
+        let server = try FakeOpenAIServer.start(responses: [
+            .sse(frames: [
+                OpenAIFixtures.contentDelta("hello"),
+                OpenAIFixtures.finish(reason: "stop"),
+                OpenAIFixtures.usageChunk(promptTokens: 1_000, completionTokens: 500),
+                OpenAIFixtures.done,
+            ])
+        ])
+        defer { server.stop() }
+        let ledger = InMemorySpendLedger()
+        let meter = SpendMeter(ledger: ledger, pricing: PricingTable(rates: [:]), capUSD: nil)
+        let provider = MeteredProvider(
+            upstream: OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test"),
+            meter: meter,
+            meetingID: Self.meeting
+        )
+
+        for try await _ in provider.stream(.hello) {}
+
+        let entries = await ledger.entries
+        #expect(entries.count == 1)
+        #expect(entries.first?.usage == TokenUsage(promptTokens: 1_000, cachedTokens: 0, completionTokens: 500))
+    }
+
     // MARK: - Structured calls
 
     /// Checks cancellation exactly where GRDB would: at the write.

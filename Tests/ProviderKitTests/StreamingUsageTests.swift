@@ -44,6 +44,34 @@ struct StreamingUsageTests {
         #expect(body["stream_options"] == nil)
     }
 
+    /// The escape hatch for stricter custom endpoints that reject unknown
+    /// top-level params (fix-review D5) — the same rationale that gates the
+    /// `thinking` field, applied in reverse: send by default, quirk to omit.
+    @Test func aProfileWithTheOmitQuirkSendsNoStreamOptions() async throws {
+        let server = try FakeOpenAIServer.start(responses: [
+            .sse(frames: [
+                OpenAIFixtures.contentDelta("hi"),
+                OpenAIFixtures.finish(),
+                OpenAIFixtures.done,
+            ])
+        ])
+        defer { server.stop() }
+        let profile = EndpointProfile(
+            id: "strict-custom",
+            displayName: "Strict",
+            baseURL: server.baseURL,
+            fastModel: "fake-model",
+            deepModel: "fake-model",
+            quirks: Quirks(omitsStreamOptions: true)
+        )
+        let client = OpenAICompatibleClient(profile: profile, apiKey: "sk-test")
+
+        for try await _ in client.stream(.hello) {}
+
+        let body = try #require(server.recordedRequests.first?.jsonBody)
+        #expect(body["stream_options"] == nil)
+    }
+
     @Test func usageOnATrailingEmptyChoicesChunkReachesTheTerminalEvent() async throws {
         // The real OpenAI shape: finish_reason on one chunk, usage on a later
         // chunk whose `choices` array is empty.

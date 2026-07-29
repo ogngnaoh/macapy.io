@@ -76,6 +76,38 @@ struct InBandErrorTests {
         #expect(message == "upstream 502")
     }
 
+    /// OpenAI's own error shape is an object, but proxies also emit the bare
+    /// string form — `{"error": "upstream overloaded"}`. Matching only the
+    /// object form let a string-form failure present as a clean completion
+    /// (fix-review D3).
+    @Test func aStringFormErrorEventAlsoSurfacesTyped() async throws {
+        let (events, thrown) = try await run(frames: [
+            OpenAIFixtures.contentDelta("half an ans"),
+            #"{"error":"upstream overloaded"}"#,
+            OpenAIFixtures.done,
+        ])
+
+        #expect(!events.contains { if case .completed = $0 { true } else { false } })
+        guard case .inStreamError(let message) = thrown as? ProviderError else {
+            Issue.record("expected ProviderError.inStreamError, got \(String(describing: thrown))")
+            return
+        }
+        #expect(message == "upstream overloaded")
+    }
+
+    /// The inverse guard: some endpoints put `"error": null` on perfectly
+    /// healthy chunks — a present-but-null key must not kill the stream.
+    @Test func aNullErrorFieldOnAHealthyChunkIsIgnored() async throws {
+        let (events, thrown) = try await run(frames: [
+            #"{"choices":[{"delta":{"content":"hi"},"finish_reason":null}],"error":null}"#,
+            OpenAIFixtures.finish(),
+            OpenAIFixtures.done,
+        ])
+
+        #expect(thrown == nil)
+        #expect(events.contains(.token("hi")))
+    }
+
     @Test func anInBandErrorFollowedByEOFStillCarriesTheProviderMessage() async throws {
         // The connection dies right after the error event: the provider's
         // actual message must surface, not a generic truncation error.

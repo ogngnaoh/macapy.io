@@ -87,7 +87,10 @@ public struct PricingTable: Sendable, Equatable, Codable {
             inputPerMillionUSD: 1.25, cachedInputPerMillionUSD: 0.125, outputPerMillionUSD: 10.00),
         "openai/gpt-5-nano": ModelPricing(
             inputPerMillionUSD: 0.05, cachedInputPerMillionUSD: 0.005, outputPerMillionUSD: 0.40),
-        "anthropic/claude-sonnet-4.5": ModelPricing(
+        // Standard Sonnet 5 rates; an introductory $2/$10 runs through
+        // 2026-08-31 — the standard rate is kept so the estimate errs high
+        // (the cap trips early, never late) and stays right after August.
+        "anthropic/claude-sonnet-5": ModelPricing(
             inputPerMillionUSD: 3.00, cachedInputPerMillionUSD: 0.30, outputPerMillionUSD: 15.00),
         "llama3.2": ModelPricing(
             inputPerMillionUSD: 0, cachedInputPerMillionUSD: 0, outputPerMillionUSD: 0),
@@ -213,13 +216,13 @@ public struct MeteredProvider: LLMProvider {
                         // The upstream may have delivered its billed usage
                         // before the failure or cancellation reached us; the
                         // original error still wins.
-                        try? await bookShielded(usage: usage, request: request)
+                        await bookLoggingFailure(usage: usage, request: request)
                         throw error
                     }
                     // A call that died mid-stream never reported counts, and
                     // inventing zeros would make the ledger lie — `usage == nil`
                     // books nothing.
-                    try await bookShielded(usage: usage, request: request)
+                    await bookLoggingFailure(usage: usage, request: request)
                     if let terminalEvent { continuation.yield(terminalEvent) }
                     continuation.finish()
                 } catch {
@@ -236,23 +239,34 @@ public struct MeteredProvider: LLMProvider {
     ) async throws -> CompletedCall<T> {
         try await meter.authorize(meetingID: meetingID)
         let result = try await upstream.completeReportingUsage(request, as: type)
-        try await bookShielded(usage: result.usage, request: request)
+        await bookLoggingFailure(usage: result.usage, request: request)
         return result
     }
 
-    /// Books on a task detached from the caller: consumer-driven cancellation
+    /// Books on a task detached from the caller — consumer-driven cancellation
     /// (stopping at `.completed`, dismissing a suggestion, a torn-down view)
     /// must not be able to cancel the ledger write for a call the provider
-    /// already billed — GRDB's async accesses honor task cancellation and
-    /// would skip the insert, silently under-counting spend against the cap.
-    private func bookShielded(usage: TokenUsage?, request: CompletionRequest) async throws {
+    /// already billed; GRDB's async accesses honor task cancellation and would
+    /// skip the insert. And it **never throws**: the provider billed the call
+    /// either way, and destroying the completed result — or leaking a raw
+    /// `DatabaseError` through the `LLMProvider` contract — over a
+    /// bookkeeping row is the worse trade (fix-review D1: a per-meeting
+    /// deletion cascading mid-call, or a full disk, must not eat a finished
+    /// artifact). The deliberate cost is a logged under-count in exactly
+    /// those rare states; in the deletion case the cascade would have removed
+    /// the row anyway.
+    private func bookLoggingFailure(usage: TokenUsage?, request: CompletionRequest) async {
         guard let usage else { return }
         let meter = meter
         let meetingID = meetingID
         let model = request.model
         let purpose = request.purpose
-        try await Task.detached {
-            try await meter.book(usage: usage, model: model, purpose: purpose, meetingID: meetingID)
-        }.value
+        do {
+            try await Task.detached {
+                try await meter.book(usage: usage, model: model, purpose: purpose, meetingID: meetingID)
+            }.value
+        } catch {
+            ProviderLog.bookingFailed(model: model, purpose: purpose, error: error)
+        }
     }
 }

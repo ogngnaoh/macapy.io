@@ -165,10 +165,13 @@ public struct OpenAICompatibleClient: LLMProvider {
         // this; LiteLLM-style proxies do the same). Swallowing it would let a
         // failed, truncated generation present as a clean completion when the
         // server follows with `[DONE]` — the exact half-artifact failure the
-        // completion guard exists to prevent.
-        if let errorObject = object["error"] as? [String: Any] {
-            let message = errorObject["message"] as? String
-            if let code = errorObject["code"] as? Int, code >= 400 {
+        // completion guard exists to prevent. ANY non-null `error` value
+        // counts: proxies also emit the bare string form (fix-review D3),
+        // while `"error": null` on a healthy chunk must pass through.
+        if let errorValue = object["error"], !(errorValue is NSNull) {
+            let errorObject = errorValue as? [String: Any]
+            let message = errorObject?["message"] as? String ?? (errorValue as? String)
+            if let code = errorObject?["code"] as? Int, code >= 400 {
                 throw Self.error(status: code, message: message)
             }
             throw ProviderError.inStreamError(message: message)
@@ -230,6 +233,12 @@ public struct OpenAICompatibleClient: LLMProvider {
     static func mappedTransport(_ error: Error) -> Error {
         if error is ProviderError || error is CancellationError { return error }
         if let urlError = error as? URLError {
+            // URLSession reports our own task cancellation as
+            // URLError(.cancelled), never as Swift's CancellationError —
+            // normalize it so a dismissed suggestion is neither surfaced nor
+            // logged as a provider failure (fix-review D2: without this the
+            // CancellationError guard above is dead code on the real path).
+            if urlError.code == .cancelled { return CancellationError() }
             return ProviderError.transport(urlError.localizedDescription)
         }
         return error
@@ -275,8 +284,9 @@ public struct OpenAICompatibleClient: LLMProvider {
         // usage-bearing trailing chunk: every streamed call would report
         // `usage == nil`, the metering decorator would book nothing, and the
         // per-meeting cap would be blind to the generation tier (FR-015).
-        // DeepSeek volunteers usage by default and accepts the option.
-        if streaming {
+        // DeepSeek volunteers usage by default and accepts the option; a
+        // stricter custom endpoint opts out via the quirk.
+        if streaming && !profile.quirks.omitsStreamOptions {
             body["stream_options"] = ["include_usage": true]
         }
 

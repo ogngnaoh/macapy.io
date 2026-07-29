@@ -37,6 +37,20 @@ enum ProviderLog {
         )
     }
 
+    /// A billed call whose ledger write failed — the one place metering
+    /// deliberately swallows an error (the completed result survives; the
+    /// ledger under-counts). Logged loudly so the tradeoff stays visible in
+    /// diagnostics; only the error's *type* is recorded, never its message.
+    static func bookingFailed(model: String, purpose: Purpose, error: Error) {
+        logger.error(
+            """
+            spend booking failed model=\(model, privacy: .public) \
+            purpose=\(purpose.rawValue, privacy: .public) \
+            error=\(String(describing: type(of: error)), privacy: .public)
+            """
+        )
+    }
+
     /// Logs the *kind* of failure, not the endpoint's message: a provider is
     /// free to echo request content back in an error string, and that content
     /// is exactly what must not land on disk.

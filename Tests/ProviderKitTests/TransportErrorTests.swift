@@ -57,6 +57,23 @@ struct TransportErrorTests {
         }
     }
 
+    /// URLSession reports our own task cancellation as `URLError(.cancelled)`,
+    /// never as Swift's `CancellationError` — without normalization the
+    /// cancellation guard is dead code and a dismissed suggestion logs as a
+    /// failed LLM call (fix-review D2, proven against OSLogStore).
+    @Test func urlSessionCancellationNormalizesToCancellationError() {
+        #expect(OpenAICompatibleClient.mappedTransport(URLError(.cancelled)) is CancellationError)
+    }
+
+    @Test func realTransportFailuresStillMapToTypedTransport() {
+        let mapped = OpenAICompatibleClient.mappedTransport(URLError(.cannotConnectToHost))
+
+        guard case .transport = mapped as? ProviderError else {
+            Issue.record("expected ProviderError.transport, got \(mapped)")
+            return
+        }
+    }
+
     @Test func aConnectFailureOnStructuredCallsSurfacesAsTypedTransport() async throws {
         let client = OpenAICompatibleClient(
             profile: .fake(baseURL: URL(string: "http://127.0.0.1:9/v1")!),

@@ -19,6 +19,7 @@ struct SSEEventParser {
     private var lineBytes: [UInt8] = []
     private var dataLines: [String] = []
     private var previousByteWasCR = false
+    private var isFirstLine = true
 
     /// Feeds one byte. Returns a completed event's joined `data:` payload when
     /// a blank line closes the event, else `nil`.
@@ -41,8 +42,16 @@ struct SSEEventParser {
     }
 
     private mutating func endOfLine() -> String? {
-        let line = String(decoding: lineBytes, as: UTF8.self)
+        var line = String(decoding: lineBytes, as: UTF8.self)
         lineBytes.removeAll(keepingCapacity: true)
+
+        if isFirstLine {
+            isFirstLine = false
+            // The spec strips one leading BOM before parsing; without this
+            // the first line reads "\u{FEFF}data: …", fails the field match,
+            // and the opening event is silently dropped (fix-review D4).
+            if line.hasPrefix("\u{FEFF}") { line.removeFirst() }
+        }
 
         if line.isEmpty { // blank line: the event boundary
             guard !dataLines.isEmpty else { return nil }

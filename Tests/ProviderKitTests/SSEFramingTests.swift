@@ -99,6 +99,55 @@ struct SSEFramingTests {
         #expect(events.contains { if case .completed = $0 { true } else { false } })
     }
 
+    /// The SSE spec strips one leading U+FEFF; without that, the first line
+    /// reads "\u{FEFF}data: …", fails the field match, and the opening event
+    /// is silently dropped (fix-review D4).
+    @Test func aLeadingUTF8BOMDoesNotSwallowTheFirstEvent() async throws {
+        var firstChunk = Data([0xEF, 0xBB, 0xBF])
+        firstChunk.append(Self.rawFrame(OpenAIFixtures.contentDelta("hi")))
+        let server = try FakeOpenAIServer.start(responses: [
+            .sseRaw(chunks: [
+                firstChunk,
+                Self.rawFrame(OpenAIFixtures.finish()),
+                Self.rawFrame("[DONE]"),
+            ])
+        ])
+        defer { server.stop() }
+
+        let events = try await events(from: server)
+
+        #expect(events.contains(.token("hi")))
+    }
+
+    /// An event left unterminated at a *graceful* close (proper chunked
+    /// terminator, no blank line after the last event) is discarded per spec,
+    /// and the completion guard reports the truncation — the suite previously
+    /// only proved the ungraceful variant (fix-reviewer's independent probe).
+    @Test func anUnterminatedEventAtGracefulEOFSurfacesAsTruncation() async throws {
+        let server = try FakeOpenAIServer.start(responses: [
+            .sseRaw(chunks: [
+                Self.rawFrame(OpenAIFixtures.contentDelta("half")),
+                Data(#"data: {"choices":[{"delta":{"content":"cut"#.utf8),
+            ])
+        ])
+        defer { server.stop() }
+
+        var events: [LLMEvent] = []
+        var thrown: Error?
+        do {
+            let client = OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+            for try await event in client.stream(.hello) { events.append(event) }
+        } catch {
+            thrown = error
+        }
+
+        #expect(events.contains(.token("half")))
+        guard case .transport = thrown as? ProviderError else {
+            Issue.record("expected ProviderError.transport, got \(String(describing: thrown))")
+            return
+        }
+    }
+
     @Test func crlfLineEndingsParseIdenticallyToLF() async throws {
         let server = try FakeOpenAIServer.start(responses: [
             .sseRaw(chunks: [

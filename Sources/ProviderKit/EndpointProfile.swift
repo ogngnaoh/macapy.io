@@ -54,7 +54,10 @@ public extension EndpointProfile {
         displayName: "OpenRouter",
         baseURL: URL(string: "https://openrouter.ai/api/v1")!,
         fastModel: "openai/gpt-5-nano",
-        deepModel: "anthropic/claude-sonnet-4.5",
+        // Checked against openrouter.ai/api/v1/models 2026-07-29: the
+        // claude-sonnet-4.5 slug is gone from the catalog entirely — same
+        // dead-id failure the DeepSeek defaults had (fix-review D6).
+        deepModel: "anthropic/claude-sonnet-5",
         dataPolicyNote: "Routes to whichever upstream provider serves the model; each has its own data policy."
     )
 
@@ -110,16 +113,24 @@ public struct Quirks: Sendable, Equatable {
     /// separate model id. Gated because endpoints without the field (OpenAI)
     /// reject unknown top-level parameters.
     public var selectsThinkingViaRequestField: Bool
+    /// The endpoint rejects `stream_options` as an unknown parameter (older or
+    /// stricter custom endpoints). The default is to send it — without the
+    /// usage opt-in, OpenAI-dialect endpoints never report streamed usage and
+    /// the spend ledger goes blind — but a custom profile needs this escape
+    /// hatch, by the same rationale that gates the `thinking` field.
+    public var omitsStreamOptions: Bool
 
     public init(
         passesBackReasoningContent: Bool = false,
         ignoresSamplingParamsWhenThinking: Bool = false,
         requiresAPIKey: Bool = true,
-        selectsThinkingViaRequestField: Bool = false
+        selectsThinkingViaRequestField: Bool = false,
+        omitsStreamOptions: Bool = false
     ) {
         self.passesBackReasoningContent = passesBackReasoningContent
         self.ignoresSamplingParamsWhenThinking = ignoresSamplingParamsWhenThinking
         self.requiresAPIKey = requiresAPIKey
         self.selectsThinkingViaRequestField = selectsThinkingViaRequestField
+        self.omitsStreamOptions = omitsStreamOptions
     }
 }
