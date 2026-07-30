@@ -2,26 +2,29 @@
 
 ## Start here next session
 
-Slice 2 is **committed, not shipped**. Critic, un-anchored verifier, the decisions, and a second un-anchored fix-review are all done (slice doc notes 25–28) — **do not re-run any review; the chain is complete and its residuals are accepted and recorded (note 28).** Sanity check on arrival: `swift test` → 193 tests / 39 suites green, HEAD `e452864`, clean tree. The author confirmed this order at 2026-07-29 session end; only author-side items remain:
+Slice 2 (ProviderKit) is **committed, not shipped**. The full review chain is done — critic, un-anchored verifier, decisions D2/D3/D6 ruled, and a second un-anchored fix-review (slice doc notes 25–28). **Do not re-run any review; residuals are accepted and recorded (note 28).** All security pre-push items closed and everything is pushed — start directly on the author-walked live checks:
 
-1. **Live checks 9–11.** One-time setup: `security add-generic-password -s io.macapy.dev -a deepseek -w`, then `source .envrc` (**direnv is not installed** — `brew install direnv` or source per shell). Walk-through notes from the verifier: the key field appears only after clicking a provider row (not a bug); after a test connection the Spend headline reads "Latest meeting: —" by design (test connections have no meeting). Check 9: key in Settings ▸ Providers, test connection streams, key in Keychain Access under `io.macapy.app` and nowhere on disk, Remove deletes it — which also tees up check 11's no-key precondition. Check 10: ledger rows + est. cost; **confirm live DeepSeek V4 rates** against the Spend numbers (defaults re-pinned from api-docs.deepseek.com 2026-07-29: v4-flash 0.14/0.0028/0.28, v4-pro 0.435/0.003625/0.87 per M). Check 9 is also the first-ever run of `DeepSeekLiveTests` and the live proof of the V4 model ids. Check 11: real full-length meeting, no key, `lsof -i -a -p $(pgrep -x macapy)` throughout — passing retires M1 exit criterion 4.
-2. ~~Keychain residue audit~~ — **DONE 2026-07-29** (author-run in session): count 0 before and 0 after a full green `swift test` (193/39); the audit hole is closed.
-3. **At ship: sign off the check-2 rewording** — `complete<T>` validates via Swift `Decodable`; the JSON Schema is enforced upstream via `strict: true` (verifier scope correction, note 27).
-4. Then the ship ritual: slice table, integration notes, handoff, commit.
-5. ~~GitHub secret scanning + push protection~~ — **DONE 2026-07-29**: both enabled via API and verified (validity checks are GHAS-only, unavailable on a free public repo). Security review of the full unpushed diff ran before push: zero findings.
+1. Sanity on arrival: `swift test` → 193 tests / 39 suites green, clean tree, no unpushed commits.
+2. **Live checks 9–11.** One-time setup: `security add-generic-password -s io.macapy.dev -a deepseek -w`, then `source .envrc` (direnv not installed — source per shell). Verifier walk-through notes: the key field appears only after clicking a provider row (not a bug); after a test connection the Spend headline reads "Latest meeting: —" by design.
+   - **Check 9:** key in Settings ▸ Providers, test connection streams, key in Keychain Access under `io.macapy.app` and nowhere on disk, Remove deletes it (tees up check 11's no-key precondition). Also the first-ever run of `DeepSeekLiveTests` and the live proof of the V4 model ids.
+   - **Check 10:** ledger rows + est. cost; confirm live DeepSeek V4 rates (defaults pinned 2026-07-29: v4-flash 0.14/0.0028/0.28, v4-pro 0.435/0.003625/0.87 per M).
+   - **Check 11:** real full-length meeting, no key, `lsof -i -a -p $(pgrep -x macapy)` throughout — passing retires M1 exit criterion 4.
+3. **At ship:** sign off the check-2 rewording — `complete<T>` validates via Swift `Decodable`; the JSON Schema is enforced upstream via `strict: true` (note 27).
+4. Ship ritual: slice table, integration notes, handoff, commit, push.
 
 ## Current state
 
-- **Three commits this session; 68 unpushed.** `2473457` (review-round: six confirmed defects + API drift), plus the fix-review round. 193 tests / 39 suites green, `xcodebuild` clean, production DB untouched all session (1 meeting / 50 segments, md5-identical).
-- **Review chain:** 5-lens adversarial critic + un-anchored verifier (checks 1–8 PASS; 5/7 mutation-proven with planted leaks) → six confirmed defects fixed TDD (headline: `stream_options.include_usage` was never sent — OpenAI/OpenRouter spend was unmeterable and the cap blind; SSE parsing rewritten spec-correct; in-band errors typed; URLError mapped; booking shielded from consumer cancellation; SpendMeter doc honesty) → **second** un-anchored review of the fixes (revert-spot-checks, real-GRDB premise probes) → six more findings fixed, worst being a regression the first fix round introduced (ledger-write failure destroyed completed results — now logs-and-survives).
-- **Decisions ruled (note 25):** D2 **overturned** — real transcripts go to first-party DeepSeek, tradeoff author-accepted; slice 3 needs no OpenRouter key. D3 (ledger follows the meeting's DB) and D6 (fixtures until check 9 shows divergence) confirmed.
-- **API drift fixed against live sources:** DeepSeek defaults `deepseek-v4-flash`/`-v4-pro` (old ids retired), thinking is a quirk-gated request field, OpenRouter deep default `anthropic/claude-sonnet-5` (the 4.5 slug is gone from their catalog), and `PricingDefaultsTests` locks every built-in profile's models to shipped rates.
+- **Everything is pushed; the public repo is current.** Push works **only over SSH** on the author's network (HTTPS uploads throttle to ~3KB/s → 408s); `origin`'s push URL is switched to SSH — keep it.
+- **Security items all closed 2026-07-29:** secret scanning + push protection enabled and verified (validity checks are GHAS-only, unavailable on a free public repo); keychain residue audit passed (0 before / 0 after a full green suite); `/security-review` over the entire M1+M2 diff returned **zero findings**; the leaked v0 Postgres password is purged from the tips of `main` and `legacy` (legacy cleanup commit `6eb9dce`).
+- 193 tests / 39 suites green, `xcodebuild` clean, production DB untouched (1 meeting / 50 segments).
+- Review chain summary: 12 defects found and fixed across two un-anchored rounds (headline: `stream_options.include_usage` never sent — OpenAI/OpenRouter spend was unmeterable; plus a self-introduced hold-back regression where a ledger-write failure destroyed completed results — now logs-and-survives).
+- Decisions: **D2 overturned** (real transcripts → first-party DeepSeek, tradeoff author-accepted; no OpenRouter key needed), D3 (ledger follows the meeting's DB) and D6 (fixtures until check 9 shows divergence) confirmed.
 
 ## Open concerns
 
-- **`DeepSeekLiveTests` has never executed**; the V4 model ids rest on offline evidence until check 9.
-- Booking now deliberately logs-and-continues on a ledger-write failure (result > bookkeeping row; fires only when the meeting row is gone mid-call or the DB is unwritable). Abandoned streams still book nothing — M3 consumers must drain to `.completed`.
-- The D-fix round itself had no third review — accepted residual (note 28); live checks + ship review are the remaining gates. Slice 3 owes: cap wiring (V5), `finish_reason: length|content_filter` surfacing. M3 owes: in-flight spend reservation.
-- FluidAudio vetting before slice 4 (license/size/maintenance + the two-voice `say`-fixture separation run).
-- Leaked v0 Postgres password: purge pushed 2026-07-29 — tip trees of `main` and `legacy` are clean; the value remains in public history (`7be9733`) unless history is rewritten (declined for now: breaks doc-cited SHAs, GitHub caches blobs anyway). Machine reuse-check clean (no local/container DB accepts it; v0 DB gone — its target was the old Windows Postgres). **Author confirmed the string is a personal pattern — rotating it wherever that pattern is used is the one open action, author-side.**
+- **Password-pattern rotation (author-side):** the leaked 9-char value is a personal pattern and remains recoverable from public history (`7be9733`; rewrite declined — breaks doc-cited SHAs). Rotate wherever the pattern is used; drop this line once done.
+- `DeepSeekLiveTests` has never executed; the V4 model ids rest on offline evidence until check 9.
+- Booking deliberately logs-and-continues on ledger-write failure; abandoned streams book nothing — M3 consumers must drain to `.completed`.
+- Slice 3 owes: cap wiring (V5), `finish_reason: length|content_filter` surfacing. M3 owes: in-flight spend reservation.
+- FluidAudio vetting before slice 4 (license/size/maintenance + two-voice `say`-fixture separation run).
 - 7 NEEDS-CLARIFICATION markers in PRD/SPEC stand; none block M2.
