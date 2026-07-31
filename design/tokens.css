@@ -1,5 +1,4 @@
-/* macapy design system — "Quiet instrument"
-   Direction record: docs/02-understanding/slice-01-design-pass.md (2026-07-24).
+/* macapy design system — "Quiet instrument" (direction set 2026-07-24).
    Graphite neutrals; one vivid signal (VU amber) reserved for live/primary.
    Machine speaks mono (Martian Mono), humans speak SF. Light and dark co-equal:
    every mockup renders inside an explicit .scheme-light / .scheme-dark scope. */
