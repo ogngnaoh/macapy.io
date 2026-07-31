@@ -2,11 +2,8 @@
 
 macapy — local-first, invisible, agentic meeting assistant for macOS. Native Swift rebuild; the v0 Electron/FastAPI app is archived on the `legacy` branch and is the negative example, never guidance.
 
-## Pointers (read in this order each session)
+## Pointers
 
-- @docs/milestones.md — milestone map
-- @docs/01-spine/milestone.md — active milestone; slice index is the single source of slice status
-- @docs/01-spine/handoff.md — read first every session; rewrite from scratch at session end
 - @PRD.md / @SPEC.md — approved product and architecture docs
 
 ## Commands
@@ -27,7 +24,7 @@ Swift 6 (strict concurrency), SwiftUI, macOS 26+, Apple Silicon only. One local 
 
 ## Conventions & gotchas
 
-- Session rituals, slice working docs, and verification discipline come from the user's global CLAUDE.md; acceptance checks are written and user-reviewed before implementation.
+- Acceptance checks are written and user-reviewed before implementation begins.
 - Accessory app (`LSUIElement`): no Dock icon; regular windows flip activation policy via `ActivationPolicyController`. The floating panel is a non-activating `NSPanel` (`hidesOnDeactivate` must stay false) with no close button — panel visibility stays in lockstep with `SessionController` state.
 - Global hotkey is hand-rolled Carbon `RegisterEventHotKey` (only no-Accessibility-permission option); Carbon refs are `nonisolated(unsafe)` because Swift 6.3 forbids @MainActor storage access from nonisolated deinit.
 - Logging: `os.Logger`, subsystem `io.macapy.app`, one category per module. No swift-log.

@@ -3,7 +3,7 @@
 **Status:** Approved
 **Last updated:** 2026-07-17 (M1 amendments folded in — §6.5)
 **Related PRD:** ./PRD.md
-**Prior art:** docs/superpowers/specs/2026-07-16-macapy-revival-design.md (brainstorming outcome + research); the archived Electron/FastAPI v0 is the negative example this design corrects.
+**Prior art:** the archived Electron/FastAPI v0 (on the `legacy` branch) is the negative example this design corrects.
 
 ## 1. TL;DR
 
@@ -138,7 +138,7 @@ protocol LLMProvider {                   // one impl in v1: OpenAICompatibleClie
 
 ### 6.5 Amendments from M1 (2026-07-17)
 
-Findings from building the spine, recorded in docs/01-spine/milestone.md and folded in here; where they conflict with §5–§6.4 above, these win:
+Findings from building the spine, folded in here; where they conflict with §5–§6.4 above, these win:
 
 1. **Audio format is queried, not assumed.** The fixed-16kHz labels in §6.1/§6.4 are wrong in general: the analyzer's format comes from `bestAvailableAudioFormat` (16kHz **Int16** mono on SDK 26.5) and capture inserts a conversion step. `AVAudioFormat` is non-Sendable — reconstruct per source.
 2. **`STTEngine` gains `prepare()` and `preferredInputFormat()`** (model-asset install and format negotiation precede `transcribe(_:source:)`).
@@ -180,7 +180,7 @@ Findings from building the spine, recorded in docs/01-spine/milestone.md and fol
 ## 9. Rollout & migration
 
 - **Greenfield repo reset:** archive Electron/FastAPI v0 to a `legacy` branch; Swift project starts clean at root. Old Postgres data is not migrated (v0 was never in real use).
-- **Milestone-gated rollout (maps to docs/milestones.md):** M1 spine → M2 diarization + post-meeting agent + provider layer (design-first: a whole-product design pass — every primary screen through M5, reviewed in Claude Design — is M2 slice 1, and later milestones implement within that system) → M3 copilot cascade → M4 memory/RAG/briefs → M5 signed/notarized public release with Sparkle updates.
+- **Milestone-gated rollout:** M1 spine → M2 diarization + post-meeting agent + provider layer (design-first: a whole-product design pass — every primary screen through M5, reviewed in Claude Design — is M2 slice 1, and later milestones implement within that system) → M3 copilot cascade → M4 memory/RAG/briefs → M5 signed/notarized public release with Sparkle updates.
 - **Kill switches:** AI features are globally toggleable (app remains a pure local transcriber — PRD Story 1); copilot sensitivity down to "off"; per-meeting spending cap halts AI, never capture.
 - **Schema migrations:** GRDB migrator, additive per milestone, forward-only pre-1.0.
 
