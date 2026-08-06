@@ -2,6 +2,8 @@
 
 macapy — local-first, invisible, agentic meeting assistant for macOS. Native Swift rebuild; the v0 Electron/FastAPI app is archived on the `legacy` branch and is the negative example, never guidance.
 
+Responses: concise, ADHD-friendly — lead with the action, cut preamble and caveats.
+
 ## Pointers
 
 - @PRD.md / @SPEC.md — approved product and architecture docs
