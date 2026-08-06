@@ -93,6 +93,12 @@ public extension EndpointProfile {
     )
 
     static let builtIns: [EndpointProfile] = [openAI, openRouter, deepSeek, ollama]
+
+    /// What the app actually offers for wiring: DeepSeek only, the one profile
+    /// with live verification (author ruling 2026-08-06, slice-2 note 30). The
+    /// full catalog above stays for the multi-provider fast-follow (SPEC N2);
+    /// a profile graduates into this list by passing its own live check.
+    static let wired: [EndpointProfile] = [deepSeek]
 }
 
 /// Per-endpoint deviations from the OpenAI dialect. A descriptor rather than a

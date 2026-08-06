@@ -38,7 +38,7 @@ final class ProviderSettingsModel {
     @ObservationIgnored private let log = Logger(subsystem: "io.macapy.app", category: "AppShell")
 
     init(
-        profiles: [EndpointProfile] = EndpointProfile.builtIns,
+        profiles: [EndpointProfile] = EndpointProfile.wired,
         credentials: any CredentialStore,
         settingsStore: SettingsStore?,
         ledger: (any SpendLedger)?,

@@ -38,6 +38,23 @@ struct ProviderSettingsModelTests {
         ])
     }
 
+    // MARK: - Wired providers
+
+    /// Author ruling 2026-08-06 (slice-2 note 30): the app exposes DeepSeek and
+    /// nothing else until another profile is live-verified. The catalog
+    /// (`builtIns`) survives in ProviderKit for the fast-follow; this pins the
+    /// default the app shell actually constructs with.
+    @Test func theAppWiresOnlyDeepSeek() throws {
+        let model = ProviderSettingsModel(
+            credentials: InMemoryCredentialStore(keys: [:]),
+            settingsStore: try SettingsStore(database: MacapyDatabase.inMemory()),
+            ledger: InMemorySpendLedger()
+        )
+
+        #expect(model.profiles.map(\.id) == ["deepseek"],
+                "an unwired provider row is an invitation into a path no live check has touched")
+    }
+
     // MARK: - Configuration state
 
     @Test func afreshInstallReportsNoProviderConfigured() async throws {
