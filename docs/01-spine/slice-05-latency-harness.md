@@ -1,0 +1,101 @@
+# Slice 5 — Latency Instrumentation, Fixture-Playback Harness (G1), Diagnostics Basics
+
+**Status:** shipped 2026-07-17
+**Plan approved:** 2026-07-16 (front-loaded batch review of slices 2–5; acceptance checks reviewed before implementation)
+**References:** ../../SPEC.md §3 (G1), §8 (observability), §10, ./milestone.md
+
+The plan for this slice is also its record (working-doc convention). Checklist below is current state.
+
+## Design
+
+### Decisions (made during planning, 2026-07-16)
+
+1. **One instrument, three consumers.** A single `LatencyRecorder` feeds (a) the authoritative harness executable, (b) a loose-ceiling regression test, (c) the in-app diagnostics section. No parallel measurement paths.
+2. **The harness is a separate SPM executable target** (`LatencyHarness`, product `macapy-latency`). Proving G1 needs *a number out*, on demand, in **release** configuration; test targets are pass/fail-shaped and default to debug. Authoritative run: `swift run -c release macapy-latency <fixture.wav>` on base Apple Silicon → JSON `{fixture, n_volatile, n_final, p50_ms, p95_ms, max_ms, pass_g1}`, nonzero exit on fail; the number is recorded in milestone.md (exit criterion 1).
+3. **Latency definition (documented approximation of G1):** per event, `arrivalWall − (sessionStartWall + audioTEnd)` — the delay between the moment of speech covered by a result and the event reaching the UI layer; rendering adds ≤1 frame on top. Volatile events are the G1-relevant ones (speech becomes *visible* at the volatile). Recorder computes p50/p95/max.
+4. **`FixturePlaybackSource` is product code in CaptureKit** (a full `AudioCaptureSource` conformance): reads a wav via `AVAudioFile`, converts, yields ~100ms chunks paced in real time against a `ContinuousClock` timeline. Shared by the harness executable and the regression test.
+5. **Fixtures are machine-generated** (`say -o … && afconvert`), committed under test fixtures — reproducible spoken-English audio without a human recording. A longer (~2–3min) fixture is generated for the authoritative run.
+6. **Regression tripwire:** `G1BudgetTests` runs the same harness library on a short fixture with a loose **debug-config** ceiling (p95 < 1.5s) — it catches regressions in CI-ish runs without pretending debug numbers prove G1.
+7. **Diagnostics basics (SPEC §8 seed):** a minimal section showing the live session's recorder percentiles and event counts, fed by the same recorder instance the pipeline updates. Full diagnostics panel is M2+.
+8. Optional debug `os_signpost`s at chunk-yield and event-arrival for Instruments deep-dives.
+
+### Layout
+
+```
+Sources/TranscribeKit/LatencyRecorder.swift   samples + p50/p95/max; Sendable
+Sources/CaptureKit/FixturePlaybackSource.swift actor; wav → real-time-paced chunks
+Sources/LatencyHarnessLib/ (or TranscribeKit)  runHarness(fixture:) → HarnessReport (shared by exe + test)
+Sources/LatencyHarness/main.swift             executable: parse args, run, print JSON, exit code
+Tests/TranscribeKitTests/                     recorder math tests
+Tests/CaptureKitTests/                        pacing test
+Tests/G1BudgetTests/                          debug-ceiling regression test
+Sources/AppShell/                             minimal diagnostics section (settings or history window)
+Package.swift                                 + LatencyHarness executable target (+ lib), G1BudgetTests
+```
+
+### Components
+
+```swift
+// TranscribeKit
+public final class LatencyRecorder: @unchecked Sendable {   // lock-protected sample buffer
+    public struct Sample: Sendable { public let kind: Kind; public let audioTEnd: TimeInterval; public let arrivalWall: Date }
+    public enum Kind: Sendable { case volatile, final }
+    public init(sessionStart: Date)
+    public func record(kind: Kind, audioTEnd: TimeInterval, arrivalWall: Date)
+    public func report() -> LatencyReport                    // p50/p95/max per kind + counts
+}
+
+// CaptureKit
+public actor FixturePlaybackSource: AudioCaptureSource {
+    public init(fixtureURL: URL, chunkDuration: TimeInterval = 0.1)
+    // yields converted chunks paced so N seconds of audio take ≈N wall seconds
+}
+```
+
+## Acceptance checks (written before implementation; user-reviewed 2026-07-16)
+
+Machine-verifiable:
+
+1. `LatencyRecorder` percentile math unit tests against synthetic samples (known p50/p95/max).
+2. Pacing test: `FixturePlaybackSource` delivers N seconds of fixture audio in ≈N wall seconds (bounded tolerance) and finishes its stream at the end.
+3. Harness end-to-end in a test: short fixture through the real engine emits a valid `HarnessReport`; debug-config p95 < 1.5s regression ceiling holds.
+4. Full `swift test` green; `xcodebuild` clean.
+
+User-live:
+
+5. `swift run -c release macapy-latency <long fixture>` on base Apple Silicon reports **p95 < 1000ms** for speech-to-visible; the JSON is recorded in milestone.md (exit criterion 1).
+6. Diagnostics section shows sane live percentiles and counts during a real meeting.
+
+## Checklist
+
+- [x] Acceptance checks user-reviewed 2026-07-16 (front-loaded batch gate)
+- [x] Builder: LatencyRecorder, nearest-rank percentiles (red 3fae96e → green bb29afd)
+- [x] Builder: FixturePlaybackSource + pacing test (bb29afd)
+- [x] Builder: LatencyHarnessLib (own target) + `macapy-latency` executable + JSON output (bb29afd)
+- [x] Builder: G1BudgetTests debug-ceiling regression test (bb29afd)
+- [x] Builder: pipeline recorder wiring + Settings diagnostics section (bb29afd)
+- [x] Verifier: checks 1–4 **all PASS** (2026-07-17) — percentile constants hand-derived (non-circular), red confirmed, no test weakening, 0 flakes ×3
+- [x] Root-cause investigation (Phase 1, 2026-07-17): **anchor theory refuted** — both anchors identical and honest (0/775 samples exceed fed audio). True cause: FixturePlaybackSource pacing bug (yield-before-sleep → every chunk visible ~one chunkDuration early). Earlier "SpeechAnalyzer startup transient / forward-looking window" theories retracted.
+- [x] Pacing fix + reporting layer shipped (fix 22e9116, reporting a537a09): sleep-then-yield; chunk-precision test proven red 12/12 against pre-fix code; fed-audio clamp (inert on real data, as expected); excludedNegative fields in Stats/HarnessReport; 74/74 ×3. Fresh debug long-fixture run: p50 39.1ms / p95 93.5ms / 0 exclusions — physically plausible shape restored
+- [x] Focused re-verify: **PASS, blocker lifted** (2026-07-17) — independent raw re-dump 0/775 negatives (p50≈38.6ms, p95≈95.3ms debug); red reproduced by inverting the fix (12/12 early); both test adaptations legitimate (wiring test vacuity-probed by severing the wiring); 74/74 ×3
+- [x] Exclusion tripwire tightened 0.25 → 0.05 per verifier recommendation (e784b1e, orchestrator; suite green)
+- [ ] Focused re-verify of the measurement fix
+- [x] Live checks 5–6 (2026-07-17): user walked both; authoritative release run re-executed by orchestrator on the author's machine for the verbatim record — **p95 85.36ms / p50 32.97ms / max 162.78ms, 775 volatiles + 34 finals, 0 excluded, passG1 true, exit 0** (full JSON in Notes + milestone.md); diagnostics section user-confirmed sane during a live meeting
+- [x] Ship rituals: milestone table, integration notes, handoff, final commit
+
+## Notes / dead ends
+
+(append as work proceeds)
+
+- 2026-07-17 (authoritative G1 record, exit criterion 1): `swift run -c release macapy-latency Tests/TranscribeKitTests/Fixtures/long-meeting.wav` on the author's Apple Silicon machine:
+  ```json
+  {"excludedNegativeCount":0, "excludedNegativeFraction":0, "fixture":"long-meeting.wav",
+   "maxMs":162.78, "nFinal":34, "nVolatile":775,
+   "p50Ms":32.97, "p95Ms":85.36, "passG1":true}
+  ```
+  Speech-to-visible p95 is ~11.7× inside the 1000ms G1 budget.
+
+- 2026-07-17 (verifier, fresh context): checks 1–4 PASS (nearest-rank constants independently hand-computed; pacing band judged loose-but-adequate for a tripwire; harness JSON/exit contract verified incl. error paths). **Measurement-validity finding, worse than the builder's startup-transient note:** raw-sample dump on the long fixture (own scratch diagnostic over the real pipeline) shows 761/775 volatiles (98.2%) negative-latency, clustered in 13–21-event bursts pinned to dozens of distinct `tEnd` boundaries across the whole meeting; the only 14 positive samples are post-EOF finalization flush artifacts. Official harness on the long fixture: p50 −57.7ms, **p95 −4.77ms, passG1 true — a physically impossible "proof."** Working theory: volatile `range.end` is the nominal end of the window being analyzed (forward-looking), not audio-consumed-so-far. Ruling: exclude impossible negatives + surface `excludedNegative*` in the report (flattering-direction data must never silently count), AND fix the anchor itself, since post-filter only end-of-stream artifacts remain — mechanical filtering alone cannot yield a trustworthy steady-state p95. Blocker on live check 5 / exit criterion 1 until re-grounded.
+- 2026-07-17 (builder, Phase 2 fix, 22e9116 + a537a09): pacing loop now sleeps to a chunk's own end-time before yielding it; new `chunksAreNotDeliveredBeforeTheirOwnAudioDurationHasElapsed` test thresholds at the midpoint between buggy and correct timing (red 12/12 pre-fix, deterministic). `pauseSuspendsPacingAndResumeContinues` gained a one-chunk grace window (post-fix, pause takes effect at the next loop iteration — legitimate in-flight chunk). Stats now percentile over valid samples only with `excludedNegativeCount/totalCount/fraction` surfaced; `passG1` false on an all-excluded run; harness clamps anchors to a fed-audio clock (measured inert: 0 exclusions on real data). One test adaptation flagged: pipeline-wiring test asserts `totalCount` since its fake fires physically-impossible instant volatiles that the guard now (correctly) excludes. Debug long-fixture shape post-fix: p50 39.1ms, p95 93.5ms, max 170ms, all-positive. Open note for later milestones: the in-app diagnostics path has no fed-clock to clamp against — if live diagnostics ever show negative samples, that's the same class of question there.
+- 2026-07-17 (builder, Phase 1 root-cause — CORRECTS the two notes below): measured both candidate anchors directly on all 775 long-fixture volatiles: `result.range.end` and last-run `.audioTimeRange` end are **numerically identical** for every volatile (runs differ only on finals, ~0.06s tighter), and **neither ever exceeds the audio actually fed** (0/775 dishonest) — SpeechAnalyzer's timestamps are honest; the "forward-looking window" and "startup transient" theories are **retracted**. Actual root cause: **FixturePlaybackSource paced yield-BEFORE-sleep**, so chunk k (audio through kΔ) became visible at wall ≈(k−1)Δ — every chunk ~100ms early for the whole run, which is exactly the observed ~−60ms sample shape at t≈4s, 88s, and 175s alike. The aggregate-drain pacing test couldn't catch it (total drain time is unchanged; only per-chunk arrival is early) — the new chunk-level precision test closes that class. Lesson: when a measurement looks impossibly good, suspect the harness before the system under test.
+- 2026-07-17 (builder, red 3fae96e → green bb29afd): `LatencyHarnessLib` split into its own target (keeps CaptureKit-orchestration glue out of TranscribeKit). Long fixture: 175.7s / ~5.4MB mono 16k Int16, `say`-generated 30-sentence meeting monologue. Fixtures are per-target SPM resources (no cross-target Bundle.module — fox.wav duplicated into G1BudgetTests). Diagnostics section polls the recorder at 500ms (recorder isn't @Observable). Recorder hook: `Date()` captured just before `store.apply()` on the MainActor event task — render pass (~≤1 frame) not separately measured, per doc approximation. **Measurement finding (flagged before the authoritative run):** SpeechAnalyzer's first volatile batch per analysis window reports `tEnd` pinned to the window boundary (e.g. 4.000s) and fires ~55–65ms *before* wall clock reaches that boundary → physically-impossible negative latencies at startup that flatter percentiles (fox.wav debug run: p50 −66ms). Later volatiles are honest (+3..+30ms debug). One transient per source per meeting. Verifier to rule on how the authoritative G1 number must handle these samples.
