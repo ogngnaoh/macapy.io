@@ -31,6 +31,14 @@ final class MeetingPipeline {
     /// construction — no separate enable flag. Exposed to the coordinator via
     /// `currentRecorder` for the diagnostics section.
     let recorder: LatencyRecorder
+    /// Per-source signal levels for the strip (slice-4 decision 5), written by
+    /// the fan-out tap, polled by the UI. Same on-by-construction pattern as
+    /// `recorder`.
+    let signalMeter = SignalLevelMeter()
+    /// One drop counter per source, in `sources` order (slice-4 decision 4).
+    /// Diagnostics sums them via `droppedChunks`.
+    private var dropCounters: [BoundedAudioFanOut.DropCounter] = []
+    private var forwardingTasks: [Task<Void, Never>] = []
     private var eventTasks: [Task<Void, Never>] = []
     private var stopped = false
     private let log = Logger(subsystem: "io.macapy.app", category: "MeetingPipeline")
@@ -128,7 +136,20 @@ final class MeetingPipeline {
                 continue
             }
             let src = source.source
-            let events = engine.transcribe(audio, source: src)
+            // Memory-watch seam (slice-4 decisions 4+5): the raw capture
+            // stream is unbounded by design; everything downstream consumes a
+            // bounded branch, so an analyzer stall evicts oldest chunks (with
+            // an exact surfaced count) instead of growing memory. The tap
+            // computes RMS per chunk for the signal strip. One STT branch per
+            // source in M2 phase 1; the them-stream diarizer joins as a second
+            // branch in phase 5.
+            let meter = signalMeter
+            let fanOut = BoundedAudioFanOut.split(audio, branchCount: 1) { chunk in
+                meter.record(source: src, level: AudioLevel.rms(of: chunk.buffer))
+            }
+            dropCounters.append(fanOut.drops)
+            forwardingTasks.append(fanOut.forwarding)
+            let events = engine.transcribe(fanOut.branches[0], source: src)
             let recorder = self.recorder
             let task = Task { @MainActor [weak self, store, recorder] in
                 do {
@@ -168,12 +189,19 @@ final class MeetingPipeline {
         for source in sources {
             await source.stop()
         }
-        // Draining: each capture stream is now finished, so each engine
+        // Draining: each capture stream is now finished, so the fan-out
+        // forwards its tail and finishes the bounded branches, each engine
         // finalizes and emits its remaining finals before ending the event
-        // stream. Awaiting the tasks guarantees those finals reached the store
-        // (and, from there, the SegmentWriter's finalsStream — see start()) —
-        // every final for this meeting has been synchronously yielded by the
-        // time this loop returns.
+        // stream. Awaiting forwarding first, then the event tasks, guarantees
+        // those finals reached the store (and, from there, the SegmentWriter's
+        // finalsStream — see start()) — every final for this meeting has been
+        // synchronously yielded by the time this loop returns.
+        for task in forwardingTasks {
+            _ = await task.value
+        }
+        forwardingTasks.removeAll()
+        // dropCounters stays: like `recorder`, the count outlives stop() so
+        // diagnostics can still show the ended meeting's number.
         for task in eventTasks {
             _ = await task.value
         }
@@ -207,6 +235,13 @@ final class MeetingPipeline {
         meetingStore = nil
         meetingID = nil
         return endedPersistentMeetingID
+    }
+
+    /// Total chunks evicted across all sources' bounded branches this meeting
+    /// (slice-4 decision 4) — the diagnostics "Dropped chunks" tile. 0 in a
+    /// healthy meeting; anything else means a consumer stalled.
+    var droppedChunks: Int {
+        dropCounters.reduce(0) { $0 + $1.total }
     }
 
     func pause() async {

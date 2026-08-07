@@ -95,17 +95,17 @@ public func runHarness(
     // `range.end` and the per-run `.audioTimeRange` end were numerically
     // identical for every volatile sample and neither ever exceeded
     // fed-audio; the fed clock itself was running fast).
+    // Since slice 4 the tee is the production operator itself
+    // (`BoundedAudioFanOut`, the memory-watch seam MeetingPipeline uses), so
+    // G1 is measured through the exact stream shape the app runs — the
+    // fed-clock rides its per-chunk tap.
     let fed = FedAudioCounter()
-    let (wrappedAudio, wrappedContinuation) = AsyncStream<AudioChunk>.makeStream(bufferingPolicy: .unbounded)
-    let feedTask = Task {
-        for await chunk in audio {
-            fed.add(Double(chunk.buffer.frameLength) / chunk.buffer.format.sampleRate)
-            wrappedContinuation.yield(chunk)
-        }
-        wrappedContinuation.finish()
+    let fanOut = BoundedAudioFanOut.split(audio, branchCount: 1) { chunk in
+        fed.add(Double(chunk.buffer.frameLength) / chunk.buffer.format.sampleRate)
     }
+    let feedTask = fanOut.forwarding
 
-    let events = engine.transcribe(wrappedAudio, source: .mic)
+    let events = engine.transcribe(fanOut.branches[0], source: .mic)
 
     for try await event in events {
         let arrivalWall = Date()

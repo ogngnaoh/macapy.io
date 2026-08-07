@@ -198,6 +198,17 @@ final class AppShellCoordinator {
         pipeline?.recorder
     }
 
+    /// Signal-strip data source (slice-4 decision 5); nil when no pipeline has
+    /// existed yet — the strip falls back to session-state rendering.
+    var currentSignalMeter: SignalLevelMeter? {
+        pipeline?.signalMeter
+    }
+
+    /// Diagnostics "Dropped chunks" tile (slice-4 decision 4).
+    var currentDroppedChunks: Int? {
+        pipeline?.droppedChunks
+    }
+
     func historyStore() -> MeetingStore? {
         do {
             return try openOrReusePersistentStore()
