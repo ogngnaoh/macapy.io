@@ -118,8 +118,9 @@ public struct PricingTable: Sendable, Equatable, Codable {
 /// before any of them books, overshooting the cap by up to N in-flight call
 /// costs (one call's overshoot is inherent: cost is unknowable pre-call).
 /// Bounding that with in-flight reservations is an M3 design item, deferred
-/// until the cascade exists to size it against; nothing in shipping code
-/// constructs a capped meter yet (slice-2 critic finding).
+/// until the cascade exists to size it against. Since slice 3, the one place
+/// shipping code constructs a capped meter is
+/// `AppShellCoordinator.postMeetingAgent()` (from `perMeetingCapUSD` — V5).
 public actor SpendMeter {
     let ledger: any SpendLedger
     public let pricing: PricingTable

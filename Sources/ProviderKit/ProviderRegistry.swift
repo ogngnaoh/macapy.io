@@ -53,14 +53,23 @@ public struct ProviderRegistry: Sendable {
         profiles.first { $0.id == id }
     }
 
+    /// The selected profile with the user's model overrides applied — what a
+    /// caller consults to pick a tier's model id for a request. `nil` when no
+    /// (known) profile is selected.
+    public func resolvedProfile(for settings: ProviderSettings) -> EndpointProfile? {
+        guard let id = settings.selectedProfileID, var profile = profile(id: id) else { return nil }
+        if let fast = settings.fastModelOverrides[id], !fast.isEmpty { profile.fastModel = fast }
+        if let deep = settings.deepModelOverrides[id], !deep.isEmpty { profile.deepModel = deep }
+        return profile
+    }
+
     /// The configured client, or `nil` when the app must stay silent: no
     /// profile selected, an unknown profile id, or a key-requiring profile with
     /// no key stored. Never performs I/O of its own.
     public func client(for settings: ProviderSettings) throws -> OpenAICompatibleClient? {
-        guard let id = settings.selectedProfileID, var profile = profile(id: id) else { return nil }
-
-        if let fast = settings.fastModelOverrides[id], !fast.isEmpty { profile.fastModel = fast }
-        if let deep = settings.deepModelOverrides[id], !deep.isEmpty { profile.deepModel = deep }
+        guard let id = settings.selectedProfileID,
+              let profile = resolvedProfile(for: settings)
+        else { return nil }
 
         let key = try credentials.key(for: id)
         if profile.quirks.requiresAPIKey, key == nil || key?.isEmpty == true { return nil }

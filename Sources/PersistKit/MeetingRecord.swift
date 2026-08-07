@@ -36,9 +36,12 @@ extension MeetingRecord: FetchableRecord, PersistableRecord {
 
 extension MeetingRecord {
     /// `status` is a plain `String` at the row boundary (not an enum) so a
-    /// future status value never needs a migration.
-    static let activeStatus = "active"
-    static let endedStatus = "ended"
+    /// future status value never needs a migration. Public since slice 3:
+    /// meeting detail decides "artifacts-pending" off `status == endedStatus`.
+    public static let activeStatus = "active"
+    public static let endedStatus = "ended"
+
+    public var hasEnded: Bool { status == Self.endedStatus }
 }
 
 /// The `segments` row. Internal to PersistKit: `MeetingStore` converts to/from

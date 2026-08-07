@@ -86,6 +86,22 @@ public struct MacapyDatabase: Sendable {
                 t.column("at", .datetime).notNull()
             }
         }
+        // v3 (M2 slice 3): draft artifacts from the post-meeting agent
+        // (SPEC §6.2). `kind`/`status` are TEXT, not CHECK-constrained, so a
+        // future kind (`brief`, M4) is a code change, not a migration.
+        // Deleting a meeting cascades here like `segments` (specced invariant).
+        migrator.registerMigration("v3-artifacts") { db in
+            try db.create(table: "artifacts") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("meetingID", .text).notNull()
+                    .indexed()
+                    .references("meetings", onDelete: .cascade)
+                t.column("kind", .text).notNull()
+                t.column("payload", .text).notNull()
+                t.column("status", .text).notNull()
+                t.column("createdAt", .datetime).notNull()
+            }
+        }
         return migrator
     }
 }

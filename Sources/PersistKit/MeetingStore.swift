@@ -58,6 +58,14 @@ public actor MeetingStore {
         }
     }
 
+    /// One meeting by id, or `nil` — the post-meeting agent's guard against
+    /// generating for a meeting that no longer exists.
+    public func meeting(id: MeetingRecord.ID) throws -> MeetingRecord? {
+        try database.dbWriter.read { db in
+            try MeetingRecord.fetchOne(db, id: id)
+        }
+    }
+
     /// All meetings, most recently started first (history list order).
     public func listMeetings() throws -> [MeetingRecord] {
         try database.dbWriter.read { db in

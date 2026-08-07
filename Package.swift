@@ -31,7 +31,12 @@ let package = Package(
             "ProviderKit",
             .product(name: "GRDB", package: "GRDB.swift"),
         ]),
-        .target(name: "AgentKit"),
+        // The post-meeting agent (slice 3): extraction over ProviderKit, draft
+        // artifacts into PersistKit. TranscribeKit/CaptureKit are for the
+        // `Segment`/`AudioSource` types at the transcript boundary.
+        .target(name: "AgentKit", dependencies: [
+            "ProviderKit", "PersistKit", "TranscribeKit", "CaptureKit",
+        ]),
         .target(name: "ProviderKit"),
         // The fake OpenAI-compatible server (slice-02 doc decision 6) lives in
         // its own library target, not inside ProviderKitTests, because slice 3
@@ -63,7 +68,7 @@ let package = Package(
         ),
         .testTarget(
             name: "AppShellTests",
-            dependencies: ["AppShell", "PersistKit", "ProviderKit", "ProviderTestSupport"]
+            dependencies: ["AppShell", "AgentKit", "PersistKit", "ProviderKit", "ProviderTestSupport"]
         ),
         // PersistKit is here for the key-leak check (acceptance check 5): the
         // test writes a canary key, runs real calls, then greps the actual
@@ -71,6 +76,13 @@ let package = Package(
         .testTarget(
             name: "ProviderKitTests",
             dependencies: ["ProviderKit", "ProviderTestSupport", "PersistKit"]
+        ),
+        .testTarget(
+            name: "AgentKitTests",
+            dependencies: [
+                "AgentKit", "PersistKit", "ProviderKit", "ProviderTestSupport",
+                "TranscribeKit", "CaptureKit",
+            ]
         ),
         .testTarget(
             name: "PersistKitTests",

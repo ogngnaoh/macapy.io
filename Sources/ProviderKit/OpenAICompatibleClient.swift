@@ -61,6 +61,18 @@ public struct OpenAICompatibleClient: LLMProvider {
             throw ProviderError.malformedResponse("body is not a chat completion with message content")
         }
 
+        // A non-stop finish means the endpoint cut the reply (`length`) or
+        // withheld part of it (`content_filter`); the payload cannot be
+        // trusted as the whole answer even if it parses, so this is checked
+        // *before* decoding is attempted. Absent finish_reason passes: not
+        // every compatible endpoint sends one on non-streaming replies.
+        let finishReason = choices.first?["finish_reason"] as? String
+        if let finishReason, finishReason != "stop" {
+            let failure = ProviderError.truncated(finishReason: finishReason)
+            ProviderLog.failed(model: request.model, purpose: request.purpose, error: failure)
+            throw failure
+        }
+
         // Validation happens here and nowhere earlier (SPEC §6.3: render
         // partial JSON as it streams, validate only the final object). A
         // truncated payload fails to decode and throws — it never becomes a
@@ -73,7 +85,7 @@ public struct OpenAICompatibleClient: LLMProvider {
                 purpose: request.purpose,
                 streaming: false,
                 usage: usage,
-                finishReason: (choices.first?["finish_reason"] as? String)
+                finishReason: finishReason
             )
             return CompletedCall(value: value, usage: usage)
         } catch let error as ProviderError {
@@ -274,9 +286,25 @@ public struct OpenAICompatibleClient: LLMProvider {
     }
 
     func body(for request: CompletionRequest, streaming: Bool) throws -> [String: Any] {
+        var messages = request.messages.map(encoded)
+
+        // json_object endpoints (DeepSeek first-party) never see the schema
+        // via response_format, so it rides in as a trailing system message —
+        // appended at the tail, where it can't invalidate a cached prefix
+        // (SPEC §6.4). Enforcement is unchanged either way: the final object
+        // is decoded against the schema type client-side (SPEC §6.3).
+        if let format = request.responseFormat, profile.quirks.usesJSONObjectResponseFormat {
+            let schemaText = String(decoding: format.schema.data, as: UTF8.self)
+            messages.append([
+                "role": "system",
+                "content": "Reply with exactly one JSON object that validates against this JSON Schema "
+                    + "- no prose, no markdown fences:\n\(schemaText)",
+            ])
+        }
+
         var body: [String: Any] = [
             "model": request.model,
-            "messages": request.messages.map(encoded),
+            "messages": messages,
             "stream": streaming,
         ]
 
@@ -308,16 +336,20 @@ public struct OpenAICompatibleClient: LLMProvider {
         if let maxTokens = request.maxTokens { body["max_tokens"] = maxTokens }
 
         if let format = request.responseFormat {
-            body["response_format"] = [
-                "type": "json_schema",
-                "json_schema": [
-                    "name": format.name,
-                    // `strict` is what makes the endpoint enforce the schema
-                    // instead of treating it as a suggestion.
-                    "strict": true,
-                    "schema": try format.schema.objectValue(),
-                ] as [String: Any],
-            ]
+            if profile.quirks.usesJSONObjectResponseFormat {
+                body["response_format"] = ["type": "json_object"]
+            } else {
+                body["response_format"] = [
+                    "type": "json_schema",
+                    "json_schema": [
+                        "name": format.name,
+                        // `strict` is what makes the endpoint enforce the schema
+                        // instead of treating it as a suggestion.
+                        "strict": true,
+                        "schema": try format.schema.objectValue(),
+                    ] as [String: Any],
+                ]
+            }
         }
         return body
     }

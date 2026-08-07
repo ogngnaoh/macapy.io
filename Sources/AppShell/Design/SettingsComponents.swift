@@ -6,9 +6,10 @@ import SwiftUI
 // mockup earns it.
 
 /// `.chip` — a micro mono badge. `.active` is the amber "Active" state
-/// (`.chip.you`), everything else is the quiet outline.
+/// (`.chip.you`); `.approved`/`.rejected` are meeting detail's review states
+/// (slice 3); everything else is the quiet outline.
 struct Chip: View {
-    enum Style { case quiet, active }
+    enum Style { case quiet, active, approved, rejected }
 
     let text: String
     var style: Style = .quiet
@@ -18,7 +19,7 @@ struct Chip: View {
             .font(MachineType.label())
             .textCase(.uppercase)
             .tracking(0.5)
-            .foregroundStyle(style == .active ? DesignTokens.live : DesignTokens.textSecondary)
+            .foregroundStyle(foreground)
             .padding(.horizontal, 6)
             .padding(.vertical, 2)
             .background(style == .active ? DesignTokens.signalSoft : DesignTokens.sunken)
@@ -27,6 +28,15 @@ struct Chip: View {
                 RoundedRectangle(cornerRadius: DesignTokens.radiusChip)
                     .stroke(style == .active ? .clear : DesignTokens.hairline)
             )
+    }
+
+    private var foreground: Color {
+        switch style {
+        case .quiet: DesignTokens.textSecondary
+        case .active: DesignTokens.live
+        case .approved: DesignTokens.statusApproved
+        case .rejected: DesignTokens.statusRejected
+        }
     }
 }
 

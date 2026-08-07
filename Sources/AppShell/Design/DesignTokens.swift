@@ -33,6 +33,12 @@ enum DesignTokens {
     static let signal = Color(srgbHex: 0xF2A33C)
     /// The amber wash behind an active chip (`--signal-soft`).
     static let signalSoft = Color(nsColor: NSColor(srgbHex: 0xF2A33C, alpha: 0.14))
+    /// Review-state chips in meeting detail (`.chip.approved` /
+    /// `.chip.rejected` — tokens.css keeps one value across modes).
+    static let statusApproved = adaptive(light: 0x2E7D43, dark: 0x2E7D43)
+    static let statusRejected = adaptive(light: 0xC93B32, dark: 0xC93B32)
+    /// Text on an amber primary button (`.btn.primary`'s `#2a1d05`).
+    static let textOnSignal = Color(srgbHex: 0x2A1D05)
 
     // MARK: Geometry
 

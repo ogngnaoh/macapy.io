@@ -82,11 +82,14 @@ public enum OpenAIFixtures {
     }
 
     /// A complete non-streaming chat-completion body, for `.json` responses.
+    /// `finishReason` defaults to the natural stop; `"length"` /
+    /// `"content_filter"` script the truncation cases.
     public static func completionBody(
         content: String,
         model: String = "fake-model",
         promptTokens: Int = 10,
-        completionTokens: Int = 5
+        completionTokens: Int = 5,
+        finishReason: String = "stop"
     ) -> String {
         encode([
             "id": "chatcmpl-fake",
@@ -95,7 +98,7 @@ public enum OpenAIFixtures {
             "choices": [[
                 "index": 0,
                 "message": ["role": "assistant", "content": content],
-                "finish_reason": "stop",
+                "finish_reason": finishReason,
             ]],
             "usage": [
                 "prompt_tokens": promptTokens,

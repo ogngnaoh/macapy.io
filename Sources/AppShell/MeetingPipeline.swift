@@ -37,6 +37,7 @@ final class MeetingPipeline {
 
     private var meetingStore: MeetingStore?
     private var meetingID: MeetingRecord.ID?
+    private var isEphemeral = false
     private var segmentWriter: SegmentWriter?
     private var writerTask: Task<Void, Never>?
 
@@ -82,6 +83,7 @@ final class MeetingPipeline {
         let meeting = try await resolvedStore.beginMeeting(startedAt: Date(), ephemeral: ephemeral)
         meetingStore = resolvedStore
         meetingID = meeting.id
+        isEphemeral = ephemeral
 
         // BINDING (slice-04 doc Notes, from the slice-2 critic):
         // `TranscriptStore.finalsStream()` has no replay and `reset()`
@@ -156,7 +158,12 @@ final class MeetingPipeline {
         }
     }
 
-    func stop() async {
+    /// Returns the ended meeting's id when it was persistent — the
+    /// post-meeting agent's trigger (slice-03 decision 1). `nil` for
+    /// ephemeral meetings (their store is already gone — check 7) and for a
+    /// pipeline that never began one.
+    @discardableResult
+    func stop() async -> MeetingRecord.ID? {
         stopped = true
         for source in sources {
             await source.stop()
@@ -194,10 +201,12 @@ final class MeetingPipeline {
                 log.error("endMeeting failed: \(error.localizedDescription)")
             }
         }
+        let endedPersistentMeetingID = isEphemeral ? nil : meetingID
         segmentWriter = nil
         writerTask = nil
         meetingStore = nil
         meetingID = nil
+        return endedPersistentMeetingID
     }
 
     func pause() async {

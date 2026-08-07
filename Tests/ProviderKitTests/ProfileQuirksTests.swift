@@ -138,6 +138,83 @@ struct ProfileQuirksTests {
         #expect(keyless.recordedRequests.first?.headers["authorization"] == nil)
     }
 
+    /// Slice-3 live finding: first-party DeepSeek 400s on `json_schema`
+    /// ("This response_format type is unavailable now"). With the quirk, the
+    /// wire carries `json_object` plus a trailing system message holding the
+    /// schema — and the caller's own messages are untouched before it.
+    @Test func jsonObjectQuirkDowngradesResponseFormatAndAppendsTheSchema() async throws {
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: #"{"answer":"4"}"#))
+        ])
+        defer { server.stop() }
+        var profile = EndpointProfile.deepSeek
+        profile.baseURL = server.baseURL
+        let client = OpenAICompatibleClient(profile: profile, apiKey: "sk-test")
+
+        struct Answer: Decodable { let answer: String }
+        let request = CompletionRequest(
+            model: "deepseek-v4-pro",
+            messages: [.system("You add numbers."), .user("2+2, as JSON")],
+            purpose: .artifact,
+            responseFormat: ResponseFormat(
+                name: "answer",
+                schema: try JSONSchema([
+                    "type": "object",
+                    "properties": ["answer": ["type": "string"]],
+                    "required": ["answer"],
+                    "additionalProperties": false,
+                ]))
+        )
+        _ = try await client.complete(request, as: Answer.self)
+
+        let body = try #require(server.recordedRequests.first?.jsonBody)
+        let format = try #require(body["response_format"] as? [String: Any])
+        #expect(format["type"] as? String == "json_object")
+        #expect(format["json_schema"] == nil)
+        let messages = try #require(body["messages"] as? [[String: Any]])
+        #expect(messages.count == 3)
+        #expect(messages[0]["content"] as? String == "You add numbers.")
+        #expect(messages[1]["content"] as? String == "2+2, as JSON")
+        let trailing = try #require(messages.last)
+        #expect(trailing["role"] as? String == "system")
+        let schemaMessage = try #require(trailing["content"] as? String)
+        #expect(schemaMessage.contains("JSON Schema"))
+        #expect(schemaMessage.contains(#""answer""#))
+    }
+
+    /// The neutral dialect is untouched by the quirk: strict `json_schema` on
+    /// the wire, no appended message (the existing structured-output tests
+    /// pin the format itself; this pins the *absence* of the schema message).
+    @Test func withoutTheQuirkNoSchemaMessageIsAppended() async throws {
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: #"{"answer":"4"}"#))
+        ])
+        defer { server.stop() }
+        let client = OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+
+        struct Answer: Decodable { let answer: String }
+        let request = CompletionRequest(
+            model: "fake-model",
+            messages: [.user("2+2, as JSON")],
+            purpose: .artifact,
+            responseFormat: ResponseFormat(
+                name: "answer",
+                schema: try JSONSchema([
+                    "type": "object",
+                    "properties": ["answer": ["type": "string"]],
+                    "required": ["answer"],
+                    "additionalProperties": false,
+                ]))
+        )
+        _ = try await client.complete(request, as: Answer.self)
+
+        let body = try #require(server.recordedRequests.first?.jsonBody)
+        let format = try #require(body["response_format"] as? [String: Any])
+        #expect(format["type"] as? String == "json_schema")
+        let messages = try #require(body["messages"] as? [[String: Any]])
+        #expect(messages.count == 1)
+    }
+
     @Test func builtInProfilesCoverTheFourEndpointsV1Supports() {
         let ids = EndpointProfile.builtIns.map(\.id)
         #expect(ids == ["openai", "openrouter", "deepseek", "ollama"])
@@ -145,6 +222,9 @@ struct ProfileQuirksTests {
         #expect(EndpointProfile.deepSeek.quirks.passesBackReasoningContent)
         #expect(EndpointProfile.deepSeek.quirks.ignoresSamplingParamsWhenThinking)
         #expect(EndpointProfile.deepSeek.quirks.selectsThinkingViaRequestField)
+        // Live-proven in slice 3: first-party DeepSeek supports only
+        // json_object structured output.
+        #expect(EndpointProfile.deepSeek.quirks.usesJSONObjectResponseFormat)
         // The V4 API retired `deepseek-chat`/`deepseek-reasoner`; thinking is a
         // request field now, not a separate model (checked against the live
         // pricing/API docs 2026-07-29).

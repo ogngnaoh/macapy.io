@@ -76,7 +76,8 @@ public extension EndpointProfile {
         quirks: Quirks(
             passesBackReasoningContent: true,
             ignoresSamplingParamsWhenThinking: true,
-            selectsThinkingViaRequestField: true
+            selectsThinkingViaRequestField: true,
+            usesJSONObjectResponseFormat: true
         ),
         dataPolicyNote: "First-party DeepSeek trains on inputs by default and stores data in China (SPEC §8)."
     )
@@ -125,18 +126,29 @@ public struct Quirks: Sendable, Equatable {
     /// the spend ledger goes blind — but a custom profile needs this escape
     /// hatch, by the same rationale that gates the `thinking` field.
     public var omitsStreamOptions: Bool
+    /// The endpoint rejects `response_format: json_schema` and supports only
+    /// `json_object` (first-party DeepSeek V4 — live-proven in slice 3: a
+    /// json_schema request 400s with "This response_format type is unavailable
+    /// now"). With the quirk, the client sends `{"type": "json_object"}` and
+    /// appends the schema to the conversation as a trailing system message;
+    /// validation is unchanged — the final object is decoded against the
+    /// schema type either way (SPEC §6.3), so a payload the model got wrong
+    /// still fails typed.
+    public var usesJSONObjectResponseFormat: Bool
 
     public init(
         passesBackReasoningContent: Bool = false,
         ignoresSamplingParamsWhenThinking: Bool = false,
         requiresAPIKey: Bool = true,
         selectsThinkingViaRequestField: Bool = false,
-        omitsStreamOptions: Bool = false
+        omitsStreamOptions: Bool = false,
+        usesJSONObjectResponseFormat: Bool = false
     ) {
         self.passesBackReasoningContent = passesBackReasoningContent
         self.ignoresSamplingParamsWhenThinking = ignoresSamplingParamsWhenThinking
         self.requiresAPIKey = requiresAPIKey
         self.selectsThinkingViaRequestField = selectsThinkingViaRequestField
         self.omitsStreamOptions = omitsStreamOptions
+        self.usesJSONObjectResponseFormat = usesJSONObjectResponseFormat
     }
 }

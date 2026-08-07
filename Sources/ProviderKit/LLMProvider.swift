@@ -204,6 +204,14 @@ public enum ProviderError: Error, Equatable {
     case malformedResponse(String)
     /// A structured-output payload that didn't decode against its schema type.
     case decodingFailed(String)
+    /// A non-streaming structured call whose reply ended for any reason other
+    /// than a natural stop (`length` truncation, `content_filter`, …). Even
+    /// when the payload happens to parse, it may be missing whatever the model
+    /// never got to say — same bucket as a malformed payload: no partial
+    /// object escapes (slice-03 ruling on the slice-2 open item; streaming
+    /// callers get the reason via `Completion.finishReason` and decide
+    /// themselves).
+    case truncated(finishReason: String)
     /// No credentials for a profile that requires them.
     case missingCredentials(profile: String)
     /// The meeting's spending cap is already spent (PRD FR-015). Refused before
@@ -213,6 +221,26 @@ public enum ProviderError: Error, Equatable {
 }
 
 public extension ProviderError {
+    /// A log-safe rendering: the case name (plus any status code), **never**
+    /// the endpoint's message — a provider is free to echo request content
+    /// back in an error string, and that content is exactly what must not
+    /// land on disk (the `ProviderLog` rule, shared here so every module
+    /// logging a `ProviderError` gets the same sanitizer).
+    var logDescription: String {
+        switch self {
+        case .transport: return "transport"
+        case .rateLimited: return "rateLimited"
+        case .server(let status, _): return "server(\(status))"
+        case .http(let status, _): return "http(\(status))"
+        case .inStreamError: return "inStreamError"
+        case .malformedResponse: return "malformedResponse"
+        case .decodingFailed: return "decodingFailed"
+        case .truncated(let reason): return "truncated(\(reason))"
+        case .missingCredentials: return "missingCredentials"
+        case .capReached: return "capReached"
+        }
+    }
+
     /// One plain sentence naming the cause, for the settings and panel
     /// surfaces. The app's voice is quiet and factual (slice-01 design), and no
     /// user should have to read an enum case to learn their key is wrong.
@@ -234,6 +262,8 @@ public extension ProviderError {
             return "The endpoint replied in an unexpected format. Check the base URL."
         case .decodingFailed:
             return "The model's reply didn't match the expected format."
+        case .truncated:
+            return "The model's reply was cut off before it finished. Try again."
         case .missingCredentials:
             return "Add an API key for this provider first."
         case .capReached(let spent, let cap):

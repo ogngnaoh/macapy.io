@@ -1,3 +1,4 @@
+import AgentKit
 import CaptureKit
 import Foundation
 import Observation
@@ -28,10 +29,14 @@ final class AppShellCoordinator {
     @ObservationIgnored private let panel: PanelPresenting
     @ObservationIgnored private let makePipeline: @MainActor (TranscriptStore) -> MeetingPipeline
     @ObservationIgnored private let makeDatabase: @MainActor () throws -> MacapyDatabase
+    @ObservationIgnored private let providerProfiles: [EndpointProfile]
+    @ObservationIgnored private let credentials: any CredentialStore
     @ObservationIgnored private var cachedDatabase: MacapyDatabase?
     @ObservationIgnored private var cachedPersistentStore: MeetingStore?
     @ObservationIgnored private var cachedSettingsStore: SettingsStore?
     @ObservationIgnored private var cachedSpendLedger: SpendLedgerStore?
+    @ObservationIgnored private var cachedArtifactStore: ArtifactStore?
+    @ObservationIgnored private var cachedPostMeetingAgent: PostMeetingAgent?
     @ObservationIgnored private var cachedProviderSettingsModel: ProviderSettingsModel?
     @ObservationIgnored private var hotKey: HotKey?
     @ObservationIgnored private var pauseHotKey: HotKey?
@@ -39,6 +44,7 @@ final class AppShellCoordinator {
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var stopTask: Task<Void, Never>?
     @ObservationIgnored private var pauseResumeTask: Task<Void, Never>?
+    @ObservationIgnored private var artifactGenerationTask: Task<Void, Never>?
     @ObservationIgnored private let log = Logger(subsystem: "io.macapy.app", category: "AppShell")
 
     /// Production wiring: real mic + system-audio capture, SpeechAnalyzer, and
@@ -53,15 +59,25 @@ final class AppShellCoordinator {
     /// `MeetingStore` because slice 2 added two more stores over the same
     /// connection (settings, spend ledger), and they must not each open their
     /// own.
+    /// `providerProfiles`/`credentials` default to production (the wired
+    /// catalog, the real Keychain) — safe to default, unlike `makeDatabase`:
+    /// neither performs I/O until a provider is actually configured, so an
+    /// unconfigured test coordinator never touches the user's Keychain.
+    /// Tests that exercise the agent inject a fake-server profile and an
+    /// in-memory store here.
     init(
         panel: PanelPresenting = FloatingPanelController(),
         installHotKey: Bool = true,
         makePipeline: @escaping @MainActor (TranscriptStore) -> MeetingPipeline = AppShellCoordinator.productionPipeline,
-        makeDatabase: @escaping @MainActor () throws -> MacapyDatabase
+        makeDatabase: @escaping @MainActor () throws -> MacapyDatabase,
+        providerProfiles: [EndpointProfile] = EndpointProfile.wired,
+        credentials: any CredentialStore = KeychainCredentialStore()
     ) {
         self.panel = panel
         self.makePipeline = makePipeline
         self.makeDatabase = makeDatabase
+        self.providerProfiles = providerProfiles
+        self.credentials = credentials
         if installHotKey {
             hotKey = HotKey.startStopMeeting { [weak self] in
                 self?.toggleSession()
@@ -226,7 +242,8 @@ final class AppShellCoordinator {
     func providerSettingsModel() -> ProviderSettingsModel {
         if let cachedProviderSettingsModel { return cachedProviderSettingsModel }
         let model = ProviderSettingsModel(
-            credentials: KeychainCredentialStore(),
+            profiles: providerProfiles,
+            credentials: credentials,
             settingsStore: settingsStore(),
             ledger: spendLedger()
         )
@@ -246,6 +263,80 @@ final class AppShellCoordinator {
         }
     }
 
+    /// Draft artifacts, over the same connection as everything else. `nil`
+    /// (logged) when the database can't open — meeting detail then shows an
+    /// error state, like History and Settings.
+    func artifactStore() -> ArtifactStore? {
+        do {
+            if let cachedArtifactStore { return cachedArtifactStore }
+            let opened = ArtifactStore(database: try openOrReuseDatabase())
+            cachedArtifactStore = opened
+            return opened
+        } catch {
+            log.error("failed to open artifact store: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// The post-meeting agent, wired the only way shipping code builds a
+    /// provider: registry-resolved client, wrapped in a `SpendMeter` carrying
+    /// `perMeetingCapUSD` (the slice-2 V5 debt — this is the one place a
+    /// capped meter is constructed) inside a `MeteredProvider` keyed to the
+    /// meeting. Settings are re-read per generation, so a cap or model
+    /// changed after meeting end applies to a retroactive generate.
+    func postMeetingAgent() -> PostMeetingAgent? {
+        if let cachedPostMeetingAgent { return cachedPostMeetingAgent }
+        guard let meetings = historyStore(),
+              let artifacts = artifactStore(),
+              let settingsStore = settingsStore(),
+              let ledger = spendLedger()
+        else { return nil }
+        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials)
+        let agent = PostMeetingAgent(meetings: meetings, artifacts: artifacts) { meetingID in
+            let settings = try await settingsStore.providerSettings()
+            guard let client = try registry.client(for: settings),
+                  let profile = registry.resolvedProfile(for: settings)
+            else { return nil }
+            let meter = SpendMeter(
+                ledger: ledger,
+                pricing: try await settingsStore.pricing(),
+                capUSD: settings.perMeetingCapUSD
+            )
+            return PostMeetingProviderContext(
+                provider: MeteredProvider(upstream: client, meter: meter, meetingID: meetingID),
+                model: profile.deepModel
+            )
+        }
+        cachedPostMeetingAgent = agent
+        return agent
+    }
+
+    /// One meeting's detail-pane state. Built per selection (fetch-on-appear,
+    /// like History itself); the closures re-read settings on every ask so a
+    /// provider or cap configured after the meeting applies immediately.
+    func meetingDetailModel(for meeting: MeetingRecord) -> MeetingDetailModel {
+        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials)
+        let settingsStore = settingsStore()
+        let ledger = spendLedger()
+        return MeetingDetailModel(
+            meeting: meeting,
+            artifactStore: artifactStore(),
+            agent: postMeetingAgent(),
+            isProviderConfigured: {
+                guard let settingsStore else { return false }
+                let settings = (try? await settingsStore.providerSettings()) ?? ProviderSettings()
+                return registry.isConfigured(settings)
+            },
+            capStatus: { meetingID in
+                guard let settingsStore, let ledger,
+                      let capUSD = (try? await settingsStore.providerSettings())?.perMeetingCapUSD
+                else { return nil }
+                let spentUSD = (try? await ledger.totalCostUSD(meetingID: meetingID)) ?? 0
+                return (spentUSD: spentUSD, capUSD: capUSD)
+            }
+        )
+    }
+
     private func teardownPipeline() {
         guard let stopping = pipeline else { return }
         pipeline = nil
@@ -258,10 +349,26 @@ final class AppShellCoordinator {
         // can run while any earlier pipeline's drain is still writing to the
         // shared store — even with two or more teardowns in flight.
         let previousStop = stopTask
-        stopTask = Task {
+        stopTask = Task { [weak self] in
             inFlightStart?.cancel()
             await previousStop?.value
-            await stopping.stop()
+            let endedMeetingID = await stopping.stop()
+            // The meeting-end trigger (slice-03 decision 1). A *separate*
+            // task, not more of stopTask: the next meeting's start serializes
+            // behind stopTask, and a multi-second extraction must never delay
+            // capture (FR-008 is post-meeting work; capture always wins).
+            // Ephemeral meetings return nil and never reach here (check 7).
+            guard let endedMeetingID, let self else { return }
+            // Chained behind any earlier generation still in flight (two
+            // meetings ended in quick succession) so `settle()` awaiting the
+            // latest task transitively awaits them all — the same discipline
+            // stopTask uses (critic soft spot: an overwritten task kept
+            // running but became untracked).
+            let previousGeneration = self.artifactGenerationTask
+            self.artifactGenerationTask = Task { [weak self] in
+                await previousGeneration?.value
+                await self?.postMeetingAgent()?.generateArtifacts(meetingID: endedMeetingID)
+            }
         }
     }
 
@@ -273,9 +380,12 @@ final class AppShellCoordinator {
     }
 
     /// Test support: await the current start/stop/pause work to quiesce.
+    /// Artifact generation is awaited after stop, because stop is what
+    /// spawns it.
     func settle() async {
         await startTask?.value
         await stopTask?.value
+        await artifactGenerationTask?.value
         await pauseResumeTask?.value
     }
 }

@@ -1,2 +1,3 @@
-// AgentKit — copilot orchestrator, post-meeting agent, memory.
-// Stub through M1 (milestone non-goal); real work starts in M2/M3.
+// AgentKit — the agentic layer over the live transcript (SPEC §6.1).
+// Slice 3 (M2): the post-meeting agent — extraction → draft artifacts.
+// Still to come: copilot orchestrator (M3), memory pipeline (M4).

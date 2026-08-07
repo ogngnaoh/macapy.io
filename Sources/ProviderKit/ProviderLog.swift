@@ -65,17 +65,6 @@ enum ProviderLog {
     }
 
     private static func kind(of error: Error) -> String {
-        guard let error = error as? ProviderError else { return "unknown" }
-        switch error {
-        case .transport: return "transport"
-        case .rateLimited: return "rateLimited"
-        case .server(let status, _): return "server(\(status))"
-        case .http(let status, _): return "http(\(status))"
-        case .inStreamError: return "inStreamError"
-        case .malformedResponse: return "malformedResponse"
-        case .decodingFailed: return "decodingFailed"
-        case .missingCredentials: return "missingCredentials"
-        case .capReached: return "capReached"
-        }
+        (error as? ProviderError)?.logDescription ?? "unknown"
     }
 }

@@ -26,7 +26,10 @@ public struct AppShellScenes: Scene {
         Window("History", id: WindowID.history) {
             Group {
                 if let store = coordinator.historyStore() {
-                    HistoryView(store: store)
+                    HistoryView(
+                        store: store,
+                        makeDetailModel: { coordinator.meetingDetailModel(for: $0) }
+                    )
                 } else {
                     EmptyStateView(
                         title: "History unavailable",
