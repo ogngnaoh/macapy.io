@@ -21,7 +21,7 @@ struct PanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            SignalStripView(mode: session.isCapturing ? .live : .quiet)
+            SignalStripView(mode: session.isCapturing ? .live : .quiet, meter: session.signalMeter)
             header
             transcript
             if session.isPaused {

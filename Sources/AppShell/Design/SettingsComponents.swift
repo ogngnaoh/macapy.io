@@ -178,3 +178,43 @@ struct DataTableRow: View {
         .overlay(alignment: .bottom) { Divider().overlay(DesignTokens.hairline) }
     }
 }
+
+// MARK: - Stat tile (diagnostics grid)
+
+/// One cell of the diagnostics stat-grid (design/06: `.stat` — surface card,
+/// hairline stroke, machine eyebrow over a large machine number with a small
+/// unit suffix). Added in slice 4 for the memory/drop tiles.
+struct StatTile: View {
+    let label: String
+    let value: String
+    var unit: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(MachineType.label(8.5))
+                .textCase(.uppercase)
+                .tracking(0.4)
+                .foregroundStyle(DesignTokens.textSecondary)
+                .lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(value)
+                    .font(MachineType.number(20))
+                    .foregroundStyle(DesignTokens.text)
+                if let unit {
+                    Text(unit)
+                        .font(MachineType.number(11))
+                        .foregroundStyle(DesignTokens.textSecondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(DesignTokens.Space.s3)
+        .background(DesignTokens.surface)
+        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radiusCard))
+        .overlay(
+            RoundedRectangle(cornerRadius: DesignTokens.radiusCard)
+                .stroke(DesignTokens.hairline, lineWidth: 1)
+        )
+    }
+}

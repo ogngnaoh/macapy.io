@@ -48,8 +48,18 @@ public enum BoundedAudioFanOut {
             for await chunk in source {
                 onChunk?(chunk)
                 for (branch, continuation) in continuations.enumerated() {
-                    if case .dropped = continuation.yield(chunk) {
+                    switch continuation.yield(chunk) {
+                    case .dropped, .terminated:
+                        // Dropped = buffer eviction under a stalled-but-alive
+                        // consumer; terminated = the consumer went away
+                        // entirely (early engine exit). Either way this chunk
+                        // reached no one — both are honest "dropped audio"
+                        // for the diagnostics tile. Healthy teardown never
+                        // takes this path: the source finishes first, so the
+                        // loop exits before any branch terminates.
                         drops.increment(branch: branch)
+                    default:
+                        break
                     }
                 }
             }

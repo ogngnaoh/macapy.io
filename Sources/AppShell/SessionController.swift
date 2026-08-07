@@ -1,3 +1,4 @@
+import CaptureKit
 import Foundation
 import Observation
 
@@ -16,6 +17,14 @@ final class SessionController {
     }
 
     private(set) var state: SessionState = .idle
+
+    /// The current meeting's per-source levels for the signal strip (slice-4
+    /// decision 5). Set by the coordinator when a pipeline starts; nil until
+    /// the first meeting, after which it always points at the latest meter —
+    /// the strip only renders it in `.live` mode, so stale values are never
+    /// shown. Stored here (not threaded through `PanelPresenting`) so the
+    /// panel picks it up via the session it already observes.
+    var signalMeter: SignalLevelMeter?
 
     var isCapturing: Bool {
         if case .capturing = state { return true }

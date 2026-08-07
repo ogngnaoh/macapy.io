@@ -153,6 +153,7 @@ final class AppShellCoordinator {
         let previousStop = stopTask
         let newPipeline = makePipeline(store)
         pipeline = newPipeline
+        session.signalMeter = newPipeline.signalMeter
         newPipeline.onFailure = { [weak self] error in
             self?.handleFailure(from: newPipeline, error)
         }

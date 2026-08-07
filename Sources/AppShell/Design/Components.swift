@@ -1,4 +1,5 @@
 import AppKit
+import CaptureKit
 import SwiftUI
 
 // Reusable pieces of the "Quiet instrument" system (slice-01). Only what the
@@ -8,10 +9,12 @@ import SwiftUI
 // MARK: - Signal strip (the signature)
 
 /// The tick-meter along the panel's top edge — the one living element on an
-/// otherwise still surface, and the app's recording indicator. Slice-01 drives
-/// it from session state; wiring it to real capture levels is scheduled with
-/// slice 4, whose memory-watch work touches the same audio path (Notes).
-/// Reduced motion (or a paused session) collapses it to a steady dot.
+/// otherwise still surface, and the app's recording indicator. Since slice 4
+/// it renders real capture levels when a meter is supplied (per-source RMS,
+/// polled at 100ms — G4's 60fps budget is untouched by a 10Hz redraw); with no
+/// meter it keeps the slice-01 session-state animation, so previews and any
+/// meterless call site degrade gracefully. Reduced motion (or a paused
+/// session) collapses it to a steady dot.
 struct SignalStripView: View {
     enum Mode {
         /// Capturing: animated amber/slate ticks.
@@ -21,26 +24,48 @@ struct SignalStripView: View {
     }
 
     let mode: Mode
+    /// Live per-source levels; nil = slice-01 canned animation.
+    var meter: SignalLevelMeter?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var animating = false
 
     var body: some View {
         HStack(spacing: 0) {
             if mode == .live && !reduceMotion {
-                ForEach(Self.ticks) { tick in
-                    Capsule()
-                        .fill(tick.color)
-                        .frame(width: 3, height: tick.height)
-                        .scaleEffect(y: animating && tick.animates ? 1.6 : 0.7, anchor: .center)
-                        .animation(
-                            tick.animates
-                                ? .easeInOut(duration: tick.duration)
-                                    .repeatForever(autoreverses: true)
-                                    .delay(tick.delay)
-                                : nil,
-                            value: animating
-                        )
-                        .frame(maxWidth: .infinity)
+                if let meter {
+                    TimelineView(.periodic(from: .now, by: 0.1)) { _ in
+                        let you = Self.displayScale(for: meter.level(for: .mic))
+                        let them = Self.displayScale(for: meter.level(for: .system))
+                        HStack(spacing: 0) {
+                            ForEach(Self.ticks) { tick in
+                                Capsule()
+                                    .fill(tick.color)
+                                    .frame(width: 3, height: tick.height)
+                                    .scaleEffect(
+                                        y: tick.scale(you: you, them: them),
+                                        anchor: .center
+                                    )
+                                    .animation(.easeOut(duration: 0.12), value: you + them)
+                                    .frame(maxWidth: .infinity)
+                            }
+                        }
+                    }
+                } else {
+                    ForEach(Self.ticks) { tick in
+                        Capsule()
+                            .fill(tick.color)
+                            .frame(width: 3, height: tick.height)
+                            .scaleEffect(y: animating && tick.animates ? 1.6 : 0.7, anchor: .center)
+                            .animation(
+                                tick.animates
+                                    ? .easeInOut(duration: tick.duration)
+                                        .repeatForever(autoreverses: true)
+                                        .delay(tick.delay)
+                                    : nil,
+                                value: animating
+                            )
+                            .frame(maxWidth: .infinity)
+                    }
                 }
             } else {
                 Circle()
@@ -57,20 +82,42 @@ struct SignalStripView: View {
         .accessibilityLabel(mode == .live ? "Recording indicator: capturing" : "Recording indicator: paused")
     }
 
+    /// RMS → tick scale. Speech RMS lives mostly in 0...0.35, so ×6 spreads it
+    /// across the animation band; the floor keeps silent voices at the same
+    /// resting height as the canned animation, the cap at its peak. Static
+    /// tick heights still vary underneath (tokens.css: "a frozen frame still
+    /// reads as a level meter").
+    static func displayScale(for level: Float) -> CGFloat {
+        let normalized = min(1, CGFloat(level) * 6)
+        return 0.7 + normalized * 0.9
+    }
+
+    private enum Voice { case you, them, idle }
+
     private struct Tick: Identifiable {
         let id: Int
+        let voice: Voice
         let color: Color
         let height: CGFloat
         let animates: Bool
         let duration: Double
         let delay: Double
+
+        /// Meter-driven scale: each tick follows its own voice's level; idle
+        /// ticks hold the resting height.
+        func scale(you: CGFloat, them: CGFloat) -> CGFloat {
+            switch voice {
+            case .you: you
+            case .them: them
+            case .idle: 0.7
+            }
+        }
     }
 
     /// Tick pattern transcribed from the approved mockup (design/tokens.css
     /// nth-child rules): voice = amber (you) / slate (them) / faint (idle);
     /// heights and stagger match the CSS cascade exactly.
     private static let ticks: [Tick] = {
-        enum Voice { case you, them, idle }
         let voices: [Voice] = [
             .them, .idle, .you, .them, .idle, .them, .you, .idle,
             .them, .idle, .you, .them, .idle, .them, .idle, .you,
@@ -91,6 +138,7 @@ struct SignalStripView: View {
                 }
             return Tick(
                 id: n,
+                voice: voice,
                 color: color,
                 height: height,
                 animates: voice != .idle,

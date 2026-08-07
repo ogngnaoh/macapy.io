@@ -132,6 +132,25 @@ struct BoundedFanOutTests {
         #expect(out.drops.count(forBranch: 1) == 36_000 - bound)
     }
 
+    @Test func discardedBranchStreamCountsEveryChunkAsDropped() async {
+        // The consumer-went-away case (an engine that drops its audio stream,
+        // or exits early releasing it): the branch stream deallocates, yields
+        // return .terminated, and every chunk fed afterwards reached no one —
+        // it must surface in the drop count, not vanish silently.
+        let (source, feed) = AsyncStream<AudioChunk>.makeStream(bufferingPolicy: .unbounded)
+        let (drops, forwarding): (BoundedAudioFanOut.DropCounter, Task<Void, Never>) = {
+            let out = BoundedAudioFanOut.split(source, branchCount: 1, bound: 100)
+            return (out.drops, out.forwarding)
+            // out.branches released here — nobody ever consumed them.
+        }()
+
+        for n in 0..<30 { feed.yield(chunk(n)) }
+        feed.finish()
+        await forwarding.value
+
+        #expect(drops.count(forBranch: 0) == 30)
+    }
+
     // MARK: - Independent branches + tap
 
     @Test func branchCountersAreIndependent() async {
