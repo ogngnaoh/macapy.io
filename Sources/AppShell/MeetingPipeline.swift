@@ -126,6 +126,13 @@ final class MeetingPipeline {
         if let makeDiarizer {
             do {
                 let session = try await Task.detached { try makeDiarizer() }.value
+                // stop() may have run to completion while the (slow, first-use
+                // ~8s) construction was in flight; adopting the session now
+                // would orphan a live CoreML load past teardown (fresh-context
+                // critic finding, G4). Drop the local and bail — the check and
+                // the assignments below are one synchronous MainActor stretch,
+                // so stop() cannot interleave after the check.
+                if stopped { return }
                 diarizationSession = session
                 let diarizerFinals = store.finalsStream()
                 let task = Task { @MainActor [store] in

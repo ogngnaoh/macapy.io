@@ -165,6 +165,55 @@ struct DiarizedPipelineTests {
         #expect(attributed.map(\.speakerLabel) == ["S1", "S2"])
     }
 
+    @Test func stopCompletingDuringDiarizerConstructionOrphansNothing() async throws {
+        // Fresh-context critic finding: the detached session construction is a
+        // multi-second window; a stop() that runs to completion inside it must
+        // not leave the just-built session (a live CoreML load in production)
+        // alive past teardown. The weak box is the leak oracle.
+        final class Gate: @unchecked Sendable {
+            let entered = DispatchSemaphore(value: 0)
+            let release = DispatchSemaphore(value: 0)
+            weak var builtSession: DiarizationSession?
+            private let lock = NSLock()
+            func noteBuilt(_ session: DiarizationSession) {
+                lock.withLock { builtSession = session }
+            }
+            // Sync wrapper: DispatchSemaphore.wait() is unavailable directly
+            // in async contexts; the detached task calls this instead.
+            func waitUntilEntered() { entered.wait() }
+        }
+        let gate = Gate()
+        let store = TranscriptStore()
+        let meetingStore = MeetingStore(database: try MacapyDatabase.inMemory())
+        let engine = ScriptedDiarizationEngine(turnBatches: [])
+        let pipeline = MeetingPipeline(
+            engine: ScriptedFinalsEngine(finals: [:]),
+            sources: [ScriptedSource(source: .system, chunkCount: 0)],
+            store: store,
+            makeDiarizer: {
+                gate.entered.signal()
+                gate.release.wait()  // holds the detached thread, not an actor
+                let session = DiarizationSession(engine: engine)
+                gate.noteBuilt(session)
+                return session
+            }
+        )
+
+        let startTask = Task { try await pipeline.start(mode: .persistent(meetingStore)) }
+        // Wait (off the main actor) until start() is provably suspended inside
+        // the factory, then let stop() run to full completion.
+        await Task.detached { gate.waitUntilEntered() }.value
+        _ = await pipeline.stop()
+
+        gate.release.signal()
+        try await startTask.value
+        await Task.yield()
+
+        // The session built after stop() completed was dropped, not adopted.
+        #expect(gate.builtSession == nil)
+        #expect(store.speakerLabels.isEmpty)
+    }
+
     @Test func failingDiarizerFactoryDegradesToAPlainMeeting() async throws {
         struct Boom: Error {}
         let segment = Segment(id: UUID(), source: .system, text: "still here", tStart: 0, tEnd: 1)

@@ -71,7 +71,7 @@ let package = Package(
         // Shared by the LatencyHarness executable and G1BudgetTests
         // (slice-05 doc layout) — one `runHarness(fixtureURL:)` code path,
         // two configs/fixtures/consumers.
-        .target(name: "LatencyHarnessLib", dependencies: ["CaptureKit", "TranscribeKit"]),
+        .target(name: "LatencyHarnessLib", dependencies: ["CaptureKit", "TranscribeKit", "DiarizeKit"]),
         .executableTarget(name: "LatencyHarness", dependencies: ["LatencyHarnessLib"]),
         .testTarget(name: "CaptureKitTests", dependencies: ["CaptureKit"]),
         // Model-gated suites live here (skip-not-fail without the ~129MB
@@ -89,7 +89,8 @@ let package = Package(
         ),
         .testTarget(
             name: "AppShellTests",
-            dependencies: ["AppShell", "AgentKit", "PersistKit", "ProviderKit", "ProviderTestSupport"]
+            dependencies: ["AppShell", "AgentKit", "PersistKit", "ProviderKit", "ProviderTestSupport", "DiarizeKit"],
+            resources: [.copy("Fixtures")]
         ),
         // PersistKit is here for the key-leak check (acceptance check 5): the
         // test writes a canary key, runs real calls, then greps the actual

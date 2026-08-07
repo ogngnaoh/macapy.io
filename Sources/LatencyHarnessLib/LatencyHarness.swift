@@ -1,4 +1,5 @@
 import CaptureKit
+import DiarizeKit
 import Foundation
 import TranscribeKit
 
@@ -67,12 +68,17 @@ public struct HarnessReport: Sendable, Codable, Equatable {
 /// that's the G1-relevant moment; finals are a later refinement). `nVolatile`/
 /// `nFinal` count every event observed, valid or excluded — not folded down
 /// by exclusion.
+/// `diarize: true` (slice-4 check 10a) adds the production second branch —
+/// real FluidAudio consuming the same chunks concurrently — so the release G1
+/// number is measured with diarization's CPU load in the picture. Requires
+/// installed models; the attributions are discarded (latency is the subject).
 public func runHarness(
-    fixtureURL: URL, locale: Locale = Locale(identifier: "en_US")
+    fixtureURL: URL, locale: Locale = Locale(identifier: "en_US"), diarize: Bool = false
 ) async throws -> HarnessReport {
     let engine = SpeechAnalyzerEngine(locale: locale)
     try await engine.prepare(locale: locale)
     let format = try await engine.preferredInputFormat()
+    let diarizer = diarize ? DiarizationSession(engine: try FluidAudioDiarizer()) : nil
 
     // sessionStart is the wall-clock anchor for "audioTEnd == 0": set right
     // before playback begins, so prepare()/format-negotiation time (which
@@ -100,10 +106,24 @@ public func runHarness(
     // G1 is measured through the exact stream shape the app runs — the
     // fed-clock rides its per-chunk tap.
     let fed = FedAudioCounter()
-    let fanOut = BoundedAudioFanOut.split(audio, branchCount: 1) { chunk in
+    let fanOut = BoundedAudioFanOut.split(audio, branchCount: diarizer == nil ? 1 : 2) { chunk in
         fed.add(Double(chunk.buffer.frameLength) / chunk.buffer.format.sampleRate)
     }
     let feedTask = fanOut.forwarding
+    var diarizeTask: Task<Void, Never>?
+    if let diarizer {
+        let branch = fanOut.branches[1]
+        diarizeTask = Task {
+            do {
+                for await chunk in branch {
+                    _ = try await diarizer.ingest(chunk)
+                }
+                _ = try await diarizer.finalize()
+            } catch {
+                FileHandle.standardError.write(Data("diarize branch failed: \(error)\n".utf8))
+            }
+        }
+    }
 
     let events = engine.transcribe(fanOut.branches[0], source: .mic)
 
@@ -121,6 +141,9 @@ public func runHarness(
     }
     await source.stop()
     _ = await feedTask.value
+    if let diarizeTask {
+        _ = await diarizeTask.value
+    }
 
     return HarnessReport.from(fixture: fixtureURL.lastPathComponent, report: recorder.report())
 }

@@ -8,16 +8,20 @@ import LatencyHarnessLib
 // what actually proves G1 (exit criterion 1); this file does no measurement
 // of its own.
 
-let arguments = CommandLine.arguments
-guard arguments.count == 2 else {
-    FileHandle.standardError.write(Data("usage: macapy-latency <fixture.wav>\n".utf8))
+var arguments = Array(CommandLine.arguments.dropFirst())
+// --diarize (slice-4 check 10a): measure with the real diarization branch
+// active. Requires the models to be installed.
+let diarize = arguments.contains("--diarize")
+arguments.removeAll { $0 == "--diarize" }
+guard arguments.count == 1 else {
+    FileHandle.standardError.write(Data("usage: macapy-latency [--diarize] <fixture.wav>\n".utf8))
     exit(2)
 }
 
-let fixtureURL = URL(fileURLWithPath: arguments[1])
+let fixtureURL = URL(fileURLWithPath: arguments[0])
 
 do {
-    let report = try await runHarness(fixtureURL: fixtureURL)
+    let report = try await runHarness(fixtureURL: fixtureURL, diarize: diarize)
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let data = try encoder.encode(report)
