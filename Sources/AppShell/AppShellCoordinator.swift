@@ -1,5 +1,6 @@
 import AgentKit
 import CaptureKit
+import DiarizeKit
 import Foundation
 import Observation
 import PersistKit
@@ -93,10 +94,20 @@ final class AppShellCoordinator {
         // feed the one engine's per-source transcribe() calls into the shared
         // store, which interleaves by tStart. Fakes are injected in tests via the
         // makePipeline closure, so this production wiring is test-inert.
-        MeetingPipeline(
+        //
+        // Diarization rides only when its models are installed (slice-4
+        // decision 6): the availability check happens at meeting start, so
+        // the meeting after a consent-gated download picks it up with no
+        // restart; with no models the pipeline is exactly M1 — zero network.
+        var makeDiarizer: (@Sendable () throws -> DiarizationSession)?
+        if DiarizationModelStore.isInstalled {
+            makeDiarizer = { @Sendable in DiarizationSession(engine: try FluidAudioDiarizer()) }
+        }
+        return MeetingPipeline(
             engine: SpeechAnalyzerEngine(),
             sources: [MicCapture(), SystemAudioCapture()],
-            store: store)
+            store: store,
+            makeDiarizer: makeDiarizer)
     }
 
     /// The production on-disk database (SPEC §5): `~/Library/Application

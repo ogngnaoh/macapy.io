@@ -1,3 +1,4 @@
+import DiarizeKit
 import ProviderKit
 import SwiftUI
 
@@ -82,6 +83,69 @@ struct GeneralSettingsView: View {
             }
             FormRow(label: "") {
                 FormNote("Ephemeral meetings keep nothing — no transcript, no history, no rows on disk.")
+            }
+            FormRow(label: "Speaker separation") {
+                DiarizationSetupControl()
+            }
+            FormRow(label: "") {
+                FormNote(
+                    "Labels other participants S1, S2, … in the transcript. "
+                        + "Runs entirely on this Mac once the models are installed.")
+            }
+        }
+    }
+}
+
+/// The consent-gated model-download affordance (slice-4 decision 6; author
+/// ruling 2026-08-07): the ONLY path that ever downloads the diarization
+/// models, and the one documented exception to G6 — the button itself names
+/// the endpoint and size, so clicking it is the consent. Installed ⇒ a quiet
+/// settled chip; the next meeting picks diarization up automatically.
+struct DiarizationSetupControl: View {
+    private enum Phase: Equatable {
+        case notInstalled
+        case downloading
+        case failed(String)
+        case installed
+    }
+
+    @State private var phase: Phase = DiarizationModelStore.isInstalled ? .installed : .notInstalled
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            switch phase {
+            case .notInstalled:
+                Button("Download models (~\(DiarizationModelStore.approximateDownloadMegabytes) MB, from huggingface.co)") {
+                    download()
+                }
+                .buttonStyle(.link)
+                .font(UIType.small)
+            case .downloading:
+                Text("Downloading…")
+                    .font(UIType.small)
+                    .foregroundStyle(DesignTokens.textSecondary)
+            case .failed(let message):
+                Button("Download failed — try again") { download() }
+                    .buttonStyle(.link)
+                    .font(UIType.small)
+                Text(message)
+                    .font(UIType.small)
+                    .foregroundStyle(DesignTokens.textSecondary)
+            case .installed:
+                Chip(text: "Installed", style: .quiet)
+            }
+        }
+        .accessibilityLabel("Speaker separation models")
+    }
+
+    private func download() {
+        phase = .downloading
+        Task {
+            do {
+                try await DiarizationModelStore.download()
+                phase = DiarizationModelStore.isInstalled ? .installed : .failed("Models missing after download.")
+            } catch {
+                phase = .failed(error.localizedDescription)
             }
         }
     }

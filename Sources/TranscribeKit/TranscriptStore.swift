@@ -26,6 +26,11 @@ public final class TranscriptStore {
 
     public private(set) var segments: [Segment] = []
     public private(set) var volatile: [AudioSource: VolatileLine] = [:]
+    /// Live diarization labels by segment id (slice-4 decision 3): finals
+    /// render unattributed and pick up their gutter label when attribution
+    /// lands — observation redraws the line, G1 never waits. Volatile lines
+    /// never consult this map (they have no stable id by design).
+    public private(set) var speakerLabels: [Segment.ID: String] = [:]
 
     @ObservationIgnored private var finalsContinuations: [UUID: AsyncStream<Segment>.Continuation] = [:]
 
@@ -46,10 +51,18 @@ public final class TranscriptStore {
         }
     }
 
+    /// Post-hoc speaker attribution for a final (slice 4). Idempotent;
+    /// harmless for ids not (yet) in `segments` — the map is consulted by id
+    /// at render time.
+    public func setSpeakerLabel(_ label: String, for segmentID: Segment.ID) {
+        speakerLabels[segmentID] = label
+    }
+
     /// Clears the transcript and ends any open `finalsStream()` (a new meeting).
     public func reset() {
         segments.removeAll()
         volatile.removeAll()
+        speakerLabels.removeAll()
         finishFinalsStreams()
     }
 

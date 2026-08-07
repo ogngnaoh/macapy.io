@@ -56,7 +56,8 @@ struct PanelView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ForEach(store.segments) { segment in
                         TranscriptLineView(
-                            speaker: Self.speakerLabel(for: segment.source),
+                            speaker: store.speakerLabels[segment.id]
+                                ?? Self.speakerLabel(for: segment.source),
                             isYou: segment.source == .mic,
                             text: segment.text,
                             isVolatile: false

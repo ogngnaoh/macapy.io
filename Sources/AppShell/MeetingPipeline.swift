@@ -1,5 +1,6 @@
 import AVFoundation
 import CaptureKit
+import DiarizeKit
 import Foundation
 import PersistKit
 import TranscribeKit
@@ -49,6 +50,13 @@ final class MeetingPipeline {
     private var segmentWriter: SegmentWriter?
     private var writerTask: Task<Void, Never>?
 
+    /// Built off the main actor in `start()` (model load is ~8s on first
+    /// use); nil = no diarization this meeting (models absent, factory nil,
+    /// or construction failed — transcription must never suffer for it).
+    private let makeDiarizer: (@Sendable () throws -> DiarizationSession)?
+    private var diarizationSession: DiarizationSession?
+    private var diarizeTasks: [Task<Void, Never>] = []
+
     /// Invoked on a mid-stream transcription failure (the coordinator stops the
     /// session). Errors thrown from `start()` propagate to the caller instead.
     var onFailure: (@MainActor (any Error) -> Void)?
@@ -58,13 +66,15 @@ final class MeetingPipeline {
         sources: [any AudioCaptureSource],
         store: TranscriptStore,
         locale: Locale = .current,
-        recorder: LatencyRecorder = LatencyRecorder(sessionStart: Date())
+        recorder: LatencyRecorder = LatencyRecorder(sessionStart: Date()),
+        makeDiarizer: (@Sendable () throws -> DiarizationSession)? = nil
     ) {
         self.engine = engine
         self.sources = sources
         self.store = store
         self.locale = locale
         self.recorder = recorder
+        self.makeDiarizer = makeDiarizer
     }
 
     /// Flips the pipeline to "stopping" synchronously, so a `start()` still
@@ -108,6 +118,31 @@ final class MeetingPipeline {
         let finals = store.finalsStream()
         writerTask = Task { await writer.run(consuming: finals) }
 
+        // Diarization (slice-4 decision 3). Session construction is detached —
+        // the CoreML model load takes seconds on first use and must not block
+        // the main actor. Failure degrades to an M1 meeting, never an error.
+        // The finals subscription attaches HERE, under the same
+        // before-capture binding constraint as the SegmentWriter above.
+        if let makeDiarizer {
+            do {
+                let session = try await Task.detached { try makeDiarizer() }.value
+                diarizationSession = session
+                let diarizerFinals = store.finalsStream()
+                let task = Task { @MainActor [store] in
+                    for await segment in diarizerFinals where segment.source == .system {
+                        let attributions = await session.noteFinal(
+                            segmentID: segment.id, tStart: segment.tStart, tEnd: segment.tEnd)
+                        for attribution in attributions {
+                            store.setSpeakerLabel(attribution.label, for: attribution.segmentID)
+                        }
+                    }
+                }
+                diarizeTasks.append(task)
+            } catch {
+                log.error("diarization unavailable this meeting: \(error.localizedDescription)")
+            }
+        }
+
         try await engine.prepare(locale: locale)
         if stopped { return }
         let baseFormat = try await engine.preferredInputFormat()
@@ -140,15 +175,35 @@ final class MeetingPipeline {
             // stream is unbounded by design; everything downstream consumes a
             // bounded branch, so an analyzer stall evicts oldest chunks (with
             // an exact surfaced count) instead of growing memory. The tap
-            // computes RMS per chunk for the signal strip. One STT branch per
-            // source in M2 phase 1; the them-stream diarizer joins as a second
-            // branch in phase 5.
+            // computes RMS per chunk for the signal strip. Branch 0 is always
+            // STT; the them-stream gets branch 1 for the diarizer.
             let meter = signalMeter
-            let fanOut = BoundedAudioFanOut.split(audio, branchCount: 1) { chunk in
+            let diarizing = src == .system && diarizationSession != nil
+            let fanOut = BoundedAudioFanOut.split(audio, branchCount: diarizing ? 2 : 1) { chunk in
                 meter.record(source: src, level: AudioLevel.rms(of: chunk.buffer))
             }
             dropCounters.append(fanOut.drops)
             forwardingTasks.append(fanOut.forwarding)
+            if diarizing, let session = diarizationSession {
+                let branch = fanOut.branches[1]
+                let diarizerLog = log
+                let task = Task { @MainActor [store] in
+                    do {
+                        for await chunk in branch {
+                            let attributions = try await session.ingest(chunk)
+                            for attribution in attributions {
+                                store.setSpeakerLabel(attribution.label, for: attribution.segmentID)
+                            }
+                        }
+                    } catch {
+                        // Diarization dies quietly; the transcript is
+                        // untouched and the un-drained branch surfaces as
+                        // drop-counter honesty, not a meeting failure.
+                        diarizerLog.error("diarization failed mid-meeting: \(error.localizedDescription)")
+                    }
+                }
+                diarizeTasks.append(task)
+            }
             let events = engine.transcribe(fanOut.branches[0], source: src)
             let recorder = self.recorder
             let task = Task { @MainActor [weak self, store, recorder] in
@@ -222,6 +277,39 @@ final class MeetingPipeline {
                 log.error("final segment flush failed: \(error.localizedDescription)")
             }
         }
+        // Diarization persistence sweep (slice-4 decision 3): both diarize
+        // tasks are provably done here — the chunk consumer ended when the
+        // fan-out finished its branches (awaited above), the finals consumer
+        // when finishFinalsStreams() ran — and flushAndStop() has committed
+        // every segment row, so the batched attribution UPDATE can't race the
+        // writer. Runs before endMeeting: the post-meeting agent (triggered
+        // by stop()'s return) always sees labeled segments.
+        for task in diarizeTasks {
+            _ = await task.value
+        }
+        diarizeTasks.removeAll()
+        if let session = diarizationSession, let meetingStore, let meetingID {
+            do {
+                let result = try await session.finalize()
+                if !result.speakers.isEmpty {
+                    let records = result.speakers.map {
+                        SpeakerRecord(
+                            id: UUID(), meetingID: meetingID, label: $0.label, embedding: $0.embedding)
+                    }
+                    let speakerIDByKey = Dictionary(
+                        uniqueKeysWithValues: zip(result.speakers.map(\.key), records.map(\.id)))
+                    try await meetingStore.insertSpeakers(records)
+                    try await meetingStore.assignSpeakers(
+                        result.assignments.compactMapValues { speakerIDByKey[$0] },
+                        meetingID: meetingID
+                    )
+                }
+            } catch {
+                log.error("diarization persistence failed: \(error.localizedDescription)")
+            }
+        }
+        diarizationSession = nil
+
         if let meetingStore, let meetingID {
             do {
                 try await meetingStore.endMeeting(id: meetingID, endedAt: Date())

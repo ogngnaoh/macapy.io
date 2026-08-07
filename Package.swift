@@ -55,7 +55,7 @@ let package = Package(
         .target(name: "ProviderTestSupport", dependencies: ["ProviderKit"]),
         .target(
             name: "AppShell",
-            dependencies: ["CaptureKit", "TranscribeKit", "PersistKit", "AgentKit", "ProviderKit"],
+            dependencies: ["CaptureKit", "TranscribeKit", "PersistKit", "AgentKit", "ProviderKit", "DiarizeKit"],
             // Martian Mono (OFL, license alongside): the design system's
             // "machine voice" face, registered at startup by FontRegistrar.
             resources: [.copy("Resources/Fonts")]

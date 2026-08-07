@@ -93,9 +93,13 @@ public actor PostMeetingAgent {
             }
             guard let context = try await makeContext(meetingID) else { return .skippedNoProvider }
 
-            // "You"/"Them" until diarization (M2 slice 4) refines the labels.
-            let transcript = try await meetings.segments(for: meetingID).map { segment in
-                TranscriptLine(speaker: segment.source == .mic ? "You" : "Them", text: segment.text)
+            // Diarized labels (S1/S2, slice 4) where attribution landed;
+            // source-based "You"/"Them" otherwise.
+            let transcript = try await meetings.attributedSegments(for: meetingID).map { attributed in
+                TranscriptLine(
+                    speaker: attributed.speakerLabel
+                        ?? (attributed.segment.source == .mic ? "You" : "Them"),
+                    text: attributed.segment.text)
             }
             guard !transcript.isEmpty else { return .skippedEmptyTranscript }
 

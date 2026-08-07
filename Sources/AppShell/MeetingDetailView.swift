@@ -12,7 +12,7 @@ struct MeetingDetailView: View {
     /// database that failed to open).
     let makeModel: @MainActor (MeetingRecord) -> MeetingDetailModel?
 
-    @State private var segments: [Segment] = []
+    @State private var segments: [AttributedSegment] = []
     @State private var transcriptError: String?
     @State private var model: MeetingDetailModel?
 
@@ -36,11 +36,12 @@ struct MeetingDetailView: View {
     private var transcriptPane: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                ForEach(segments) { segment in
+                ForEach(segments, id: \.segment.id) { attributed in
                     TranscriptLineView(
-                        speaker: PanelView.speakerLabel(for: segment.source),
-                        isYou: segment.source == .mic,
-                        text: segment.text,
+                        speaker: attributed.speakerLabel
+                            ?? PanelView.speakerLabel(for: attributed.segment.source),
+                        isYou: attributed.segment.source == .mic,
+                        text: attributed.segment.text,
                         isVolatile: false
                     )
                 }
@@ -61,7 +62,7 @@ struct MeetingDetailView: View {
 
     private func loadTranscript() async {
         do {
-            segments = try await store.segments(for: meeting.id)
+            segments = try await store.attributedSegments(for: meeting.id)
         } catch {
             transcriptError = error.localizedDescription
         }
