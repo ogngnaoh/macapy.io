@@ -74,6 +74,14 @@ let package = Package(
         .target(name: "LatencyHarnessLib", dependencies: ["CaptureKit", "TranscribeKit"]),
         .executableTarget(name: "LatencyHarness", dependencies: ["LatencyHarnessLib"]),
         .testTarget(name: "CaptureKitTests", dependencies: ["CaptureKit"]),
+        // Model-gated suites live here (skip-not-fail without the ~129MB
+        // CoreML models — the LiveCredentials precedent); the session and
+        // attributor suites are pure and always run.
+        .testTarget(
+            name: "DiarizeKitTests",
+            dependencies: ["DiarizeKit", "CaptureKit"],
+            resources: [.copy("Fixtures")]
+        ),
         .testTarget(
             name: "TranscribeKitTests",
             dependencies: ["TranscribeKit", "CaptureKit"],
