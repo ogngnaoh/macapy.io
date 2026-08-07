@@ -30,11 +30,21 @@ struct MacapyDatabaseTests {
     }
 
     @Test func segmentsTableHasExpectedColumns() throws {
+        // `speakerId` joined the exact set in v4 (slice 4) — the disclosed,
+        // by-design extension of this pin.
         let database = try MacapyDatabase.inMemory()
         let columnNames = try database.dbWriter.read { db in
             try db.columns(in: "segments").map(\.name)
         }
-        #expect(Set(columnNames) == ["id", "meetingID", "source", "text", "tStart", "tEnd", "isFinal"])
+        #expect(Set(columnNames) == ["id", "meetingID", "source", "text", "tStart", "tEnd", "isFinal", "speakerId"])
+    }
+
+    @Test func speakersTableHasExpectedColumns() throws {
+        let database = try MacapyDatabase.inMemory()
+        let columnNames = try database.dbWriter.read { db in
+            try db.columns(in: "speakers").map(\.name)
+        }
+        #expect(Set(columnNames) == ["id", "meetingID", "label", "embedding"])
     }
 
     @Test func settingsTableHasExpectedColumns() throws {

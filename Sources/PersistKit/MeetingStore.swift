@@ -95,6 +95,75 @@ public actor MeetingStore {
         }
     }
 
+    // MARK: - Speakers (schema v4, slice-4 decision 3)
+
+    /// Inserts a meeting's diarized speakers in one transaction. Called once,
+    /// from `MeetingPipeline.stop()`'s persistence sweep.
+    public func insertSpeakers(_ speakers: [SpeakerRecord]) throws {
+        guard !speakers.isEmpty else { return }
+        try database.dbWriter.write { db in
+            for speaker in speakers {
+                try speaker.insert(db)
+            }
+        }
+    }
+
+    /// Batched post-hoc attribution: sets `segments.speakerId` for every
+    /// listed segment, one transaction. Runs after `flushAndStop()` (every
+    /// segment row provably inserted), so a missing row is a real
+    /// inconsistency — surfaced by the thrown error, not skipped.
+    public func assignSpeakers(
+        _ assignments: [Segment.ID: SpeakerRecord.ID],
+        meetingID: MeetingRecord.ID
+    ) throws {
+        guard !assignments.isEmpty else { return }
+        try database.dbWriter.write { db in
+            for (segmentID, speakerID) in assignments {
+                try db.execute(
+                    sql: """
+                        UPDATE segments SET speakerId = :speakerID
+                        WHERE id = :segmentID AND meetingID = :meetingID
+                        """,
+                    arguments: ["speakerID": speakerID, "segmentID": segmentID, "meetingID": meetingID]
+                )
+            }
+        }
+    }
+
+    /// A meeting's speakers, in label order (S1, S2, … — first-appearance
+    /// order by construction, since labels are assigned in that order).
+    public func speakers(for meetingID: MeetingRecord.ID) throws -> [SpeakerRecord] {
+        try database.dbWriter.read { db in
+            try SpeakerRecord
+                .filter(Column("meetingID") == meetingID)
+                .order(Column("label"))
+                .fetchAll(db)
+        }
+    }
+
+    /// Segments joined with their diarized speaker labels — the post-meeting
+    /// read path (meeting detail, the agent's transcript build).
+    public func attributedSegments(for meetingID: MeetingRecord.ID) throws -> [AttributedSegment] {
+        try database.dbWriter.read { db in
+            let labelsByID: [UUID: String] = try SpeakerRecord
+                .filter(Column("meetingID") == meetingID)
+                .fetchAll(db)
+                .reduce(into: [:]) { $0[$1.id] = $1.label }
+            return try SegmentRecord
+                .filter(Column("meetingID") == meetingID)
+                .order(Column("tStart"))
+                .fetchAll(db)
+                .compactMap { record in
+                    guard let segment = record.asSegment else { return nil }
+                    return AttributedSegment(
+                        segment: segment,
+                        speakerID: record.speakerId,
+                        speakerLabel: record.speakerId.flatMap { labelsByID[$0] }
+                    )
+                }
+        }
+    }
+
     private static func defaultTitle(for date: Date) -> String {
         let formatter = DateFormatter()
         formatter.dateStyle = .medium

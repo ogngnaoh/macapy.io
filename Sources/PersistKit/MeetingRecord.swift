@@ -58,6 +58,10 @@ struct SegmentRecord: Codable, FetchableRecord, PersistableRecord, Equatable {
     var tStart: Double
     var tEnd: Double
     var isFinal: Bool
+    /// Diarized speaker (schema v4); nil for mic segments and for
+    /// them-segments diarization couldn't attribute. Written after the fact
+    /// by `MeetingStore.assignSpeakers` — appends always insert NULL.
+    var speakerId: UUID?
 
     init(segment: Segment, meetingID: UUID) {
         self.id = segment.id
@@ -67,6 +71,7 @@ struct SegmentRecord: Codable, FetchableRecord, PersistableRecord, Equatable {
         self.tStart = segment.tStart
         self.tEnd = segment.tEnd
         self.isFinal = true
+        self.speakerId = nil
     }
 
     /// `nil` if `source` doesn't decode to a known `AudioSource` — defensive

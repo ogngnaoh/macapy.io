@@ -102,6 +102,25 @@ public struct MacapyDatabase: Sendable {
                 t.column("createdAt", .datetime).notNull()
             }
         }
+        // v4 (M2 slice 4): within-meeting speakers from diarization
+        // (SPEC §6.2). `segments.speakerId` is nullable — mic segments and
+        // them-segments diarization couldn't attribute stay NULL — and its FK
+        // is `.setNull`, never cascade: deleting a speaker row must never
+        // delete transcript rows. Deleting a meeting cascades its speakers.
+        migrator.registerMigration("v4-speakers") { db in
+            try db.create(table: "speakers") { t in
+                t.column("id", .text).notNull().primaryKey()
+                t.column("meetingID", .text).notNull()
+                    .indexed()
+                    .references("meetings", onDelete: .cascade)
+                t.column("label", .text).notNull()
+                t.column("embedding", .blob)
+            }
+            try db.alter(table: "segments") { t in
+                t.add(column: "speakerId", .text)
+                    .references("speakers", onDelete: .setNull)
+            }
+        }
         return migrator
     }
 }
