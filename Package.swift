@@ -17,7 +17,12 @@ let package = Package(
     ],
     dependencies: [
         // PersistKit's one external dependency (SPEC §5 sanctioned; slice 4).
-        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.1")
+        .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.1"),
+        // Diarization (SPEC §5 sanctioned; M2 slice 4). Vetting record in
+        // docs/02-understanding/slice-04-diarization.md — Apache-2.0 SDK,
+        // CC-BY-4.0 CoreML models (~129MB) fetched via consent-gated download,
+        // one build-time binary xcframework (NemoTextProcessing).
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.0"),
     ],
     targets: [
         .target(name: "CaptureKit"),
@@ -55,6 +60,14 @@ let package = Package(
             // "machine voice" face, registered at startup by FontRegistrar.
             resources: [.copy("Resources/Fonts")]
         ),
+        // Diarization behind `DiarizationEngine` (M2 slice-4 decision 2):
+        // FluidAudio stays quarantined here — TranscribeKit remains pure
+        // Speech-framework, and DiarizeKit deliberately does NOT depend on
+        // PersistKit (it emits value types; MeetingPipeline writes the stores).
+        .target(name: "DiarizeKit", dependencies: [
+            "CaptureKit",
+            .product(name: "FluidAudio", package: "FluidAudio"),
+        ]),
         // Shared by the LatencyHarness executable and G1BudgetTests
         // (slice-05 doc layout) — one `runHarness(fixtureURL:)` code path,
         // two configs/fixtures/consumers.
