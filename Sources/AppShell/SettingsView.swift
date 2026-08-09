@@ -63,6 +63,7 @@ private struct SettingsBody<Content: View>: View {
 
 struct GeneralSettingsView: View {
     let coordinator: AppShellCoordinator
+    @State private var deleteModel: DeleteEverythingModel?
 
     var body: some View {
         SettingsBody {
@@ -92,6 +93,25 @@ struct GeneralSettingsView: View {
                     "Labels other participants S1, S2, … in the transcript. "
                         + "Runs entirely on this Mac once the models are installed.")
             }
+            FormRow(label: "") {
+                // Delete-everything (FR-013; slice-05 doc decision 7).
+                // Disabled while capturing — the coordinator also refuses,
+                // this just says so up front.
+                Button("Delete all meeting data…") {
+                    deleteModel = DeleteEverythingModel(
+                        performDelete: { await coordinator.deleteAllMeetingData() })
+                }
+                .buttonStyle(DestructiveButtonStyle())
+                .disabled(coordinator.session.isCapturing)
+            }
+            if coordinator.session.isCapturing {
+                FormRow(label: "") {
+                    FormNote("Unavailable during a meeting — stop capture first.")
+                }
+            }
+        }
+        .sheet(item: $deleteModel) { model in
+            DeleteEverythingSheet(model: model, onDismiss: { deleteModel = nil })
         }
     }
 }

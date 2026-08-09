@@ -55,6 +55,99 @@ struct MacapyDatabaseTests {
         #expect(Set(columnNames) == ["key", "value"])
     }
 
+    @Test func artifactsTableHasExpectedColumns() throws {
+        // `searchText` joined the exact set in v5 (slice 5) — the disclosed,
+        // by-design extension of this pin.
+        let database = try MacapyDatabase.inMemory()
+        let columnNames = try database.dbWriter.read { db in
+            try db.columns(in: "artifacts").map(\.name)
+        }
+        #expect(Set(columnNames) == ["id", "meetingID", "kind", "payload", "status", "createdAt", "searchText"])
+    }
+
+    // MARK: - v5-search (slice 5, check 1)
+
+    @Test func v5CreatesThreeFTSTablesAndStartedAtIndex() throws {
+        let database = try MacapyDatabase.inMemory()
+        let (fts, indexed) = try database.dbWriter.read { db in
+            (
+                (
+                    try db.tableExists("meetings_fts"),
+                    try db.tableExists("segments_fts"),
+                    try db.tableExists("artifacts_fts")
+                ),
+                try db.indexes(on: "meetings").contains { $0.columns == ["startedAt"] }
+            )
+        }
+        #expect(fts.0)
+        #expect(fts.1)
+        #expect(fts.2)
+        #expect(indexed)
+    }
+
+    /// A v4 database with pre-existing rows — title, segments, and legacy
+    /// artifacts of every kind (no `searchText` column yet) — migrates to v5
+    /// with every pre-existing row searchable and `searchText` backfilled
+    /// per kind by `ArtifactSearchText.derive`.
+    @Test func v4DatabaseMigratesWithEveryPreExistingRowSearchable() throws {
+        let queue = try DatabaseQueue()
+        try MacapyDatabase.migrator.migrate(queue, upTo: "v4-speakers")
+        let meetingID = UUID()
+        try queue.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO meetings (id, title, startedAt, endedAt, status, ephemeral)
+                    VALUES (?, 'Quarterly roadmap sync', '2026-08-01 10:00:00', NULL, 'ended', 0)
+                    """,
+                arguments: [meetingID])
+            try db.execute(
+                sql: """
+                    INSERT INTO segments (id, meetingID, source, text, tStart, tEnd, isFinal)
+                    VALUES (?, ?, 'them', 'the flux capacitor shipped early', 0.0, 2.0, 1)
+                    """,
+                arguments: [UUID(), meetingID])
+            for (kind, payload) in [
+                ("summary", #"{"text":"we shipped the capacitor"}"#),
+                ("decision", #"{"text":"freeze the API surface"}"#),
+                ("action_item", #"{"title":"write the runbook","owner":"Dana","deadline":"Friday"}"#),
+            ] {
+                try db.execute(
+                    sql: """
+                        INSERT INTO artifacts (id, meetingID, kind, payload, status, createdAt)
+                        VALUES (?, ?, ?, ?, 'draft', '2026-08-01 11:00:00')
+                        """,
+                    arguments: [UUID(), meetingID, kind, payload])
+            }
+        }
+
+        try MacapyDatabase.migrator.migrate(queue)
+
+        let (titleHits, segmentHits, artifactHits, searchTexts) = try queue.read { db in
+            (
+                try Int.fetchOne(
+                    db, sql: "SELECT count(*) FROM meetings_fts WHERE meetings_fts MATCH 'roadmap'") ?? 0,
+                try Int.fetchOne(
+                    db, sql: "SELECT count(*) FROM segments_fts WHERE segments_fts MATCH 'capacitor'") ?? 0,
+                try Int.fetchOne(
+                    db,
+                    sql: """
+                        SELECT count(*) FROM artifacts_fts
+                        WHERE artifacts_fts MATCH ?
+                        """,
+                    arguments: ["capacitor OR freeze OR runbook OR Dana OR Friday"]) ?? 0,
+                try String.fetchAll(db, sql: "SELECT searchText FROM artifacts ORDER BY kind")
+            )
+        }
+        #expect(titleHits == 1)
+        #expect(segmentHits == 1)
+        #expect(artifactHits == 3)
+        #expect(searchTexts == [
+            "write the runbook Dana Friday",
+            "freeze the API surface",
+            "we shipped the capacitor",
+        ])
+    }
+
     @Test func migratingTwiceIsANoOp() throws {
         // Applying the same migrator to an already-migrated database (as
         // `onDisk(at:)` would on every app launch) must not throw or duplicate.

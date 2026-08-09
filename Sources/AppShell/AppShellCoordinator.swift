@@ -37,6 +37,8 @@ final class AppShellCoordinator {
     @ObservationIgnored private var cachedSettingsStore: SettingsStore?
     @ObservationIgnored private var cachedSpendLedger: SpendLedgerStore?
     @ObservationIgnored private var cachedArtifactStore: ArtifactStore?
+    @ObservationIgnored private var cachedSearchStore: SearchStore?
+    @ObservationIgnored private var cachedHistorySearchModel: HistorySearchModel?
     @ObservationIgnored private var cachedPostMeetingAgent: PostMeetingAgent?
     @ObservationIgnored private var cachedProviderSettingsModel: ProviderSettingsModel?
     @ObservationIgnored private var hotKey: HotKey?
@@ -299,6 +301,54 @@ final class AppShellCoordinator {
             log.error("failed to open artifact store: \(error.localizedDescription)")
             return nil
         }
+    }
+
+    /// FTS search over the same connection as history (slice-05 doc decision
+    /// 4). `nil` (logged) when the database can't open — the search field
+    /// then returns empty groups rather than erroring.
+    func searchStore() -> SearchStore? {
+        do {
+            if let cachedSearchStore { return cachedSearchStore }
+            let opened = SearchStore(database: try openOrReuseDatabase())
+            cachedSearchStore = opened
+            return opened
+        } catch {
+            log.error("failed to open search store: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// The History window's model, built once so selection and the active
+    /// query survive the window closing and reopening; `load()` re-fetches
+    /// on every appearance (fetch-on-appear stays the design).
+    func historySearchModel() -> HistorySearchModel? {
+        if let cachedHistorySearchModel { return cachedHistorySearchModel }
+        guard let meetings = historyStore() else { return nil }
+        let model = HistorySearchModel(meetings: meetings, search: searchStore())
+        cachedHistorySearchModel = model
+        return model
+    }
+
+    /// Delete-everything (FR-013, slice-05 doc decision 8): refused while a
+    /// meeting is capturing — the live pipeline writes through the same
+    /// database, and "capture always wins" is the standing rule. Returns
+    /// whether deletion ran. Meeting data only; Keychain and settings
+    /// survive (author ruling 2026-08-07).
+    @discardableResult
+    func deleteAllMeetingData() async -> Bool {
+        guard !session.isCapturing else {
+            log.error("delete-everything refused: a meeting is capturing")
+            return false
+        }
+        guard let store = historyStore() else { return false }
+        do {
+            try await store.deleteAllUserData()
+        } catch {
+            log.error("delete-everything failed: \(error.localizedDescription)")
+            return false
+        }
+        await historySearchModel()?.load()
+        return true
     }
 
     /// The post-meeting agent, wired the only way shipping code builds a

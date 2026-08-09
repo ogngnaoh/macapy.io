@@ -121,6 +121,54 @@ public struct MacapyDatabase: Sendable {
                     .references("speakers", onDelete: .setNull)
             }
         }
+        // v5 (M2 slice 5): full-text search over titles, transcripts, and
+        // artifacts (PRD FR-010; slice-05 doc decision 1). Three *synchronized
+        // external-content* FTS5 tables: GRDB installs `__<fts>_ai/_ad/_au`
+        // SQL triggers on the content tables and backfills pre-existing rows
+        // via FTS5 `rebuild`. Because the triggers are SQL-level, FK-cascade
+        // deletes (delete a meeting → its segments/artifacts go) scrub the
+        // index with zero application code. Tokenizer: default unicode61, no
+        // stemming — literal-token semantics are predictable and assertable.
+        // `content_rowid` is the implicit rowid (our UUID PKs are BLOBs);
+        // queries join back through rowid to recover UUIDs.
+        migrator.registerMigration("v5-search") { db in
+            // Derived search text (decision 2): per-kind payload text, never
+            // raw JSON. Backfilled here for pre-v5 rows *before* the FTS
+            // table's rebuild indexes them; new rows are maintained by
+            // `ArtifactStore.insertDrafts`.
+            try db.alter(table: "artifacts") { t in
+                t.add(column: "searchText", .text).notNull().defaults(to: "")
+            }
+            let legacyRows = try Row.fetchAll(db, sql: "SELECT id, kind, payload FROM artifacts")
+            for row in legacyRows {
+                let id: UUID = row["id"]
+                try db.execute(
+                    sql: "UPDATE artifacts SET searchText = ? WHERE id = ?",
+                    arguments: [ArtifactSearchText.derive(kind: row["kind"], payload: row["payload"]), id]
+                )
+            }
+
+            try db.create(virtualTable: "meetings_fts", using: FTS5()) { t in
+                t.synchronize(withTable: "meetings")
+                t.tokenizer = .unicode61()
+                t.column("title")
+            }
+            try db.create(virtualTable: "segments_fts", using: FTS5()) { t in
+                t.synchronize(withTable: "segments")
+                t.tokenizer = .unicode61()
+                t.column("text")
+            }
+            try db.create(virtualTable: "artifacts_fts", using: FTS5()) { t in
+                t.synchronize(withTable: "artifacts")
+                t.tokenizer = .unicode61()
+                t.column("searchText")
+            }
+
+            // History list + summaries order by `startedAt`; at the seeded
+            // 10⁵-row scale the scan was already cheap, but the index makes
+            // the ordering cost independent of history size (check 1 pins it).
+            try db.create(indexOn: "meetings", columns: ["startedAt"])
+        }
         return migrator
     }
 }

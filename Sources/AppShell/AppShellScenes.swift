@@ -25,8 +25,10 @@ public struct AppShellScenes: Scene {
 
         Window("History", id: WindowID.history) {
             Group {
-                if let store = coordinator.historyStore() {
+                if let model = coordinator.historySearchModel(),
+                   let store = coordinator.historyStore() {
                     HistoryView(
+                        model: model,
                         store: store,
                         makeDetailModel: { coordinator.meetingDetailModel(for: $0) }
                     )

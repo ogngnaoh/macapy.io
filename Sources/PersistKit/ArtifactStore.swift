@@ -14,6 +14,11 @@ public struct ArtifactRecord: Codable, Sendable, Identifiable, Equatable {
     public var payload: String
     public var status: String
     public var createdAt: Date
+    /// Derived per-kind searchable text (schema v5, slice-05 doc decision 2).
+    /// Computed from kind + payload at construction — never set by callers —
+    /// so the row and its FTS index entry can't disagree. `setStatus` uses
+    /// raw SQL and never touches it (pinned by slice-5 check 12).
+    public private(set) var searchText: String
 
     public init(
         id: UUID,
@@ -29,6 +34,7 @@ public struct ArtifactRecord: Codable, Sendable, Identifiable, Equatable {
         self.payload = payload
         self.status = status
         self.createdAt = createdAt
+        self.searchText = ArtifactSearchText.derive(kind: kind, payload: payload)
     }
 }
 

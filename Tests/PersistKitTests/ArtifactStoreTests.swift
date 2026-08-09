@@ -66,6 +66,7 @@ struct ArtifactStoreTests {
         let inserted = try await store.insertDrafts(try drafts(), meetingID: meeting.id)
 
         let before = try dump(database)
+        let hitsBefore = try searchHits(database)
         try await store.setStatus(.approved, id: inserted[1].id)
         let afterApprove = try dump(database)
 
@@ -76,6 +77,25 @@ struct ArtifactStoreTests {
         try await store.setStatus(.rejected, id: inserted[2].id)
         expected["artifacts"]![key(for: inserted[2].id)]!["status"] = Self.describe("rejected".databaseValue)
         #expect(try dump(database) == expected)
+
+        // Slice-5 check 12: flips are index-inert — `searchText` is covered
+        // by the row-diff above; the FTS hits themselves are pinned here.
+        #expect(try searchHits(database) == hitsBefore)
+        #expect(!hitsBefore.isEmpty)
+    }
+
+    /// Every artifact rowid matching this suite's payload vocabulary, in
+    /// rowid order — a stable fingerprint of the artifacts FTS index.
+    private func searchHits(_ database: MacapyDatabase) throws -> [Int64] {
+        try database.dbWriter.read { db in
+            try Int64.fetchAll(
+                db,
+                sql: """
+                    SELECT rowid FROM artifacts_fts
+                    WHERE artifacts_fts MATCH 'plan OR cut OR runbook OR Thursday'
+                    ORDER BY rowid
+                    """)
+        }
     }
 
     @Test func settingStatusForAnUnknownIDChangesNothing() async throws {
@@ -114,43 +134,18 @@ struct ArtifactStoreTests {
         #expect(try await store.artifacts(for: meeting.id).isEmpty)
     }
 
-    /// Every row of every user table, as `table → primary key → column →
-    /// value`. Blobs (GRDB stores `UUID` as 16 raw bytes) render as hex so
-    /// keys are unique and the row-diff assertion reads as data.
+    // Row-diff plumbing lives in the shared DatabaseDump helper since slice 5
+    // (the deletion oracles use it too); these wrappers keep the existing
+    // assertions reading as before.
     private func dump(_ database: MacapyDatabase) throws -> [String: [String: [String: String]]] {
-        try database.dbWriter.read { db in
-            let tables = try String.fetchAll(
-                db,
-                sql: """
-                    SELECT name FROM sqlite_master
-                    WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'grdb_migrations'
-                    """)
-            var dump: [String: [String: [String: String]]] = [:]
-            for table in tables {
-                var rows: [String: [String: String]] = [:]
-                for row in try Row.fetchAll(db, sql: "SELECT * FROM \(table)") {
-                    var columns: [String: String] = [:]
-                    for (column, value) in row {
-                        columns[column] = Self.describe(value.databaseValue)
-                    }
-                    let key = columns["id"] ?? columns["key"] ?? String(describing: row)
-                    rows[key] = columns
-                }
-                dump[table] = rows
-            }
-            return dump
-        }
+        try DatabaseDump.dump(database)
     }
 
-    /// The dump key for a row GRDB wrote with this UUID id.
     private func key(for id: UUID) -> String {
-        Self.describe(id.databaseValue)
+        DatabaseDump.key(for: id)
     }
 
     private static func describe(_ value: DatabaseValue) -> String {
-        if case .blob(let data) = value.storage {
-            return data.map { String(format: "%02x", $0) }.joined()
-        }
-        return String(describing: value)
+        DatabaseDump.describe(value)
     }
 }

@@ -2,6 +2,13 @@ import Foundation
 import GRDB
 import TranscribeKit
 
+/// `MeetingStore`'s own failure modes (beyond what GRDB throws).
+public enum MeetingStoreError: Error, Equatable {
+    /// `renameMeeting` with an empty or whitespace-only title (slice-5
+    /// check 5: the UI reverts instead of storing an unsearchable blank).
+    case emptyTitle
+}
+
 /// Owns one database's meeting/segment reads and writes. Actor-isolated so
 /// concurrent callers (the pipeline's `SegmentWriter`, a history view's fetch)
 /// serialize safely; GRDB's own writer queue is a second layer of safety
@@ -92,6 +99,101 @@ public actor MeetingStore {
     public func deleteMeeting(id: MeetingRecord.ID) throws {
         try database.dbWriter.write { db in
             _ = try MeetingRecord.deleteOne(db, id: id)
+        }
+    }
+
+    /// One history-list row (slice-05 doc decision, per design/04): the
+    /// meeting plus the counts its summary line renders — duration ·
+    /// speaker count · artifact count.
+    public struct MeetingSummary: Decodable, FetchableRecord, Sendable, Equatable, Identifiable {
+        public var id: UUID
+        public var title: String
+        public var startedAt: Date
+        public var endedAt: Date?
+        public var status: String
+        public var ephemeral: Bool
+        public var speakerCount: Int
+        public var artifactCount: Int
+
+        /// `nil` while the meeting is still active (no `endedAt` yet).
+        public var duration: TimeInterval? {
+            endedAt.map { $0.timeIntervalSince(startedAt) }
+        }
+
+        public var hasEnded: Bool { status == MeetingRecord.endedStatus }
+
+        /// The summary's meeting fields as a `MeetingRecord` — for callers
+        /// (meeting detail) whose API speaks records.
+        public var asRecord: MeetingRecord {
+            MeetingRecord(
+                id: id, title: title, startedAt: startedAt, endedAt: endedAt,
+                status: status, ephemeral: ephemeral)
+        }
+    }
+
+    /// All meetings with their summary counts, most recently started first —
+    /// the history list's one query. Ephemeral rows are filtered even though
+    /// none can exist in the on-disk database (they live in per-meeting
+    /// in-memory databases) — the filter makes the surface's contract
+    /// independent of that construction.
+    public func meetingSummaries() throws -> [MeetingSummary] {
+        try database.dbWriter.read { db in
+            try MeetingSummary.fetchAll(
+                db,
+                sql: """
+                    SELECT m.*,
+                        (SELECT count(*) FROM speakers sp WHERE sp.meetingID = m.id) AS speakerCount,
+                        (SELECT count(*) FROM artifacts a WHERE a.meetingID = m.id) AS artifactCount
+                    FROM meetings m
+                    WHERE m.ephemeral = 0
+                    ORDER BY m.startedAt DESC
+                    """)
+        }
+    }
+
+    /// Renames a meeting (slice-05 doc decision 9 — auto-generated titles
+    /// made title search near-meaningless without this). The plain UPDATE
+    /// re-indexes the title through the FTS `_au` trigger for free. An
+    /// empty or whitespace-only title is rejected; stored titles are
+    /// trimmed. A no-op (no throw) if the id matches no row.
+    public func renameMeeting(id: MeetingRecord.ID, title: String) throws {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw MeetingStoreError.emptyTitle
+        }
+        try database.dbWriter.write { db in
+            try db.execute(
+                sql: "UPDATE meetings SET title = ? WHERE id = ?",
+                arguments: [trimmed, id])
+        }
+    }
+
+    /// Delete-everything (FR-013; slice-05 doc decision 8) — **meeting data
+    /// only** (author ruling 2026-08-07): Keychain credentials and `settings`
+    /// rows survive. One transaction deletes every meeting (segments,
+    /// artifacts, speakers, and metered spend cascade via their FKs; the FTS
+    /// `_ad` triggers scrub all three indexes) plus the NULL-meetingID spend
+    /// rows the cascade can't reach. Afterwards `VACUUM` rewrites the file so
+    /// deleted content doesn't linger in free pages, and a TRUNCATE
+    /// checkpoint empties the WAL — that pair is what makes the byte-grep
+    /// residue oracle (check 13) possible.
+    public func deleteAllUserData() throws {
+        try database.dbWriter.write { db in
+            try db.execute(sql: "DELETE FROM meetings")
+            try db.execute(sql: "DELETE FROM spend_ledger")
+            // The `_ad` triggers only *mark* index entries deleted — the FTS5
+            // segment blobs in `*_fts_data` still contain the dead tokens
+            // until a merge. `optimize` collapses each index to nothing
+            // (zero live docs remain), so VACUUM below has no token bytes
+            // left to copy.
+            for fts in ["meetings_fts", "segments_fts", "artifacts_fts"] {
+                try db.execute(sql: "INSERT INTO \(fts)(\(fts)) VALUES('optimize')")
+            }
+        }
+        try database.dbWriter.writeWithoutTransaction { db in
+            try db.execute(sql: "VACUUM")
+            // In-memory databases have no WAL; the checkpoint is a no-op there.
+            try db.checkpoint(.truncate)
         }
     }
 

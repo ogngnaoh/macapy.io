@@ -2,7 +2,8 @@ import PersistKit
 import SwiftUI
 import TranscribeKit
 
-/// Meeting detail (design/05-meeting-detail.html): transcript replay on the
+/// Meeting detail (design/05-meeting-detail.html): header bar (click-to-edit
+/// title, meta line, Delete…), transcript replay with minute dividers on the
 /// left, artifacts pane on the right — drafts under review, or the pending /
 /// setup / cap-halt states when there are no rows yet.
 struct MeetingDetailView: View {
@@ -11,18 +12,36 @@ struct MeetingDetailView: View {
     /// `nil` model ⇒ the pane shows its unavailable state (previews, or a
     /// database that failed to open).
     let makeModel: @MainActor (MeetingRecord) -> MeetingDetailModel?
+    /// Passage deep-link (slice-05 doc decision 5): scroll to this segment
+    /// and wash it in `signalSoft` briefly, then report it consumed.
+    var targetSegmentID: UUID?
+    var onTargetConsumed: () -> Void = {}
+    /// Rename commit; false (empty title) reverts the editor. `nil` disables
+    /// editing (previews).
+    var onRename: ((String) async -> Bool)?
+    /// Per-meeting delete (slice-05 doc decision 7); the button is hidden
+    /// while the meeting is active, and absent when no closure is wired.
+    var onDelete: (() async -> Void)?
 
     @State private var segments: [AttributedSegment] = []
     @State private var transcriptError: String?
     @State private var model: MeetingDetailModel?
+    @State private var highlightedSegmentID: UUID?
+    @State private var isEditingTitle = false
+    @State private var titleDraft = ""
+    @State private var confirmingDelete = false
+    @FocusState private var titleFocused: Bool
 
     var body: some View {
-        HStack(spacing: 0) {
-            transcriptPane
-                .frame(maxWidth: .infinity)
-            Divider().overlay(DesignTokens.hairline)
-            ArtifactsPane(model: model)
-                .frame(minWidth: 260, idealWidth: 330, maxWidth: 400)
+        VStack(spacing: 0) {
+            headerBar
+            HStack(spacing: 0) {
+                transcriptPane
+                    .frame(maxWidth: .infinity)
+                Divider().overlay(DesignTokens.hairline)
+                ArtifactsPane(model: model)
+                    .frame(minWidth: 260, idealWidth: 330, maxWidth: 400)
+            }
         }
         .navigationTitle(meeting.title)
         .task(id: meeting.id) {
@@ -33,21 +52,96 @@ struct MeetingDetailView: View {
         }
     }
 
+    // MARK: - Header (the mockup's titlebar row)
+
+    private var headerBar: some View {
+        HStack(spacing: DesignTokens.Space.s2) {
+            if isEditingTitle {
+                TextField("Meeting title", text: $titleDraft)
+                    .textFieldStyle(.plain)
+                    .font(UIType.bodySemibold)
+                    .foregroundStyle(DesignTokens.text)
+                    .focused($titleFocused)
+                    .frame(maxWidth: 320)
+                    .onSubmit { Task { await commitRename() } }
+                    .onExitCommand { isEditingTitle = false }
+                    .onChange(of: titleFocused) { _, focused in
+                        if !focused && isEditingTitle {
+                            Task { await commitRename() }
+                        }
+                    }
+            } else {
+                Button {
+                    guard onRename != nil else { return }
+                    titleDraft = meeting.title
+                    isEditingTitle = true
+                    titleFocused = true
+                } label: {
+                    Text(meeting.title)
+                        .font(UIType.bodySemibold)
+                        .foregroundStyle(DesignTokens.text)
+                        .lineLimit(1)
+                }
+                .buttonStyle(.plain)
+                .disabled(onRename == nil)
+                .accessibilityLabel("Meeting title: \(meeting.title). Click to rename")
+            }
+            Text(HistoryRowFormat.detailMetaLine(startedAt: meeting.startedAt, endedAt: meeting.endedAt))
+                .font(MachineType.number())
+                .foregroundStyle(DesignTokens.textTertiary)
+            Spacer()
+            if meeting.hasEnded, onDelete != nil {
+                Button("Delete…") { confirmingDelete = true }
+                    .buttonStyle(SubtleButtonStyle())
+                    .accessibilityLabel("Delete meeting")
+            }
+        }
+        .padding(.horizontal, DesignTokens.Space.s4)
+        .padding(.vertical, DesignTokens.Space.s2)
+        .background(DesignTokens.surface)
+        .overlay(alignment: .bottom) { Divider().overlay(DesignTokens.hairline) }
+        .confirmationDialog(
+            "Delete “\(meeting.title)”?",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Meeting", role: .destructive) {
+                Task { await onDelete?() }
+            }
+        } message: {
+            Text("Its transcript, artifacts, and spend records are removed from this Mac. This can't be undone.")
+        }
+    }
+
+    private func commitRename() async {
+        isEditingTitle = false
+        guard let onRename else { return }
+        // An empty title is rejected downstream; the editor simply reverts
+        // (check 5's UI half — nothing is stored).
+        _ = await onRename(titleDraft)
+    }
+
+    // MARK: - Transcript
+
     private var transcriptPane: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                ForEach(segments, id: \.segment.id) { attributed in
-                    TranscriptLineView(
-                        speaker: attributed.speakerLabel
-                            ?? PanelView.speakerLabel(for: attributed.segment.source),
-                        isYou: attributed.segment.source == .mic,
-                        text: attributed.segment.text,
-                        isVolatile: false
-                    )
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(TranscriptRows.build(segments: segments)) { row in
+                        transcriptRow(row)
+                    }
+                }
+                .padding(.vertical, DesignTokens.Space.s3)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onChange(of: targetSegmentID) { _, target in
+                scrollToTarget(target, proxy: proxy)
+            }
+            .onChange(of: segments.isEmpty) { _, isEmpty in
+                if !isEmpty {
+                    scrollToTarget(targetSegmentID, proxy: proxy)
                 }
             }
-            .padding(.vertical, DesignTokens.Space.s3)
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .overlay {
             if segments.isEmpty {
@@ -56,6 +150,47 @@ struct MeetingDetailView: View {
                 } else {
                     EmptyStateView(title: "No transcript", message: "This meeting has no captured lines.")
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func transcriptRow(_ row: TranscriptRows.Row) -> some View {
+        switch row {
+        case .minuteMark(let minute):
+            Text(TranscriptRows.timestampLabel(minute: minute))
+                .font(MachineType.number(8.5))
+                .foregroundStyle(DesignTokens.textTertiary)
+                .padding(.horizontal, DesignTokens.Space.s3)
+                .padding(.top, 6)
+                .padding(.bottom, 2)
+                .accessibilityLabel("Minute \(TranscriptRows.timestampLabel(minute: minute))")
+        case .line(let attributed):
+            TranscriptLineView(
+                speaker: attributed.speakerLabel
+                    ?? PanelView.speakerLabel(for: attributed.segment.source),
+                isYou: attributed.segment.source == .mic,
+                text: attributed.segment.text,
+                isVolatile: false
+            )
+            .background(
+                highlightedSegmentID == attributed.segment.id ? DesignTokens.signalSoft : .clear
+            )
+            .id(attributed.segment.id)
+        }
+    }
+
+    /// The shipped PanelView scroll mechanism (`ScrollViewReader` + `.id()`),
+    /// pointed at the deep-link target, plus the brief `signalSoft` wash.
+    private func scrollToTarget(_ target: UUID?, proxy: ScrollViewProxy) {
+        guard let target, segments.contains(where: { $0.segment.id == target }) else { return }
+        proxy.scrollTo(target, anchor: .center)
+        highlightedSegmentID = target
+        onTargetConsumed()
+        Task {
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            if highlightedSegmentID == target {
+                withAnimation(.easeOut(duration: 0.4)) { highlightedSegmentID = nil }
             }
         }
     }
@@ -251,31 +386,8 @@ private struct ReviewActions: View {
 
 // MARK: - Pane furniture
 
-/// `.art-head` — mono section label, optional status chip, optional G3
-/// readout pushed to the trailing edge.
-private struct SectionHead: View {
-    let title: String
-    var chip: Chip?
-    var draftedIn: Double?
-
-    var body: some View {
-        HStack(spacing: DesignTokens.Space.s2) {
-            Text(title)
-                .font(MachineType.label())
-                .textCase(.uppercase)
-                .tracking(0.6)
-                .foregroundStyle(DesignTokens.textSecondary)
-            if let chip { chip }
-            if let draftedIn {
-                Spacer(minLength: DesignTokens.Space.s2)
-                Text("drafted in \(Int(draftedIn.rounded()))s")
-                    .font(MachineType.label())
-                    .foregroundStyle(DesignTokens.textTertiary)
-                    .accessibilityLabel("Drafted in \(Int(draftedIn.rounded())) seconds")
-            }
-        }
-    }
-}
+// SectionHead moved to Design/SearchComponents.swift in slice 5 — the search
+// results' group headers share it.
 
 /// `.art-item` — one raised card.
 private struct ArtifactCard<Content: View>: View {

@@ -1,6 +1,6 @@
 # Slice 5 — History & Search + Deletion + Rename (completes FR-013)
 
-**Status:** pending (implements after slice 4 ships — passage rows and speaker counts consume its labels; migration order v4 → v5)
+**Status:** SHIPPED 2026-08-09 (all 17 checks green with evidence; fresh-context verifier confirmed each independently)
 **Plan written:** 2026-07-17; **rewritten 2026-08-07** (joint re-plan of slices 4+5 per handoff; all checks are now deterministic automated oracles, user-reviewed at plan approval 2026-08-07)
 **References:** ../../SPEC.md §6.2 (deletion-cascade invariant), §5 (scale: millions of segment rows); PRD FR-010, FR-013, Story 5 (search < 1 s); ./milestone.md exit criterion 5
 
@@ -52,17 +52,22 @@ Former user-live checks 8/9 are re-expressed by 9, 10, 15, 16; their "feels righ
 ## Checklist
 
 - [x] Acceptance checks user-reviewed (original set at M2 kickoff gate 2026-07-24; **rewritten set reviewed at joint re-plan approval 2026-08-07**)
-- [ ] Migration `v5-search` (+ `searchText` backfill + 3 FTS tables + `startedAt` index) + `ArtifactSearchText` + `ArtifactStore` maintenance (TDD: checks 1, 12)
-- [ ] Row-diff `dump()` helper promoted to shared `DatabaseDump.swift`, filter extended for FTS shadow tables; existing row-diff tests green
-- [ ] `SearchStore` + query layer (checks 2, 3, 4)
-- [ ] `MeetingStore.meetingSummaries()/renameMeeting`; `deleteAllUserData()` (checks 5, 11, 13)
-- [ ] `SearchFixtureSeeder` + `SearchScaleTests` (checks 6, 7, 8)
-- [ ] UI: `HistorySearchModel`, `SearchComponents` (SearchField/HistoryRow/PassageRow/SnippetTextView/SubtleButtonStyle/DestructiveButtonStyle; promote SectionHead), HistoryView search + summary rows, MeetingDetailView dividers/scroll-to/meta line/rename/Delete… (checks 9, 10)
-- [ ] Deletion wiring: coordinator methods + guards, Settings destructive row + `DeleteEverythingSheet`/`DeleteEverythingModel`, confirmation dialog, post-delete refresh; design/06 sheet card added (checks 14, 16)
-- [ ] End-to-end: finalize-then-search; ephemeral FTS non-residue (checks 8b, 15)
-- [ ] Verifier re-runs checks 1–17 with evidence
-- [ ] Ship rituals: slice table, integration notes, handoff, commit — and milestone close-out follows
+- [x] Migration `v5-search` (+ `searchText` backfill + 3 FTS tables + `startedAt` index) + `ArtifactSearchText` + `ArtifactStore` maintenance (TDD: checks 1, 12)
+- [x] Row-diff `dump()` helper promoted to shared `DatabaseDump.swift`, filter extended for FTS shadow tables; existing row-diff tests green
+- [x] `SearchStore` + query layer (checks 2, 3, 4)
+- [x] `MeetingStore.meetingSummaries()/renameMeeting`; `deleteAllUserData()` (checks 5, 11, 13)
+- [x] `SearchFixtureSeeder` + `SearchScaleTests` (checks 6, 7, 8)
+- [x] UI: `HistorySearchModel`, `SearchComponents` (SearchField/HistoryRow/PassageRow/SnippetTextView/SubtleButtonStyle/DestructiveButtonStyle; promote SectionHead), HistoryView search + summary rows, MeetingDetailView dividers/scroll-to/meta line/rename/Delete… (checks 9, 10)
+- [x] Deletion wiring: coordinator methods + guards, Settings destructive row + `DeleteEverythingSheet`/`DeleteEverythingModel`, confirmation dialog, post-delete refresh; design/06 sheet card added (checks 14, 16)
+- [x] End-to-end: finalize-then-search; ephemeral FTS non-residue (checks 8b, 15)
+- [x] Verifier re-runs checks 1–17 with evidence (fresh-context subagent, 2026-08-09: all 17 PASS; full report reproduced no gaps — one measurement-granularity note, Notes 4)
+- [x] Ship rituals: slice table, integration notes, handoff, commit — and milestone close-out follows
 
 ## Notes / dead ends
 
-(append as work proceeds)
+1. **`bm25()` refuses aggregate context, and SQLite's flattener follows you into subqueries.** `min(bm25(t))` under GROUP BY fails with "unable to use function bm25 in the requested context", and wrapping the ranked SELECT in a plain subquery still fails — the query flattener merges it back into the aggregate. `WITH ranked AS MATERIALIZED (…)` blocks flattening; that's why the two per-meeting count queries in `SearchStore` look the way they do.
+2. **FTS5 `delete` marks are not deletion.** The first byte-grep run of check 13 found canary tokens alive in `segments_fts_data` *after* the cascade delete, VACUUM, and TRUNCATE checkpoint: the `_ad` triggers only write delete-markers into new index segments; the original segment blobs keep the dead tokens until a merge. `INSERT INTO <fts>(<fts>) VALUES('optimize')` inside the delete transaction collapses each index (zero live docs ⇒ empty), and only then does VACUUM have nothing to copy. `deleteAllUserData()` carries the explanation in code.
+3. **Fixture-needle placement must respect the kind cycle.** The artifact needle was first planted at seeder index 30 — which `index % 3` makes a *summary*, so the action-item branch never fired and the needle vanished (caught by the scale test's exact-count oracle on first run). Needle now at 32 with the modulus spelled out in a comment.
+4. **Check 7's warm-suite budget is asserted as two ≤ 2.5 s halves** (one per scale test), not one whole-suite wall measurement — flagged by the verifier as a granularity nuance, accepted: measured warm bodies are ≈ 0.36 s + 0.10 s, an order of magnitude inside budget. Cold build measures 4.4–4.5 s against the 60 s ceiling; needle search ≈ 2–4 ms and common-token search ≈ 50 ms against the 1 s budget (all logged as evidence by the tests themselves).
+5. **Numbers at ship:** 327 tests / 66 suites green incl. live + model-gated (from 290/60); fixture floors at scale 1: 50 meetings / 146,458 segments / 150 artifacts / 2 three-hour meetings; 25-row batch append onto the seeded DB ≈ 5 ms against the 250 ms tripwire.
+6. **Modified pre-existing test files (check 17 disclosure, verifier-confirmed additive-only):** `ArtifactStoreTests` (dump→`DatabaseDump` delegation + check-12 flip extension), `MacapyDatabaseTests` (artifacts column pin + v5 tests), `MeetingPipelineTests` (check-15 extension of the ephemeral oracle + new check-8b test).

@@ -449,6 +449,18 @@ struct MeetingPipelineTests {
             fileSize(at: dbURL) == sizeBeforeEphemeral,
             "ephemeral mode must not grow the on-disk database file"
         )
+        // Slice-5 check 15 (extends this oracle): the ephemeral line is not
+        // searchable on disk and the FTS indexes hold zero documents — an
+        // ephemeral meeting is not searchable at all, live or after
+        // (slice-05 doc decision 12).
+        let onDiskSearch = SearchStore(database: onDiskDatabase)
+        #expect(try await onDiskSearch.search(matching: "ephemeral") == .empty)
+        let docsizeCounts = try await onDiskDatabase.dbWriter.read { db in
+            try ["meetings_fts_docsize", "segments_fts_docsize", "artifacts_fts_docsize"].map {
+                try Int.fetchOne(db, sql: "SELECT count(*) FROM \($0)") ?? -1
+            }
+        }
+        #expect(docsizeCounts == [0, 0, 0])
 
         // Persistent run against the SAME on-disk store: rows DO appear.
         let persistentEngine = FakeSTTEngine(
@@ -467,6 +479,40 @@ struct MeetingPipelineTests {
         #expect(rowsAfterPersistent.count == 1)
         let writtenSegments = try await onDiskStore.segments(for: rowsAfterPersistent[0].id)
         #expect(writtenSegments.map(\.text) == ["persistent-line"])
+        // Contrast for the check-15 assertion above: the same search path
+        // over the same database does find the persistent line — the empty
+        // ephemeral result wasn't vacuous.
+        #expect(try await onDiskSearch.search(matching: "persistent").passages.count == 1)
+    }
+
+    /// Slice-5 check 8b: a meeting whose distinctive phrase arrives in the
+    /// *tail* finals (drained during `stop()`) is searchable the moment
+    /// `stop()` returns — "searchable immediately after finalization" is the
+    /// contract that FTS triggers commit inside the segment-INSERT
+    /// transaction and `stop()` awaits `flushAndStop()` (slice-05 doc
+    /// decision 11).
+    @Test func tailFinalsAreSearchableTheMomentStopReturns() async throws {
+        let database = try MacapyDatabase.inMemory()
+        let meetingStore = MeetingStore(database: database)
+        let counters = Counters()
+        let engine = FakeSTTEngine(
+            live: [.mic: [.final(seg("opening pleasantries", .mic, 0))]],
+            drain: [.mic: [.final(seg("the shimmerpine rollout is a go", .mic, 5))]],
+            counters: counters
+        )
+        let source = FakeCaptureSource(source: .mic, counters: counters)
+        let transcript = TranscriptStore()
+        let pipeline = MeetingPipeline(engine: engine, sources: [source], store: transcript)
+        try await pipeline.start(mode: .persistent(meetingStore))
+        await waitUntil("live line applied") { transcript.segments.count == 1 }
+
+        let endedMeetingID = await pipeline.stop()
+
+        // The very next statement — no wait, no flush call, no reopen.
+        let hits = try await SearchStore(database: database).search(matching: "shimmerpine")
+        #expect(hits.passages.count == 1)
+        #expect(hits.passages.first?.meetingID == endedMeetingID)
+        #expect(hits.meetings.map(\.id) == [endedMeetingID])
     }
 
     private func fileSize(at url: URL) -> Int64 {
