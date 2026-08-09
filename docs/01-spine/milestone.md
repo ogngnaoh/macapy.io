@@ -55,6 +55,8 @@ Ship the fastest fully-local live meeting transcriber on macOS — the author ca
 
 - 2026-07-17 (post-close-out correction + DB cleanup): the close-out note above **over-claimed "no persisted meeting"** — it sampled the 10 newest rows; vetting the DB cleanup surfaced a **real dual-source meeting from 00:26 EDT that night: 2m14s, 18 us / 32 them finals, persisted, ended** — so criterion 2's substance (real meeting, dual-source, persisted, reopenable) has DB evidence after all; it predated the network monitor, so criterion 4 remains owner-attested. Cleanup executed with owner go-ahead: 86 sub-second test-artifact meetings + their segments deleted from the live DB (1 real meeting + 50 segments remain, zero orphans, pre-cleanup backup taken). Test-pollution defect unchanged — fix scheduled early M2.
 
+- 2026-08-09 (criterion 4 formally retired): the owner-attested zero-network criterion is retired on deterministic evidence under the M2 close-out ruling (no real-meeting halves where the suite replicates the check programmatically) — `ZeroNetworkTests` + `ProviderLiveFlowTests` oracles; details in M2's close-out note and slice-02 note 32.
+
 ## Exit criteria
 
 Written before implementation (verification convention):
