@@ -70,6 +70,24 @@ struct LiveCopilotCoordinatorTests {
         }
     }
 
+    private actor BlockingFailingSettingsSave {
+        enum SaveError: Error { case unavailable }
+
+        private var releaseContinuation: CheckedContinuation<Void, Never>?
+        private(set) var started = false
+
+        func save(_ settings: LiveAISettings) async throws {
+            started = true
+            await withCheckedContinuation { releaseContinuation = $0 }
+            throw SaveError.unavailable
+        }
+
+        func release() {
+            releaseContinuation?.resume()
+            releaseContinuation = nil
+        }
+    }
+
     /// Holds the first capped admission before a reservation exists. The
     /// actor remains reentrant, so post-meeting work can prove that it does not
     /// need to wait for an already-cancelled pre-reservation call.
@@ -238,7 +256,9 @@ struct LiveCopilotCoordinatorTests {
         profiles: [EndpointProfile]? = nil,
         credentialStore: InMemoryCredentialStore? = nil,
         lifecycleCheckpoint:
-            (@Sendable (AppShellCoordinator.LifecycleCheckpoint) async -> Void)? = nil
+            (@Sendable (AppShellCoordinator.LifecycleCheckpoint) async -> Void)? = nil,
+        liveSettingsSaveOverride:
+            (@Sendable (LiveAISettings) async throws -> Void)? = nil
     ) async throws -> Shell {
         let database = try MacapyDatabase.inMemory()
         let counters = MeetingPipelineTests.Counters()
@@ -275,7 +295,8 @@ struct LiveCopilotCoordinatorTests {
             postMeetingContextOverride: contextOverride,
             liveProviderOverride: liveProvider,
             liveSpendLedgerOverride: liveSpendLedger,
-            lifecycleCheckpoint: lifecycleCheckpoint
+            lifecycleCheckpoint: lifecycleCheckpoint,
+            liveSettingsSaveOverride: liveSettingsSaveOverride
         )
         coordinator.ephemeralNextMeeting = ephemeral
         let settings = try #require(coordinator.settingsStore())
@@ -736,6 +757,55 @@ struct LiveCopilotCoordinatorTests {
         #expect(await shell.coordinator.retainedSpendMeterCount() == 0)
     }
 
+    @Test func aiReenableWaitsForConcurrentTransportRevisionBeforeExposingProvider() async throws {
+        let server = try FakeOpenAIServer.start(responses: [Self.answer])
+        defer { server.stop() }
+        let gate = LifecycleGate(.providerRefresh)
+        let shell = try await makeShell(
+            server: server,
+            lifecycleCheckpoint: { await gate.checkpoint($0) }
+        )
+        try await shell.coordinator.settingsStore()?.setLiveAISettings(
+            LiveAISettings(sensitivity: .off, preferredName: "Hoang"))
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+
+        let live = shell.coordinator.liveAISettingsModel()
+        await live.load()
+        await live.setEnabled(false)
+        #expect(shell.coordinator.copilot.availability == .disabled)
+
+        let enabling = Task { await live.setEnabled(true) }
+        for _ in 0..<300 where !(await gate.started) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await gate.started)
+
+        // Supersede the suspended enable refresh with a newer credential
+        // transport revision. The current replacement may commit, but the
+        // user-visible latch must remain disabled until enable has verified
+        // that exact revision.
+        let providers = shell.coordinator.providerSettingsModel()
+        await providers.load()
+        await providers.saveKey("sk-current-revision", for: "fake")
+        #expect(shell.coordinator.copilot.availability == .disabled)
+        #expect(!shell.coordinator.copilot.canCatchUp)
+
+        await gate.release()
+        await enabling.value
+        #expect(shell.coordinator.copilot.availability == .ready)
+        shell.coordinator.requestCatchUp()
+        await waitUntil("catch-up after revision-gated enable") {
+            shell.coordinator.copilot.card?.isStreaming == false
+        }
+        #expect(server.recordedRequests.count == 1)
+        #expect(server.recordedRequests.first?.headers["authorization"]
+            == "Bearer sk-current-revision")
+
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+    }
+
     @Test func staleProviderRefreshFromMeetingACannotMutateMeetingB() async throws {
         let server = try FakeOpenAIServer.start(responses: [Self.answer])
         defer { server.stop() }
@@ -1072,6 +1142,61 @@ struct LiveCopilotCoordinatorTests {
         #expect(await shell.coordinator.retainedSpendMeterCount() == 1)
     }
 
+    @Test func manualCleanupRetainsUncertaintyAndCannotStealConcurrentOwner() async throws {
+        let server = try FakeOpenAIServer.start(responses: [])
+        defer { server.stop() }
+        let shell = try await makeShell(server: server)
+        let pricing = PricingTable(rates: [
+            "fake-model": ModelPricing(
+                inputPerMillionUSD: 1,
+                cachedInputPerMillionUSD: 0,
+                outputPerMillionUSD: 1),
+        ])
+
+        let uncertainMeetingID = UUID()
+        let uncertainMeter = SpendMeter(
+            ledger: EphemeralSpendLedger(), pricing: pricing, capUSD: 1)
+        let reservation = try await uncertainMeter.reserve(
+            CompletionRequest(
+                model: "fake-model",
+                messages: [.user("manual retry")],
+                purpose: .artifact,
+                maxTokens: 100),
+            meetingID: uncertainMeetingID
+        )
+        _ = try await uncertainMeter.settle(reservation, usage: nil)
+        await shell.coordinator.retainSpendMeterForTesting(
+            uncertainMeter, meetingID: uncertainMeetingID)
+        await shell.coordinator.cleanupMeterAfterGeneration(
+            meetingID: uncertainMeetingID,
+            outcome: .failed(nil),
+            expectedMeter: nil
+        )
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 1,
+                "a failed manual call's uncertain debit must remain retained")
+
+        let concurrentMeetingID = UUID()
+        let concurrentOwner = SpendMeter(
+            ledger: EphemeralSpendLedger(), pricing: pricing, capUSD: 1)
+        await shell.coordinator.retainSpendMeterForTesting(
+            concurrentOwner, meetingID: concurrentMeetingID)
+        await shell.coordinator.cleanupMeterAfterGeneration(
+            meetingID: concurrentMeetingID,
+            outcome: .skippedGenerationInFlight,
+            expectedMeter: nil
+        )
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 2,
+                "the losing caller must not remove the meter owned by active generation")
+
+        await shell.coordinator.cleanupMeterAfterGeneration(
+            meetingID: concurrentMeetingID,
+            outcome: .drafted([]),
+            expectedMeter: nil
+        )
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 1,
+                "the successful owner releases its fallback meter")
+    }
+
     @Test func aiOffCannotLeakEphemeralMeterOwnedByCancelledArtifactTask() async throws {
         let server = try FakeOpenAIServer.start(responses: [])
         defer { server.stop() }
@@ -1152,7 +1277,7 @@ struct LiveCopilotCoordinatorTests {
         #expect(try await shell.coordinator.artifactStore()?.artifacts(for: meeting.id).isEmpty == true)
         #expect(try await shell.coordinator.historyStore()?.segments(for: meeting.id).count == 1)
         let manual = await shell.coordinator.postMeetingAgent()?.generateArtifacts(meetingID: meeting.id)
-        #expect(manual == .skippedNoProvider)
+        #expect(manual == .cancelled)
         #expect(server.recordedRequests.isEmpty)
     }
 
@@ -1180,6 +1305,64 @@ struct LiveCopilotCoordinatorTests {
         let meeting = try #require(try await shell.coordinator.historyStore()?.listMeetings().first)
         #expect(try await shell.coordinator.artifactStore()?.artifacts(for: meeting.id).isEmpty == true)
         #expect(try await shell.coordinator.historyStore()?.segments(for: meeting.id).count == 1)
+    }
+
+    @Test func aiOffLatchBlocksTwoChainedArtifactsWhilePersistenceIsBlockedAndFails() async throws {
+        let server = try FakeOpenAIServer.start(responses: [Self.artifact, Self.artifact])
+        defer { server.stop() }
+        let ledger = BlockingClassifierLedger()
+        let settingsSave = BlockingFailingSettingsSave()
+        let shell = try await makeShell(
+            server: server,
+            liveProvider: DeterministicLiveProvider(),
+            liveSpendLedger: ledger,
+            liveSettingsSaveOverride: { try await settingsSave.save($0) }
+        )
+
+        // Meeting A ends with its live classifier debit still settlement-gated.
+        // Its automatic artifacts therefore have not reached the lazy agent.
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settleCaptureLifecycle()
+        for _ in 0..<300 where !(await ledger.classifierSettlementStarted) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await ledger.classifierSettlementStarted)
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settleCaptureLifecycle()
+
+        // Meeting B starts and ends while A's artifact tail is still held, so
+        // its own artifact task is chained behind A.
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settleCaptureLifecycle()
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settleCaptureLifecycle()
+        let meetings = try #require(shell.coordinator.historyStore())
+        let ended = try await meetings.listMeetings()
+        #expect(ended.count == 2)
+        #expect(server.recordedRequests.isEmpty)
+
+        let live = shell.coordinator.liveAISettingsModel()
+        await live.load()
+        let turnOff = Task { await live.setEnabled(false) }
+        for _ in 0..<300 where !(await settingsSave.started) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await settingsSave.started)
+
+        // The durable settings row is still enabled and this save will fail.
+        // Releasing A must nevertheless create a disabled lazy agent and keep
+        // both old tasks at zero network/zero writes.
+        await ledger.releaseClassifierSettlement()
+        await settingsSave.release()
+        await turnOff.value
+        await shell.coordinator.settle()
+
+        #expect(server.recordedRequests.isEmpty)
+        for meeting in ended {
+            #expect(try await shell.coordinator.artifactStore()?.artifacts(for: meeting.id).isEmpty == true)
+        }
+        #expect((try await shell.coordinator.settingsStore()?.liveAISettings().aiFeaturesEnabled) == true,
+                "failed persistence must not weaken the in-memory off latch")
     }
 
     @Test func globalAIOffCancelsManualArtifactsQuietlyAndManualRetryStillWorks() async throws {
