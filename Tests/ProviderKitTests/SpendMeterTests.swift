@@ -13,6 +13,60 @@ import Testing
 /// consulted by the provider decorator alone.
 struct SpendMeterTests {
 
+    private struct StructuredReply: Decodable {
+        let answer: String
+    }
+
+    enum StructuredFailureFixture: CaseIterable, Sendable {
+        case length
+        case contentFilter
+        case missingFinishReason
+        case schemaDecode
+
+        var response: FakeOpenAIServer.Response {
+            switch self {
+            case .length:
+                .json(status: 200, body: OpenAIFixtures.completionBody(
+                    content: #"{"answer":"partial"}"#,
+                    promptTokens: 2_000,
+                    completionTokens: 500,
+                    finishReason: "length"
+                ))
+            case .contentFilter:
+                .json(status: 200, body: OpenAIFixtures.completionBody(
+                    content: #"{"answer":"filtered"}"#,
+                    promptTokens: 2_000,
+                    completionTokens: 500,
+                    finishReason: "content_filter"
+                ))
+            case .missingFinishReason:
+                .json(
+                    status: 200,
+                    body: #"{"choices":[{"message":{"content":"{\"answer\":\"unterminated\"}"}}],"usage":{"prompt_tokens":2000,"completion_tokens":500,"total_tokens":2500}}"#
+                )
+            case .schemaDecode:
+                .json(status: 200, body: OpenAIFixtures.completionBody(
+                    content: #"{"wrong_field":"not an answer"}"#,
+                    promptTokens: 2_000,
+                    completionTokens: 500
+                ))
+            }
+        }
+    }
+
+    private struct StructuredTransportFailure: LLMProvider {
+        func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
+            AsyncThrowingStream { $0.finish() }
+        }
+
+        func completeReportingUsage<T: Decodable>(
+            _ request: CompletionRequest,
+            as type: T.Type
+        ) async throws -> CompletedCall<T> {
+            throw ProviderError.transport("connection lost after request upload")
+        }
+    }
+
     private actor FailingRecordLedger: SpendLedger {
         struct WriteFailure: Error {}
 
@@ -114,6 +168,115 @@ struct SpendMeterTests {
         #expect(entries.count == 1)
         #expect(entries.first?.purpose == .classifier)
         #expect(entries.first?.usage == TokenUsage(promptTokens: 200, cachedTokens: 0, completionTokens: 20))
+    }
+
+    @Test(arguments: StructuredFailureFixture.allCases)
+    func aStructuredFailureRetainsItsCeilingAndCannotBypassTheCap(
+        failure: StructuredFailureFixture
+    ) async throws {
+        let request = Self.expensiveRequest
+        let ledger = InMemorySpendLedger()
+        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: nil)
+        let held = try #require(await meter.requestCostCeilingUSD(request))
+        await meter.updateCapUSD(held * 1.5)
+        let server = try FakeOpenAIServer.start(responses: [failure.response])
+        defer { server.stop() }
+        let provider = MeteredProvider(
+            upstream: OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test"),
+            meter: meter,
+            meetingID: Self.meeting
+        )
+
+        var thrown: Error?
+        do {
+            _ = try await provider.complete(request, as: StructuredReply.self)
+        } catch {
+            thrown = error
+        }
+
+        switch failure {
+        case .length:
+            #expect(thrown as? ProviderError == .truncated(finishReason: "length"))
+        case .contentFilter:
+            #expect(thrown as? ProviderError == .truncated(finishReason: "content_filter"))
+        case .missingFinishReason:
+            #expect(thrown as? ProviderError == .truncated(finishReason: "unknown"))
+        case .schemaDecode:
+            guard case .decodingFailed = thrown as? ProviderError else {
+                Issue.record("expected ProviderError.decodingFailed, got \(String(describing: thrown))")
+                return
+            }
+        }
+
+        #expect(await ledger.entries.isEmpty,
+                "unknown failed-call usage must not create a fabricated ledger row")
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0)
+        #expect(await meter.uncertainUSD(meetingID: Self.meeting) >= held)
+
+        await #expect(throws: ProviderError.self) {
+            _ = try await provider.complete(request, as: StructuredReply.self)
+        }
+        #expect(server.recordedRequests.count == 1,
+                "the retained debit must reject the next call before the network")
+    }
+
+    @Test func aStructuredTransportFailureRetainsItsCeilingAndBlocksTheNextCall() async throws {
+        let request = Self.expensiveRequest
+        let ledger = InMemorySpendLedger()
+        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: nil)
+        let held = try #require(await meter.requestCostCeilingUSD(request))
+        await meter.updateCapUSD(held * 1.5)
+        let provider = MeteredProvider(
+            upstream: StructuredTransportFailure(),
+            meter: meter,
+            meetingID: Self.meeting
+        )
+
+        await #expect(throws: ProviderError.transport("connection lost after request upload")) {
+            _ = try await provider.complete(request, as: StructuredReply.self)
+        }
+        #expect(await ledger.entries.isEmpty)
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0)
+        #expect(await meter.uncertainUSD(meetingID: Self.meeting) >= held)
+        await #expect(throws: ProviderError.self) {
+            _ = try await provider.complete(request, as: StructuredReply.self)
+        }
+    }
+
+    @Test func structuredCancellationReleasesItsCeilingForTheNextCall() async throws {
+        let request = Self.expensiveRequest
+        let ledger = InMemorySpendLedger()
+        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: nil)
+        let held = try #require(await meter.requestCostCeilingUSD(request))
+        await meter.updateCapUSD(held * 1.5)
+        let slowFrames = Array(repeating: #"{"still":"streaming"}"#, count: 1_000)
+        let server = try FakeOpenAIServer.start(responses: [
+            .sse(frames: slowFrames),
+        ])
+        defer { server.stop() }
+        let provider = MeteredProvider(
+            upstream: OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test"),
+            meter: meter,
+            meetingID: Self.meeting
+        )
+
+        let call = Task {
+            try await provider.complete(request, as: StructuredReply.self)
+        }
+        while server.recordedRequests.isEmpty {
+            await Task.yield()
+        }
+        call.cancel()
+
+        await #expect(throws: CancellationError.self) {
+            _ = try await call.value
+        }
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0)
+        #expect(await meter.uncertainUSD(meetingID: Self.meeting) == 0)
+        #expect(await ledger.entries.isEmpty)
+
+        let next = try await meter.reserve(request, meetingID: Self.meeting)
+        await meter.cancel(next)
     }
 
     @Test func aFailedCallThatReportedNoUsageWritesNoRow() async throws {

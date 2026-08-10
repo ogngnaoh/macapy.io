@@ -490,7 +490,21 @@ public struct MeteredProvider: LLMProvider {
             await settleLoggingFailure(reservation, usage: result.usage, request: request)
             return result
         } catch {
-            await meter.cancel(reservation)
+            if error is CancellationError {
+                // A caller-driven cancellation is the one structured failure
+                // that proves the request did not complete. Return its held
+                // capacity to the meeting immediately.
+                await meter.cancel(reservation)
+            } else {
+                // Structured transports validate finish reasons and decode
+                // before returning `CompletedCall`, so length/content-filter,
+                // malformed/schema, and transport failures cannot expose any
+                // usage that may have arrived in the response. The provider
+                // may still have billed the request. Retain the request's
+                // conservative ceiling rather than letting sequential failed
+                // calls bypass the cap; do not fabricate a ledger usage row.
+                await settleLoggingFailure(reservation, usage: nil, request: request)
+            }
             throw error
         }
     }
