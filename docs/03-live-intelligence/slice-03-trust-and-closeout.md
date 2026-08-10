@@ -1,6 +1,6 @@
 # M3 Slice 03 — Trust, Diagnostics, and Close-out
 
-**Status:** PENDING — acceptance checks approved 2026-08-10 before implementation
+**Status:** ACTIVE 2026-08-11 — starting from verified Slice 2 source SHA `9275b39`
 
 ## Outcome
 
