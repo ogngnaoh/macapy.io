@@ -46,7 +46,9 @@ public actor PostMeetingAgent {
         /// existing-artifacts guard twice and insert two sets of rows.
         case skippedGenerationInFlight
         /// Generation was intentionally cancelled (AI-off or teardown). This
-        /// is a quiet, retryable outcome: no artifact rows were persisted.
+        /// is a quiet outcome. A write cancelled before its transaction starts
+        /// persists nothing; an already-uninterruptible transaction is drained
+        /// atomically, and a later retry observes its complete draft set.
         case cancelled
         /// The per-meeting cap is spent: no request was issued (FR-015).
         case halted(spentUSD: Double, capUSD: Double)
@@ -58,6 +60,10 @@ public actor PostMeetingAgent {
     private let meetings: MeetingStore
     private let artifacts: ArtifactStore
     private let chunkBudgetCharacters: Int
+    /// One owned persistence boundary for all artifact writes. The production
+    /// closure calls `ArtifactStore.insertDrafts`; the injected form gives the
+    /// lifecycle tests a deterministic way to hold that transaction boundary.
+    private let persistDrafts: @Sendable ([DraftArtifact], UUID) async throws -> [ArtifactRecord]
     /// `nil` means "not configured" — the same quiet non-answer
     /// `ProviderRegistry.client(for:)` gives (SPEC G6: no object, no call).
     private let makeContext: @Sendable (UUID) async throws -> PostMeetingProviderContext?
@@ -71,9 +77,14 @@ public actor PostMeetingAgent {
     /// task alone is not sufficient: actor calls are reentrant and may be
     /// awaited by an unrelated presentation task.
     private var extractionTasks: [UUID: Task<MeetingExtraction, Error>] = [:]
+    /// Persistence is tracked separately from extraction because cancellation
+    /// cannot roll back a database transaction that has already started. The
+    /// kill switch drains these tasks before returning, which makes its return
+    /// the fence after which no admitted artifact write can still commit.
+    private var persistenceTasks: [UUID: Task<[ArtifactRecord], Error>] = [:]
     /// False while the global AI kill switch is off. This is checked both at
     /// admission and immediately before persistence so an already-completed
-    /// provider reply cannot race rows onto disk after cancellation.
+    /// provider reply cannot start a new write after cancellation.
     private var generationEnabled = true
     /// Monotonic kill-switch generation. Disabling AI advances it, so an
     /// attempt admitted before an off -> on transition can never resume just
@@ -92,6 +103,26 @@ public actor PostMeetingAgent {
         self.artifacts = artifacts
         self.chunkBudgetCharacters = chunkBudgetCharacters
         self.makeContext = makeContext
+        self.persistDrafts = { drafts, meetingID in
+            try await artifacts.insertDrafts(drafts, meetingID: meetingID)
+        }
+    }
+
+    /// Test-only persistence injection. Keeping the seam at the agent's owned
+    /// transaction boundary avoids weakening `ArtifactStore`'s all-or-nothing
+    /// write contract in production.
+    init(
+        meetings: MeetingStore,
+        artifacts: ArtifactStore,
+        chunkBudgetCharacters: Int = 60_000,
+        makeContext: @escaping @Sendable (UUID) async throws -> PostMeetingProviderContext?,
+        persistDrafts: @escaping @Sendable ([DraftArtifact], UUID) async throws -> [ArtifactRecord]
+    ) {
+        self.meetings = meetings
+        self.artifacts = artifacts
+        self.chunkBudgetCharacters = chunkBudgetCharacters
+        self.makeContext = makeContext
+        self.persistDrafts = persistDrafts
     }
 
     @discardableResult
@@ -103,6 +134,7 @@ public actor PostMeetingAgent {
         defer {
             generatingMeetingIDs.remove(meetingID)
             extractionTasks[meetingID] = nil
+            persistenceTasks[meetingID] = nil
         }
         do {
             try Task.checkCancellation()
@@ -149,7 +181,23 @@ public actor PostMeetingAgent {
                   generationEpoch == admittedEpoch,
                   !Task.isCancelled
             else { return .cancelled }
-            let rows = try await artifacts.insertDrafts(try extraction.drafts(), meetingID: meetingID)
+            let drafts = try extraction.drafts()
+            let persistDrafts = persistDrafts
+            let persistenceTask = Task {
+                // If AI-off wins before this task crosses the persistence
+                // boundary, cancellation guarantees a zero-write attempt.
+                try Task.checkCancellation()
+                return try await persistDrafts(drafts, meetingID)
+            }
+            persistenceTasks[meetingID] = persistenceTask
+            let rows = try await persistenceTask.value
+            // A transaction which had already started may have been
+            // uninterruptible. Its rows are now fully committed, but the old
+            // generation must still remain cancelled across off -> on.
+            guard generationEnabled,
+                  generationEpoch == admittedEpoch,
+                  !Task.isCancelled
+            else { return .cancelled }
             let elapsed = Date().timeIntervalSince(startedAt)
             lastDraftedInSeconds = elapsed
             log.info("drafted \(rows.count) artifacts in \(String(format: "%.1f", elapsed))s")
@@ -174,21 +222,30 @@ public actor PostMeetingAgent {
     }
 
     /// Applies the global AI kill switch and, when disabling, drains every
-    /// tracked extraction before returning. A later enable makes generation
-    /// retryable; it never resumes a cancelled call automatically.
+    /// tracked extraction and persistence task before returning. A later
+    /// enable makes generation retryable; it never resumes a cancelled call
+    /// automatically. Persistence which already crossed its transaction
+    /// boundary may finish atomically while this method drains it, but can
+    /// never commit after this method returns.
     public func setGenerationEnabled(_ enabled: Bool) async {
         generationEnabled = enabled
         guard !enabled else { return }
         generationEpoch &+= 1
-        let tasks = Array(extractionTasks.values)
-        for task in tasks { task.cancel() }
-        for task in tasks { _ = await task.result }
+        let extraction = Array(extractionTasks.values)
+        let persistence = Array(persistenceTasks.values)
+        for task in extraction { task.cancel() }
+        for task in persistence { task.cancel() }
+        for task in extraction { _ = await task.result }
+        for task in persistence { _ = await task.result }
     }
 
     /// Teardown-only cancellation that does not latch the global switch.
     public func cancelInFlightGeneration() async {
-        let tasks = Array(extractionTasks.values)
-        for task in tasks { task.cancel() }
-        for task in tasks { _ = await task.result }
+        let extraction = Array(extractionTasks.values)
+        let persistence = Array(persistenceTasks.values)
+        for task in extraction { task.cancel() }
+        for task in persistence { task.cancel() }
+        for task in extraction { _ = await task.result }
+        for task in persistence { _ = await task.result }
     }
 }
