@@ -4,6 +4,17 @@ import PersistKit
 import ProviderKit
 import os
 
+enum ProviderSettingsChange: Sendable, Equatable {
+    /// Profile selection or credential material changed, so the live client
+    /// must be rebuilt and any work owned by the old transport drained.
+    case transport
+    /// Spend admission changed without changing the provider transport.
+    case cap
+    /// Historical MVP-ignored overrides remain persisted, but must not disturb
+    /// live presentation state or rebuild the fixed-model provider.
+    case modelOverride
+}
+
 /// State behind the Providers and Spend settings tabs: what's configured, what
 /// a test call reported, and what this meeting has cost.
 ///
@@ -34,7 +45,8 @@ final class ProviderSettingsModel {
     @ObservationIgnored private let settingsStore: SettingsStore?
     @ObservationIgnored private let ledger: (any SpendLedger)?
     @ObservationIgnored private let session: URLSession
-    @ObservationIgnored private let onSettingsChange: @MainActor (ProviderSettings) async -> Void
+    @ObservationIgnored private let onSettingsChange:
+        @MainActor (ProviderSettings, ProviderSettingsChange) async -> Void
     @ObservationIgnored private var keyedProfileIDs: Set<String> = []
     @ObservationIgnored private let log = Logger(subsystem: "io.macapy.app", category: "AppShell")
 
@@ -44,7 +56,7 @@ final class ProviderSettingsModel {
         settingsStore: SettingsStore?,
         ledger: (any SpendLedger)?,
         session: URLSession = .shared,
-        onSettingsChange: @escaping @MainActor (ProviderSettings) async -> Void = { _ in }
+        onSettingsChange: @escaping @MainActor (ProviderSettings, ProviderSettingsChange) async -> Void = { _, _ in }
     ) {
         self.profiles = profiles
         self.credentials = credentials
@@ -128,7 +140,7 @@ final class ProviderSettingsModel {
 
     func select(profileID: String?) async {
         settings.selectedProfileID = profileID
-        await persistSettings()
+        await persistSettings(change: .transport)
     }
 
     func saveKey(_ key: String, for profileID: String) async {
@@ -147,7 +159,7 @@ final class ProviderSettingsModel {
             // Credential replacement is a material configuration change even
             // though the settings value itself is unchanged. Notify the live
             // copilot so an authentication hard-pause can admit a retry.
-            await onSettingsChange(settings)
+            await onSettingsChange(settings, .transport)
         }
     }
 
@@ -155,7 +167,7 @@ final class ProviderSettingsModel {
         try? credentials.delete(for: profileID)
         refreshKeyedProfiles()
         connectionTest = .idle
-        await onSettingsChange(settings)
+        await onSettingsChange(settings, .transport)
     }
 
     func setModelOverride(_ model: String, tier: ModelTier, for profileID: String) async {
@@ -164,24 +176,24 @@ final class ProviderSettingsModel {
         case .fast: settings.fastModelOverrides[profileID] = trimmed.isEmpty ? nil : trimmed
         case .deep: settings.deepModelOverrides[profileID] = trimmed.isEmpty ? nil : trimmed
         }
-        await persistSettings()
+        await persistSettings(change: .modelOverride)
     }
 
     func setCap(_ capUSD: Double?) async {
         settings.perMeetingCapUSD = capUSD
-        await persistSettings()
+        await persistSettings(change: .cap)
     }
 
     enum ModelTier { case fast, deep }
 
-    private func persistSettings() async {
+    private func persistSettings(change: ProviderSettingsChange) async {
         guard let settingsStore else { return }
         do {
             try await settingsStore.setProviderSettings(settings)
         } catch {
             log.error("failed to persist provider settings: \(error.localizedDescription)")
         }
-        await onSettingsChange(settings)
+        await onSettingsChange(settings, change)
     }
 
     // MARK: - Test connection
