@@ -31,8 +31,19 @@ actor MeetingSpendRegistry {
     func meter(meetingID: UUID) -> SpendMeter? { meters[meetingID] }
     func remove(meetingID: UUID) { meters[meetingID] = nil }
 
-    func updateCaps(_ capUSD: Double?) async {
-        for meter in meters.values { await meter.updateCapUSD(capUSD) }
+    /// Updates every live meter and reports whether at least one cap became
+    /// strictly less restrictive (`nil` means unlimited). Only that event may
+    /// release a latched cap pause.
+    func updateCaps(_ capUSD: Double?) async -> Bool {
+        var raised = false
+        for meter in meters.values {
+            let previous = await meter.capUSD
+            if let previous {
+                raised = raised || capUSD == nil || (capUSD ?? previous) > previous
+            }
+            await meter.updateCapUSD(capUSD)
+        }
+        return raised
     }
 }
 
@@ -60,6 +71,11 @@ struct LiveCopilotCard: Sendable, Equatable, Identifiable {
 @MainActor
 @Observable
 final class LiveCopilotModel {
+    private enum HardPause: Equatable {
+        case authenticationOrConfiguration
+        case cap
+    }
+
     private(set) var availability: CopilotAvailability = .idle
     private(set) var card: LiveCopilotCard?
     private(set) var askPlaceholderVisible = false
@@ -76,7 +92,9 @@ final class LiveCopilotModel {
     @ObservationIgnored private var lastProactiveAt: Date?
     @ObservationIgnored private var automaticSuppressed = false
     @ObservationIgnored private var currentWorkRequested = false
-    @ObservationIgnored private var cardInteractionActive = false
+    @ObservationIgnored private var cardHovered = false
+    @ObservationIgnored private var cardFocused = false
+    @ObservationIgnored private var hardPause: HardPause?
     @ObservationIgnored private var expiryRemaining: TimeInterval = 25
     @ObservationIgnored private var expiryStartedAt: Date?
     @ObservationIgnored private let proactiveLifetime: TimeInterval
@@ -86,8 +104,17 @@ final class LiveCopilotModel {
     }
 
     var canCatchUp: Bool {
-        configuration.aiFeaturesEnabled && provider != nil && latestTranscriptTime >= 60
+        configuration.aiFeaturesEnabled
+            && provider != nil
+            && hardPause == nil
+            && latestTranscriptTime >= 60
     }
+
+    var canAsk: Bool {
+        configuration.aiFeaturesEnabled && provider != nil && hardPause == nil
+    }
+
+    var canDismiss: Bool { card != nil || askPlaceholderVisible }
 
     var isMeetingActive: Bool { availability != .idle }
 
@@ -106,6 +133,7 @@ final class LiveCopilotModel {
             preferredName: preferredName,
             cooldownSeconds: 45
         )
+        hardPause = nil
         self.provider = provider
         if let provider {
             classifier = CopilotClassifier(provider: provider, model: fastModel)
@@ -132,9 +160,9 @@ final class LiveCopilotModel {
                   !askPlaceholderVisible
         {
             cancelAndClear()
-            availability = provider == nil ? .setupRequired : .ready
+            restoreAvailability()
         } else if card == nil, !askPlaceholderVisible {
-            availability = provider == nil ? .setupRequired : .ready
+            restoreAvailability()
         }
     }
 
@@ -151,7 +179,9 @@ final class LiveCopilotModel {
         turns.append(turn)
         latestTranscriptTime = max(latestTranscriptTime, turn.tEnd)
 
-        guard provider != nil, !automaticSuppressed, workTask == nil, card == nil else { return }
+        guard provider != nil, hardPause == nil, !automaticSuppressed, workTask == nil, card == nil else {
+            return
+        }
         let gate = CopilotGate.evaluate(
             turn: turn,
             configuration: configuration,
@@ -192,24 +222,31 @@ final class LiveCopilotModel {
     /// Slice 1 reserves the interaction and shortcut; Slice 2 replaces this
     /// quiet placeholder with the meeting-grounded query field.
     func requestAsk() {
-        guard configuration.aiFeaturesEnabled, provider != nil else { return }
+        guard canAsk else { return }
         cancelAndClear()
         askPlaceholderVisible = true
     }
 
     func dismissCard() {
         cancelAndClear()
-        if isMeetingActive {
-            availability = !configuration.aiFeaturesEnabled
-                ? .disabled
-                : (provider == nil ? .setupRequired : .ready)
-        }
+        if isMeetingActive { restoreAvailability() }
     }
 
-    func setCardInteractionActive(_ active: Bool, now: Date = Date()) {
+    func setCardHovered(_ hovered: Bool, now: Date = Date()) {
         guard card?.requested == false else { return }
-        cardInteractionActive = active
-        if active {
+        cardHovered = hovered
+        updateCardInteraction(now: now)
+    }
+
+    func setCardFocused(_ focused: Bool, now: Date = Date()) {
+        guard card?.requested == false else { return }
+        cardFocused = focused
+        updateCardInteraction(now: now)
+    }
+
+    private func updateCardInteraction(now: Date) {
+        let interacting = cardHovered || cardFocused
+        if interacting {
             if let expiryStartedAt {
                 expiryRemaining = max(0, expiryRemaining - now.timeIntervalSince(expiryStartedAt))
             }
@@ -221,6 +258,22 @@ final class LiveCopilotModel {
         }
     }
 
+    func releaseAuthenticationPauseAfterConfigurationChange() {
+        guard hardPause == .authenticationOrConfiguration else { return }
+        hardPause = nil
+        if card == nil, !askPlaceholderVisible, configuration.aiFeaturesEnabled {
+            availability = provider == nil ? .setupRequired : .ready
+        }
+    }
+
+    func releaseCapPauseAfterCapIncrease() {
+        guard hardPause == .cap else { return }
+        hardPause = nil
+        if card == nil, !askPlaceholderVisible, configuration.aiFeaturesEnabled {
+            availability = provider == nil ? .setupRequired : .ready
+        }
+    }
+
     func setAutomaticSuppressed(_ suppressed: Bool) {
         automaticSuppressed = suppressed
         if suppressed,
@@ -229,9 +282,7 @@ final class LiveCopilotModel {
            !askPlaceholderVisible
         {
             cancelAndClear()
-            availability = !configuration.aiFeaturesEnabled
-                ? .disabled
-                : (provider == nil ? .setupRequired : .ready)
+            restoreAvailability()
         }
     }
 
@@ -244,6 +295,7 @@ final class LiveCopilotModel {
         latestTranscriptTime = 0
         lastProactiveAt = nil
         automaticSuppressed = false
+        hardPause = nil
         availability = .idle
     }
 
@@ -371,7 +423,9 @@ final class LiveCopilotModel {
         currentWorkRequested = false
         if !retainCard { card = nil }
         if card == nil, configuration.aiFeaturesEnabled {
-            availability = provider == nil ? .setupRequired : .ready
+            if hardPause == nil {
+                availability = provider == nil ? .setupRequired : .ready
+            }
         }
     }
 
@@ -380,8 +434,10 @@ final class LiveCopilotModel {
         if let providerError = error as? ProviderError {
             switch providerError {
             case .capReached:
+                hardPause = .cap
                 availability = .paused("AI paused — meeting cap reached.")
-            case .missingCredentials, .http(status: 401, _), .http(status: 403, _):
+            case .missingCredentials, .http, .malformedResponse:
+                hardPause = .authenticationOrConfiguration
                 availability = .setupRequired
             default:
                 availability = .paused("AI paused — \(providerError.userMessage)")
@@ -391,15 +447,30 @@ final class LiveCopilotModel {
         }
     }
 
+    private func restoreAvailability() {
+        guard configuration.aiFeaturesEnabled else {
+            availability = .disabled
+            return
+        }
+        switch hardPause {
+        case .authenticationOrConfiguration:
+            availability = .setupRequired
+        case .cap:
+            availability = .paused("AI paused — meeting cap reached.")
+        case nil:
+            availability = provider == nil ? .setupRequired : .ready
+        }
+    }
+
     private func scheduleExpiry() {
-        guard card?.requested == false, !cardInteractionActive else { return }
+        guard card?.requested == false, !cardHovered, !cardFocused else { return }
         expiryTask?.cancel()
         let delay = max(0, expiryRemaining)
         expiryStartedAt = Date()
         expiryTask = Task { [weak self] in
             do {
                 try await Task.sleep(for: .seconds(delay))
-                guard let self, !self.cardInteractionActive else { return }
+                guard let self, !self.cardHovered, !self.cardFocused else { return }
                 self.dismissCard()
             } catch {}
         }
@@ -414,6 +485,8 @@ final class LiveCopilotModel {
         currentWorkRequested = false
         card = nil
         askPlaceholderVisible = false
+        cardHovered = false
+        cardFocused = false
         expiryRemaining = proactiveLifetime
         expiryStartedAt = nil
     }

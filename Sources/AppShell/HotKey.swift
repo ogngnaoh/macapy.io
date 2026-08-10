@@ -61,6 +61,16 @@ final class HotKey {
         )
     }
 
+    /// ⌥⌘D — dismiss the active copilot card or Ask surface.
+    static func dismissCopilot(handler: @escaping @MainActor () -> Void) -> HotKey {
+        HotKey(
+            keyCode: UInt32(kVK_ANSI_D),
+            carbonModifiers: UInt32(optionKey | cmdKey),
+            id: 5,
+            handler: handler
+        )
+    }
+
     init(keyCode: UInt32, carbonModifiers: UInt32, id: UInt32, handler: @escaping @MainActor () -> Void) {
         self.handler = handler
         self.id = id

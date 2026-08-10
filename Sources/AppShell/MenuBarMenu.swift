@@ -41,10 +41,11 @@ struct MenuBarMenu: View {
 
             Button("Ask") { coordinator.requestAsk() }
                 .keyboardShortcut("k", modifiers: [.option, .command])
-                .disabled(
-                    coordinator.copilot.availability == .disabled
-                        || coordinator.copilot.availability == .setupRequired
-                )
+                .disabled(!coordinator.copilot.canAsk)
+
+            Button("Dismiss copilot") { coordinator.requestDismissCopilot() }
+                .keyboardShortcut("d", modifiers: [.option, .command])
+                .disabled(!coordinator.copilot.canDismiss)
         }
 
         // Applies to the *next* meeting only (slice-04 doc decision 9) —

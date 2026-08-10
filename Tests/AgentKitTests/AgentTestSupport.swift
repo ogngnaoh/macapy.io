@@ -98,3 +98,33 @@ enum ExtractionFixture {
         [.summary, .decision, .actionItem, .actionItem]
     }
 }
+
+/// Lets lifecycle tests hold the first completed fake-server response before
+/// it reaches AgentKit's persistence checkpoint. Cancellation interrupts the
+/// sleep; later retry calls pass straight through.
+final class DelayFirstCompletionProvider: LLMProvider, @unchecked Sendable {
+    private let upstream: any LLMProvider
+    private let lock = NSLock()
+    private var shouldDelay = true
+
+    init(upstream: any LLMProvider) {
+        self.upstream = upstream
+    }
+
+    func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
+        upstream.stream(request)
+    }
+
+    func completeReportingUsage<T: Decodable>(
+        _ request: CompletionRequest,
+        as type: T.Type
+    ) async throws -> CompletedCall<T> {
+        let completed = try await upstream.completeReportingUsage(request, as: type)
+        let delay = lock.withLock {
+            defer { shouldDelay = false }
+            return shouldDelay
+        }
+        if delay { try await Task.sleep(for: .seconds(30)) }
+        return completed
+    }
+}

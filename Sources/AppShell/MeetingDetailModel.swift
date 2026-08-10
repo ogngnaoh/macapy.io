@@ -124,6 +124,10 @@ final class MeetingDetailModel {
             // The other generation (the meeting-end trigger) is mid-flight;
             // stay in the progress state — its rows appear on the next load.
             state = .generating
+        case .cancelled:
+            // AI-off/teardown cancellation is intentional and retryable, not
+            // an error banner. Re-derive from the unchanged persistent state.
+            state = await deriveState()
         case .skippedEphemeral, .skippedEmptyTranscript:
             state = await deriveState()
         }

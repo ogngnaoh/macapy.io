@@ -10,12 +10,12 @@ final class LiveAISettingsModel {
     private(set) var loaded = false
 
     @ObservationIgnored private let store: SettingsStore?
-    @ObservationIgnored private let onChange: @MainActor (LiveAISettings) -> Void
+    @ObservationIgnored private let onChange: @MainActor (LiveAISettings) async -> Void
     @ObservationIgnored private let log = Logger(subsystem: "io.macapy.app", category: "LiveAISettings")
 
     init(
         store: SettingsStore?,
-        onChange: @escaping @MainActor (LiveAISettings) -> Void = { _ in }
+        onChange: @escaping @MainActor (LiveAISettings) async -> Void = { _ in }
     ) {
         self.store = store
         self.onChange = onChange
@@ -51,7 +51,7 @@ final class LiveAISettingsModel {
         } catch {
             log.error("failed to persist live AI settings: \(error.localizedDescription)")
         }
-        onChange(settings)
+        await onChange(settings)
     }
 
     static var defaultPreferredName: String? {

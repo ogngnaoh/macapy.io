@@ -265,4 +265,36 @@ struct PostMeetingAgentTests {
         #expect(recorded != nil)
         #expect((recorded ?? -1) >= 0)
     }
+
+    @Test func globalAIOffCancelsManualGenerationBeforePersistenceAndAllowsRetry() async throws {
+        let harness = try await AgentHarness.start()
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+        ])
+        defer { server.stop() }
+        let upstream = OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+        let delayed = DelayFirstCompletionProvider(upstream: upstream)
+        let agent = PostMeetingAgent(meetings: harness.meetings, artifacts: harness.artifacts) { _ in
+            PostMeetingProviderContext(provider: delayed, model: "fake-model")
+        }
+
+        let attempt = Task { await agent.generateArtifacts(meetingID: harness.meetingID) }
+        for _ in 0..<300 where server.recordedRequests.isEmpty {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(server.recordedRequests.count == 1)
+        await agent.setGenerationEnabled(false)
+
+        #expect(await attempt.value == .cancelled)
+        #expect(try await harness.artifacts.artifacts(for: harness.meetingID).isEmpty)
+
+        await agent.setGenerationEnabled(true)
+        let retry = await agent.generateArtifacts(meetingID: harness.meetingID)
+        guard case .drafted = retry else {
+            Issue.record("cancelled generation should stay retryable, got \(retry)")
+            return
+        }
+        #expect(server.recordedRequests.count == 2)
+    }
 }

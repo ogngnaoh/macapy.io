@@ -213,7 +213,7 @@ struct LiveCopilotModelTests {
         #expect(!model.canCatchUp)
     }
 
-    @Test func hoverOrFocusPausesThenResumesProactiveExpiry() async throws {
+    @Test func overlappingHoverAndFocusDoNotResumeExpiryUntilBothEnd() async throws {
         let server = try FakeOpenAIServer.start(responses: [
             .json(status: 200, body: OpenAIFixtures.completionBody(content: Self.decision())),
             Self.answer(),
@@ -227,12 +227,42 @@ struct LiveCopilotModelTests {
         model.receive(turn(), userSpeaking: false)
         await waitUntil("proactive completion") { model.card?.isStreaming == false }
 
-        model.setCardInteractionActive(true)
+        model.setCardHovered(true)
+        model.setCardFocused(true)
+        model.setCardHovered(false)
         try? await Task.sleep(for: .milliseconds(120))
-        #expect(model.card != nil)
+        #expect(model.card != nil, "focus must keep expiry paused after hover ends")
 
-        model.setCardInteractionActive(false)
+        model.setCardFocused(false)
         await waitUntil("expiry after interaction") { model.card == nil }
+    }
+
+    @Test func interactionStateResetsSoTheNextProactiveCardExpiresNormally() async throws {
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: Self.decision())),
+            Self.answer("First"),
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: Self.decision())),
+            Self.answer("Second"),
+        ])
+        defer { server.stop() }
+        let model = LiveCopilotModel(proactiveLifetime: 0.08)
+        model.beginMeeting(
+            provider: client(server), fastModel: "fast", deepModel: "deep",
+            settings: LiveAISettings()
+        )
+        let firstNow = Date(timeIntervalSince1970: 100)
+        model.receive(turn(), userSpeaking: false, now: firstNow)
+        await waitUntil("first proactive completion") { model.card?.text == "First" }
+        model.setCardHovered(true)
+        model.dismissCard()
+
+        model.receive(
+            turn(text: "Hoang, can you restate the migration risk?", start: 120, end: 122),
+            userSpeaking: false,
+            now: firstNow.addingTimeInterval(50)
+        )
+        await waitUntil("second proactive completion") { model.card?.text == "Second" }
+        await waitUntil("second proactive expiry") { model.card == nil }
     }
 
     @Test func capFailureShowsQuietPauseWithoutAProviderRequest() async throws {
@@ -265,5 +295,59 @@ struct LiveCopilotModelTests {
             return
         }
         #expect(message.contains("cap"))
+        #expect(!model.canCatchUp)
+        #expect(!model.canAsk)
+        model.requestAsk()
+        #expect(!model.askPlaceholderVisible)
+
+        model.applyLiveSettings(LiveAISettings(sensitivity: .active, preferredName: "Mai"))
+        #expect(!model.canCatchUp, "live AI preference edits must not release a cap pause")
+        #expect(!model.canAsk)
+
+        model.releaseCapPauseAfterCapIncrease()
+        #expect(model.canCatchUp)
+        #expect(model.canAsk)
+    }
+
+    @Test func authenticationFailureLatchesRequestedControlsUntilConfigurationChanges() async throws {
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 401, body: OpenAIFixtures.errorBody(message: "bad key")),
+        ])
+        defer { server.stop() }
+        let model = LiveCopilotModel()
+        model.beginMeeting(
+            provider: client(server), fastModel: "fast", deepModel: "deep",
+            settings: LiveAISettings()
+        )
+        model.receive(turn(), userSpeaking: false)
+        await waitUntil("authentication hard pause") { model.availability == .setupRequired }
+
+        #expect(!model.canCatchUp)
+        #expect(!model.canAsk)
+        model.requestCatchUp()
+        model.requestAsk()
+        #expect(model.card == nil)
+        #expect(!model.askPlaceholderVisible)
+
+        model.releaseAuthenticationPauseAfterConfigurationChange()
+        #expect(model.canCatchUp)
+        #expect(model.canAsk)
+    }
+
+    @Test func dismissAdmissionAndAccessibilityShortcutContract() async throws {
+        let server = try FakeOpenAIServer.start(responses: [])
+        defer { server.stop() }
+        let model = LiveCopilotModel()
+        model.beginMeeting(
+            provider: client(server), fastModel: "fast", deepModel: "deep",
+            settings: LiveAISettings()
+        )
+        #expect(!model.canDismiss)
+        model.requestAsk()
+        #expect(model.canDismiss)
+        model.dismissCard()
+        #expect(!model.canDismiss)
+        #expect(PanelView.dismissShortcutAccessibilityHint
+            == "Keyboard shortcut Option Command D")
     }
 }
