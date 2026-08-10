@@ -66,6 +66,43 @@ private actor ControlledExpiryWaiter {
     }
 }
 
+private actor ProviderReplacementGate {
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private(set) var started = false
+
+    func wait(meetingID _: UUID) async {
+        started = true
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
+private struct ImmediateTextProvider: LLMProvider {
+    let text: String
+
+    func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.token(text))
+            continuation.yield(.completed(Completion(
+                finishReason: "stop",
+                usage: TokenUsage(promptTokens: 10, completionTokens: 3)
+            )))
+            continuation.finish()
+        }
+    }
+
+    func completeReportingUsage<T: Decodable>(
+        _ request: CompletionRequest,
+        as type: T.Type
+    ) async throws -> CompletedCall<T> {
+        throw ProviderError.transport("unused structured request")
+    }
+}
+
 @MainActor
 struct LiveCopilotModelTests {
     private func client(_ server: FakeOpenAIServer) -> OpenAICompatibleClient {
@@ -342,6 +379,55 @@ struct LiveCopilotModelTests {
         #expect(model.card?.text == "Replacement catch-up.")
         #expect(model.card?.requested == true)
         #expect(model.availability == .ready)
+    }
+
+    @Test func providerReplacementRevalidatesMeetingAfterDrainingOldWork() async {
+        let delayed = DelayedClassifierFailureProvider()
+        let gate = ProviderReplacementGate()
+        let meetingA = UUID()
+        let meetingB = UUID()
+        let model = LiveCopilotModel(
+            providerReplacementCheckpoint: { await gate.wait(meetingID: $0) })
+        model.beginMeeting(
+            meetingID: meetingA,
+            provider: delayed,
+            fastModel: "fast",
+            deepModel: "deep",
+            settings: LiveAISettings()
+        )
+        model.receive(turn(), userSpeaking: false)
+        await waitUntil("meeting A classifier") { delayed.classifierStarted }
+
+        let staleReplacement = Task { @MainActor in
+            await model.replaceProviderAndWait(
+                ImmediateTextProvider(text: "Stale A provider"),
+                fastModel: "stale-fast",
+                deepModel: "stale-deep",
+                expectedMeetingID: meetingA,
+                replacementID: UUID()
+            )
+        }
+        for _ in 0..<300 where !(await gate.started) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await gate.started)
+
+        model.beginMeeting(
+            meetingID: meetingB,
+            provider: ImmediateTextProvider(text: "Meeting B provider"),
+            fastModel: "b-fast",
+            deepModel: "b-deep",
+            settings: LiveAISettings(sensitivity: .off)
+        )
+        model.receive(turn(), userSpeaking: false)
+        await gate.release()
+        delayed.releaseClassifierFailure()
+        await staleReplacement.value
+
+        model.requestCatchUp()
+        await waitUntil("meeting B catch-up") { model.card?.isStreaming == false }
+        #expect(model.card?.text == "Meeting B provider",
+                "the drained replacement for A must not become reachable from B")
     }
 
     @Test func cancelledExpiryCannotDismissAReplacementRequestedCard() async throws {

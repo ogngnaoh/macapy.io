@@ -29,8 +29,22 @@ actor MeetingSpendRegistry {
     private var meters: [UUID: SpendMeter] = [:]
 
     func register(_ meter: SpendMeter, meetingID: UUID) { meters[meetingID] = meter }
+    func registerIfAbsent(_ meter: SpendMeter, meetingID: UUID) -> SpendMeter {
+        if let existing = meters[meetingID] { return existing }
+        meters[meetingID] = meter
+        return meter
+    }
     func meter(meetingID: UUID) -> SpendMeter? { meters[meetingID] }
     func remove(meetingID: UUID) { meters[meetingID] = nil }
+    func remove(meetingID: UUID, ifSameAs meter: SpendMeter) {
+        guard meters[meetingID] === meter else { return }
+        meters[meetingID] = nil
+    }
+    func count() -> Int { meters.count }
+    func uncertainUSD(meetingID: UUID) async -> Double? {
+        guard let meter = meters[meetingID] else { return nil }
+        return await meter.uncertainUSD(meetingID: meetingID)
+    }
 
     /// Updates every retained meter, while reporting a cap increase only for
     /// the meeting that is currently live. Older meters can remain here while
@@ -84,6 +98,8 @@ final class LiveCopilotModel {
     private(set) var latestTranscriptTime: TimeInterval = 0
 
     @ObservationIgnored private var provider: (any LLMProvider)?
+    @ObservationIgnored private var activeMeetingID: UUID?
+    @ObservationIgnored private var desiredProviderReplacementID: UUID?
     @ObservationIgnored private var classifier: CopilotClassifier?
     @ObservationIgnored private var generator: CopilotGenerator?
     @ObservationIgnored private var configuration = CopilotConfiguration(aiFeaturesEnabled: false)
@@ -101,15 +117,19 @@ final class LiveCopilotModel {
     @ObservationIgnored private var expiryStartedAt: Date?
     @ObservationIgnored private let proactiveLifetime: TimeInterval
     @ObservationIgnored private let waitForExpiry: @Sendable (TimeInterval) async throws -> Void
+    @ObservationIgnored private let providerReplacementCheckpoint:
+        (@Sendable (UUID) async -> Void)?
 
     init(
         proactiveLifetime: TimeInterval = 25,
         waitForExpiry: @escaping @Sendable (TimeInterval) async throws -> Void = { delay in
             try await Task.sleep(for: .seconds(delay))
-        }
+        },
+        providerReplacementCheckpoint: (@Sendable (UUID) async -> Void)? = nil
     ) {
         self.proactiveLifetime = proactiveLifetime
         self.waitForExpiry = waitForExpiry
+        self.providerReplacementCheckpoint = providerReplacementCheckpoint
     }
 
     var canCatchUp: Bool {
@@ -128,12 +148,14 @@ final class LiveCopilotModel {
     var isMeetingActive: Bool { availability != .idle }
 
     func beginMeeting(
+        meetingID: UUID = UUID(),
         provider: (any LLMProvider)?,
         fastModel: String,
         deepModel: String,
         settings: LiveAISettings
     ) {
         stopMeeting()
+        activeMeetingID = meetingID
         let preferredName = Self.normalizedName(settings.preferredName)
         configuration = CopilotConfiguration(
             aiFeaturesEnabled: settings.aiFeaturesEnabled,
@@ -184,13 +206,24 @@ final class LiveCopilotModel {
     func replaceProviderAndWait(
         _ provider: (any LLMProvider)?,
         fastModel: String,
-        deepModel: String
+        deepModel: String,
+        expectedMeetingID: UUID,
+        replacementID: UUID
     ) async {
-        guard isMeetingActive else { return }
+        guard isMeetingActive, activeMeetingID == expectedMeetingID else { return }
+        desiredProviderReplacementID = replacementID
         let inFlight = workTask
-        cancelAndClear()
+        let hasCompletedRequestedCard = card?.requested == true && card?.isStreaming == false
+        let hasRequestedAskSurface = askPlaceholderVisible && inFlight == nil
+        if inFlight != nil || (!hasCompletedRequestedCard && !hasRequestedAskSurface) {
+            cancelAndClear()
+        }
+        await providerReplacementCheckpoint?(expectedMeetingID)
         await inFlight?.value
-        guard isMeetingActive else { return }
+        guard isMeetingActive,
+              activeMeetingID == expectedMeetingID,
+              desiredProviderReplacementID == replacementID
+        else { return }
 
         self.provider = provider
         if let provider {
@@ -328,6 +361,8 @@ final class LiveCopilotModel {
     func stopMeeting() {
         cancelAndClear()
         provider = nil
+        activeMeetingID = nil
+        desiredProviderReplacementID = nil
         classifier = nil
         generator = nil
         turns.removeAll()

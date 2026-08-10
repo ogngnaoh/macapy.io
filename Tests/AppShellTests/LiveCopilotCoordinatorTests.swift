@@ -11,6 +11,37 @@ import TranscribeKit
 
 @MainActor
 struct LiveCopilotCoordinatorTests {
+    private actor LifecycleGate {
+        enum Target { case startup, providerRefresh }
+
+        private let target: Target
+        private var consumed = false
+        private var releaseContinuation: CheckedContinuation<Void, Never>?
+        private(set) var started = false
+
+        init(_ target: Target) { self.target = target }
+
+        func checkpoint(_ checkpoint: AppShellCoordinator.LifecycleCheckpoint) async {
+            let matches: Bool
+            switch (target, checkpoint) {
+            case (.startup, .startupBeforeCommit(_)),
+                 (.providerRefresh, .providerRefreshBeforeReplacement(_)):
+                matches = true
+            default:
+                matches = false
+            }
+            guard matches, !consumed else { return }
+            consumed = true
+            started = true
+            await withCheckedContinuation { releaseContinuation = $0 }
+        }
+
+        func release() {
+            releaseContinuation?.resume()
+            releaseContinuation = nil
+        }
+    }
+
     private actor BlockingClassifierLedger: SpendLedger {
         private var entries: [SpendEntry] = []
         private var classifierRelease: CheckedContinuation<Void, Never>?
@@ -205,7 +236,9 @@ struct LiveCopilotCoordinatorTests {
         liveProvider: (any LLMProvider)? = nil,
         liveSpendLedger: (any SpendLedger)? = nil,
         profiles: [EndpointProfile]? = nil,
-        credentialStore: InMemoryCredentialStore? = nil
+        credentialStore: InMemoryCredentialStore? = nil,
+        lifecycleCheckpoint:
+            (@Sendable (AppShellCoordinator.LifecycleCheckpoint) async -> Void)? = nil
     ) async throws -> Shell {
         let database = try MacapyDatabase.inMemory()
         let counters = MeetingPipelineTests.Counters()
@@ -241,7 +274,8 @@ struct LiveCopilotCoordinatorTests {
             credentials: credentials,
             postMeetingContextOverride: contextOverride,
             liveProviderOverride: liveProvider,
-            liveSpendLedgerOverride: liveSpendLedger
+            liveSpendLedgerOverride: liveSpendLedger,
+            lifecycleCheckpoint: lifecycleCheckpoint
         )
         coordinator.ephemeralNextMeeting = ephemeral
         let settings = try #require(coordinator.settingsStore())
@@ -623,9 +657,141 @@ struct LiveCopilotCoordinatorTests {
         #expect(server.recordedRequests.count == 1)
         #expect(server.recordedRequests.first?.headers["authorization"] == "Bearer sk-added-live")
 
+        let requested = shell.coordinator.copilot.card
         await providers.removeKey(for: "fake")
         #expect(shell.coordinator.copilot.availability == .setupRequired)
-        #expect(shell.coordinator.copilot.card == nil)
+        #expect(shell.coordinator.copilot.card == requested,
+                "completed requested content stays until dismissed even when setup is required")
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+    }
+
+    @Test func cancelledStartupCannotCommitOverTheNextMeeting() async throws {
+        let server = try FakeOpenAIServer.start(responses: [Self.answer])
+        defer { server.stop() }
+        let gate = LifecycleGate(.startup)
+        let shell = try await makeShell(
+            server: server,
+            ephemeral: true,
+            lifecycleCheckpoint: { await gate.checkpoint($0) }
+        )
+        try await shell.coordinator.settingsStore()?.setLiveAISettings(
+            LiveAISettings(sensitivity: .off, preferredName: "Hoang"))
+
+        shell.coordinator.toggleSession()
+        for _ in 0..<300 where !(await gate.started) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await gate.started)
+
+        shell.coordinator.toggleSession()
+        shell.coordinator.toggleSession()
+        for _ in 0..<300 where await shell.counters.captureStarts < 1 {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await shell.counters.captureStarts == 1,
+                "meeting B must start while cancelled startup A is suspended")
+
+        await gate.release()
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 1,
+                "startup A must remove only its own meter and cannot replace B's owner")
+        #expect(shell.coordinator.copilot.canCatchUp)
+        shell.coordinator.requestCatchUp()
+        await waitUntil("meeting B catch-up") {
+            shell.coordinator.copilot.card?.isStreaming == false
+        }
+        #expect(server.recordedRequests.count == 1)
+
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 0)
+    }
+
+    @Test func aiOffWinsWhileStartupConfigurationIsSuspended() async throws {
+        let server = try FakeOpenAIServer.start(responses: [])
+        defer { server.stop() }
+        let gate = LifecycleGate(.startup)
+        let shell = try await makeShell(
+            server: server,
+            ephemeral: true,
+            lifecycleCheckpoint: { await gate.checkpoint($0) }
+        )
+
+        shell.coordinator.toggleSession()
+        for _ in 0..<300 where !(await gate.started) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        let liveSettings = shell.coordinator.liveAISettingsModel()
+        await liveSettings.load()
+        await liveSettings.setEnabled(false)
+        await gate.release()
+        await shell.coordinator.settle()
+
+        #expect(shell.coordinator.copilot.availability == .disabled)
+        #expect(!shell.coordinator.copilot.canAsk)
+        #expect(server.recordedRequests.isEmpty)
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 0)
+    }
+
+    @Test func staleProviderRefreshFromMeetingACannotMutateMeetingB() async throws {
+        let server = try FakeOpenAIServer.start(responses: [Self.answer])
+        defer { server.stop() }
+        let gate = LifecycleGate(.providerRefresh)
+        let alternate = EndpointProfile(
+            id: "alternate",
+            displayName: "Alternate",
+            baseURL: server.baseURL,
+            fastModel: "alternate-fast",
+            deepModel: "alternate-deep"
+        )
+        let credentials = InMemoryCredentialStore(keys: [
+            "fake": "sk-fake",
+            "alternate": "sk-alternate",
+        ])
+        let shell = try await makeShell(
+            server: server,
+            ephemeral: true,
+            profiles: [.fake(baseURL: server.baseURL), alternate],
+            credentialStore: credentials,
+            lifecycleCheckpoint: { await gate.checkpoint($0) }
+        )
+        try await shell.coordinator.settingsStore()?.setLiveAISettings(
+            LiveAISettings(sensitivity: .off, preferredName: "Hoang"))
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+
+        let providers = shell.coordinator.providerSettingsModel()
+        await providers.load()
+        let staleRefresh = Task { await providers.select(profileID: "alternate") }
+        for _ in 0..<300 where !(await gate.started) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await gate.started)
+
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settleCaptureLifecycle()
+        shell.coordinator.toggleSession()
+        for _ in 0..<300 where await shell.counters.captureStarts < 2 {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await shell.counters.captureStarts == 2)
+
+        // A newer transport change commits to meeting B while A's callback is
+        // still suspended at the pre-replacement fence.
+        await providers.select(profileID: "fake")
+        await gate.release()
+        await staleRefresh.value
+
+        shell.coordinator.requestCatchUp()
+        await waitUntil("meeting B provider") {
+            shell.coordinator.copilot.card?.isStreaming == false
+        }
+        #expect(server.recordedRequests.count == 1)
+        #expect(server.recordedRequests[0].jsonBody?["model"] as? String == "fake-model")
+        #expect(server.recordedRequests[0].headers["authorization"] == "Bearer sk-fake")
         shell.coordinator.toggleSession()
         await shell.coordinator.settle()
     }
@@ -690,6 +856,86 @@ struct LiveCopilotCoordinatorTests {
         }
         #expect(server.recordedRequests.count == 3)
         #expect(server.recordedRequests[2].headers["authorization"] == "Bearer sk-after-off")
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+    }
+
+    @Test func aiReenableDoesNotExposeRetainedProviderBeforeRefreshCommits() async throws {
+        let server = try FakeOpenAIServer.start(responses: [Self.answer])
+        defer { server.stop() }
+        let gate = LifecycleGate(.providerRefresh)
+        let shell = try await makeShell(
+            server: server,
+            ephemeral: true,
+            lifecycleCheckpoint: { await gate.checkpoint($0) }
+        )
+        try await shell.coordinator.settingsStore()?.setLiveAISettings(
+            LiveAISettings(sensitivity: .off, preferredName: "Hoang"))
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+
+        let settings = shell.coordinator.liveAISettingsModel()
+        await settings.load()
+        await settings.setEnabled(false)
+        try shell.credentials.store("sk-after-off", for: "fake")
+        let enabling = Task { await settings.setEnabled(true) }
+        for _ in 0..<300 where !(await gate.started) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(shell.coordinator.copilot.availability == .disabled)
+        #expect(!shell.coordinator.copilot.canAsk)
+        shell.coordinator.requestCatchUp()
+        #expect(server.recordedRequests.isEmpty,
+                "the retained old provider must remain unreachable during refresh")
+
+        await gate.release()
+        await enabling.value
+        #expect(shell.coordinator.copilot.canCatchUp)
+        shell.coordinator.requestCatchUp()
+        await waitUntil("catch-up after fenced enable") {
+            shell.coordinator.copilot.card?.isStreaming == false
+        }
+        #expect(server.recordedRequests.count == 1)
+        #expect(server.recordedRequests[0].headers["authorization"] == "Bearer sk-after-off")
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+    }
+
+    @Test func settingsRebindingPreservesCompletedRequestedPresentation() async throws {
+        let server = try FakeOpenAIServer.start(responses: [
+            Self.classifier, Self.answer, Self.answer,
+        ])
+        defer { server.stop() }
+        let shell = try await makeShell(server: server, ephemeral: true)
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+        await waitUntil("initial proactive") {
+            shell.coordinator.copilot.card?.isStreaming == false
+        }
+        shell.coordinator.requestDismissCopilot()
+        shell.coordinator.requestCatchUp()
+        await waitUntil("requested catch-up") {
+            shell.coordinator.copilot.card?.isStreaming == false
+        }
+        let requested = try #require(shell.coordinator.copilot.card)
+        #expect(requested.requested)
+
+        let providers = shell.coordinator.providerSettingsModel()
+        await providers.load()
+        await providers.setCap(0.5)
+        await providers.setModelOverride("ignored", tier: .deep, for: "fake")
+        await providers.saveKey("sk-rebound", for: "fake")
+        #expect(shell.coordinator.copilot.card == requested,
+                "cap, ignored model, and credential changes must preserve completed requested content")
+
+        shell.coordinator.requestDismissCopilot()
+        shell.coordinator.requestAsk()
+        #expect(shell.coordinator.copilot.askPlaceholderVisible)
+        await providers.saveKey("sk-rebound-again", for: "fake")
+        #expect(shell.coordinator.copilot.askPlaceholderVisible,
+                "transport rebinding must preserve an explicitly requested Ask surface")
+        #expect(server.recordedRequests.count == 3)
         shell.coordinator.toggleSession()
         await shell.coordinator.settle()
     }
@@ -779,6 +1025,82 @@ struct LiveCopilotCoordinatorTests {
             return
         }
         #expect(server.recordedRequests.count == 1)
+    }
+
+    @Test func lazyPostMeetingMeterRetainsUncertainDebitAcrossManualRetry() async throws {
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 500, body: OpenAIFixtures.errorBody(message: "temporary outage"))
+        ])
+        defer { server.stop() }
+        let shell = try await makeShell(
+            server: server,
+            capUSD: nil,
+            liveSpendLedger: FailingSpendLedger()
+        )
+        let meetings = try #require(shell.coordinator.historyStore())
+        let meeting = try await meetings.beginMeeting(startedAt: Date(), ephemeral: false)
+        try await meetings.append([
+            Segment(
+                id: UUID(), source: .mic, text: "I will send notes.",
+                tStart: 0, tEnd: 1)
+        ], to: meeting.id)
+        try await meetings.endMeeting(id: meeting.id, endedAt: Date())
+
+        let first = await shell.coordinator.postMeetingAgent()?.generateArtifacts(meetingID: meeting.id)
+        guard case .failed = first else {
+            Issue.record("expected the injected ledger failure, got \(String(describing: first))")
+            return
+        }
+        #expect(server.recordedRequests.count == 1)
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 1)
+        let uncertain = try #require(
+            await shell.coordinator.retainedUncertainSpend(meetingID: meeting.id))
+        #expect(uncertain > 0)
+        let providers = shell.coordinator.providerSettingsModel()
+        await providers.load()
+        // One fresh reservation still fits under this cap. It is the retained
+        // first-attempt debit that makes the retry fail admission.
+        await providers.setCap(uncertain * 1.01)
+
+        let retry = await shell.coordinator.postMeetingAgent()?.generateArtifacts(meetingID: meeting.id)
+        guard case .halted = retry else {
+            Issue.record("manual retry failed open after lazy meter uncertainty")
+            return
+        }
+        #expect(server.recordedRequests.count == 1,
+                "the retained uncertain debit must refuse retry before network")
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 1)
+    }
+
+    @Test func aiOffCannotLeakEphemeralMeterOwnedByCancelledArtifactTask() async throws {
+        let server = try FakeOpenAIServer.start(responses: [])
+        defer { server.stop() }
+        let ledger = BlockingClassifierLedger()
+        let shell = try await makeShell(
+            server: server,
+            ephemeral: true,
+            liveProvider: DeterministicLiveProvider(),
+            liveSpendLedger: ledger
+        )
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+        for _ in 0..<300 where !(await ledger.classifierSettlementStarted) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await ledger.classifierSettlementStarted)
+
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settleCaptureLifecycle()
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 1)
+        let settings = shell.coordinator.liveAISettingsModel()
+        await settings.load()
+        await settings.setEnabled(false)
+        await ledger.releaseClassifierSettlement()
+        await shell.coordinator.settle()
+
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 0,
+                "ephemeral cleanup must outlive artifact-task cancellation")
+        #expect(server.recordedRequests.isEmpty)
     }
 
     @Test func ephemeralCapStillStopsAIWithZeroDiskResidue() async throws {
