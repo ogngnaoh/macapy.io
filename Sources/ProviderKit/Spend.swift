@@ -186,10 +186,16 @@ public actor SpendMeter {
     /// Atomically gates a call and claims its conservative maximum estimated
     /// cost before the upstream provider can receive a request.
     public func reserve(_ request: CompletionRequest, meetingID: UUID?) async throws -> SpendReservation {
+        try Task.checkCancellation()
         let estimate = requestCostCeilingUSD(request)
         var heldCost = estimate
         if let capUSD, let meetingID {
             let spent = try await ledger.totalCostUSD(meetingID: meetingID)
+            // Ledger reads are suspension points. Teardown may cancel an
+            // admitted call while this read is in flight; never let that stale
+            // task create a reservation (and therefore a network request) when
+            // it eventually resumes.
+            try Task.checkCancellation()
             let committed = spent
                 + uncertainCostUSD(meetingID: meetingID)
                 + reservedCostUSD(meetingID: meetingID)
@@ -209,6 +215,7 @@ public actor SpendMeter {
             }
         }
 
+        try Task.checkCancellation()
         let reservation = SpendReservation(id: UUID(), meetingID: meetingID, estimatedCostUSD: estimate)
         reservations[reservation.id] = ReservationState(
             meetingID: meetingID,

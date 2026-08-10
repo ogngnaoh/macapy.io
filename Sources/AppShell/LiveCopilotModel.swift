@@ -351,11 +351,18 @@ final class LiveCopilotModel {
         threshold: Double,
         triggeredAt: Date
     ) async {
-        guard let classifier, let generator else {
-            finish(workID, retainCard: false)
-            return
-        }
         do {
+            // Admission can be cancelled after `receive` creates this task but
+            // before its first MainActor turn. Refuse stale ownership before
+            // resolving the classifier or reaching any provider call.
+            try Task.checkCancellation()
+            guard activeWorkID == workID,
+                  let classifier,
+                  let generator
+            else {
+                finish(workID, retainCard: false)
+                return
+            }
             let decision = try await classifier.classify(
                 recentTurns: context,
                 preferredName: preferredName

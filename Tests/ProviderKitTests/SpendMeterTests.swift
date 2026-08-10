@@ -77,6 +77,24 @@ struct SpendMeterTests {
         func totalCostUSD(meetingID: UUID) async throws -> Double { 0 }
     }
 
+    private actor BlockingTotalLedger: SpendLedger {
+        private var release: CheckedContinuation<Void, Never>?
+        private(set) var totalStarted = false
+
+        func record(_ entry: SpendEntry) async throws {}
+
+        func totalCostUSD(meetingID: UUID) async throws -> Double {
+            totalStarted = true
+            await withCheckedContinuation { release = $0 }
+            return 0
+        }
+
+        func resumeTotal() {
+            release?.resume()
+            release = nil
+        }
+    }
+
     private static let meeting = UUID()
     private static let otherMeeting = UUID()
 
@@ -587,6 +605,29 @@ struct SpendMeterTests {
 
         #expect(second.estimatedCostUSD == first.estimatedCostUSD)
         await meter.cancel(second)
+    }
+
+    @Test func cancellationDuringLedgerAdmissionCannotCreateALateReservation() async throws {
+        let ledger = BlockingTotalLedger()
+        let meter = SpendMeter(
+            ledger: ledger,
+            pricing: Self.pricing,
+            capUSD: 0.20
+        )
+        let admission = Task {
+            try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+        }
+        for _ in 0..<300 {
+            if await ledger.totalStarted { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await ledger.totalStarted)
+
+        admission.cancel()
+        await ledger.resumeTotal()
+
+        await #expect(throws: CancellationError.self) { try await admission.value }
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0)
     }
 
     @Test func raisingTheLiveCapAllowsAPreviouslyRefusedCall() async throws {

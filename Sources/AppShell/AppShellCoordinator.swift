@@ -527,9 +527,12 @@ final class AppShellCoordinator {
         stopTask = Task { [weak self] in
             inFlightStart?.cancel()
             await previousStop?.value
-            // Capture is the critical path: cancel and drain presentation work
-            // first, but never wait here for detached spend settlement.
-            await self?.copilot.stopMeetingAndWait()
+            // Capture is the critical path: synchronously cancel presentation
+            // work, but never await it here. A completed classifier can still
+            // be draining a detached ledger settlement; the artifact task
+            // below owns that wait so source shutdown and the next meeting do
+            // not inherit it.
+            self?.copilot.stopMeeting()
             self?.copilotTurnsTask?.cancel()
             self?.copilotTurnsTask = nil
             let liveMeetingID = self?.activeCopilotMeetingID
