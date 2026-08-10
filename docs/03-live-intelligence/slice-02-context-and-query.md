@@ -1,6 +1,6 @@
 # M3 Slice 02 — Rolling Context and Ask
 
-**Status:** PENDING — acceptance checks approved 2026-08-10 before implementation
+**Status:** ACTIVE 2026-08-11 — building from verified Slice 1 integration SHA `92fd0d8`
 
 ## Outcome
 

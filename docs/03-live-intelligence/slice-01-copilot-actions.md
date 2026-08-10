@@ -1,6 +1,6 @@
 # M3 Slice 01 — Copilot Actions and Safety
 
-**Status:** ACTIVE — acceptance checks approved 2026-08-10 before implementation
+**Status:** CLOSED 2026-08-11 — all automated checks and three independent verifier lenses clear
 
 ## Outcome
 
@@ -25,3 +25,19 @@ A system-audio turn can produce a private suggested answer or user-commitment fl
 8. Spend tests mutation-prove concurrent reservations, release/settlement, booking despite consumer cancellation, cap raise, one shared meter, and no ephemeral disk bytes/rows.
 9. End-to-end fake pipeline proves the turn consumer attaches before capture, emits the expected panel state, records classifier/generation ledger purposes, and tears down before post-meeting work.
 10. Focused target suites, full `swift test`, and `xcodebuild` pass; three fresh verifiers clear concurrency/lifecycle, privacy/spend, and UI/accessibility lenses.
+
+## Closure evidence
+
+- Integration SHA: `92fd0d89d2ba6fb1fd84a3eedca75e7e0b9a3abd` on `codex/m3-live-intelligence`.
+- Full Swift matrix: 431 tests across 73 suites passed, including the credentialed DeepSeek flow and real diarization end-to-end fixture.
+- Xcode: `xcodebuild -project macapy.xcodeproj -scheme macapy build` succeeded.
+- Lifecycle/concurrency verifier: clean; 124 focused tests across 7 suites passed.
+- Privacy/zero-network/spend verifier: clean; 154 focused tests across 15 suites passed.
+- Panel/keyboard/accessibility verifier: clean; 71 focused tests across 5 suites passed and Carbon registered `⌥⌘C`, `⌥⌘K`, and `⌥⌘D` successfully.
+- Integration worktree was clean and `git diff --check` passed after merge.
+
+## Deferred manual evidence
+
+- The final app-complete walk still owns rendered VoiceOver traversal and real key dispatch in the nonactivating panel. Static accessibility contracts, model behavior, and Carbon registration are automated and green.
+- Thread Sanitizer and live-provider/real-database fault injection were not part of this slice's deterministic verification matrix.
+- Conservative uncertain spend is deliberately retained in memory for retry safety; surviving a full process restart was not a locked M3 requirement.
