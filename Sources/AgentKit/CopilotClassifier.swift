@@ -4,6 +4,9 @@ import ProviderKit
 /// Fast-tier, non-thinking classifier for proactive moments.
 public struct CopilotClassifier: Sendable {
     public static let outputTokenCeiling = 96
+    private static let deepSeekSchemaInstructionPrefix =
+        "Reply with exactly one JSON object that validates against this JSON Schema "
+        + "- no prose, no markdown fences:\n"
 
     private let provider: any LLMProvider
     public let model: String
@@ -18,6 +21,15 @@ public struct CopilotClassifier: Sendable {
         preferredName: String? = nil
     ) async throws -> ClassifierDecision {
         let turns = Array(recentTurns.suffix(10))
+        let requestCharacters = Self.requestCharacterCount(
+            recentTurns: turns,
+            preferredName: preferredName
+        )
+        guard requestCharacters <= CopilotContextLimits.hardCharacterLimit else {
+            throw CopilotContextError.requestContextExceedsBudget(
+                characterCount: requestCharacters
+            )
+        }
         let request = CompletionRequest(
             model: model,
             messages: [
@@ -31,6 +43,21 @@ public struct CopilotClassifier: Sendable {
             thinking: false
         )
         return try await provider.complete(request, as: ClassifierDecision.self)
+    }
+
+    /// Conservative exact message-content count for the shipped DeepSeek
+    /// endpoint, including its trailing JSON-schema instruction message.
+    public static func requestCharacterCount(
+        recentTurns: [CopilotTurn],
+        preferredName: String? = nil
+    ) -> Int {
+        systemPrompt(preferredName: preferredName).count
+            + render(Array(recentTurns.suffix(10))).count
+            + deepSeekSchemaInstructionPrefix.count
+            + String(
+                decoding: ClassifierDecision.responseFormat.schema.data,
+                as: UTF8.self
+            ).count
     }
 
     static func systemPrompt(preferredName: String?) -> String {

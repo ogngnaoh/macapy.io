@@ -323,6 +323,24 @@ struct RollingContextTests {
         #expect(context == repeated)
     }
 
+    @Test func clearingGeneratedSummaryPreservesPrefixAndEveryFinalizedTurn() async throws {
+        let manager = try CopilotContextManager(stablePrefix: "Stable speaker semantics")
+        let meeting = (0..<6).map { index in
+            turn(index, start: Double(index * 20), duration: 20, text: "turn-\(index)")
+        }
+        await manager.append(contentsOf: meeting)
+        _ = try await manager.refresh(using: FixtureSummarizer(.value(Self.firstSummary)))
+
+        await manager.clearGeneratedSummary()
+
+        let snapshot = await manager.snapshot()
+        #expect(snapshot.allTurns == meeting)
+        #expect(snapshot.currentSummary == nil)
+        #expect(snapshot.displayText == nil)
+        #expect(snapshot.refreshEligible, "clearing generated cadence permits a fresh eligible refresh")
+        #expect(manager.stablePrefix == "Stable speaker semantics")
+    }
+
     @Test func structuredDecoderRejectsUnknownAndIncompleteNestedFields() {
         let unknown = String(Self.validJSON.dropLast()) + #", "extra":true}"#
         #expect(throws: (any Error).self) {

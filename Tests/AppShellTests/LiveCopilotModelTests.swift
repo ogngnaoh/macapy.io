@@ -170,7 +170,7 @@ struct LiveCopilotModelTests {
             settings: LiveAISettings(preferredName: "Hoang")
         )
 
-        model.receive(turn(), userSpeaking: false, now: Date(timeIntervalSince1970: 100))
+        await model.receive(turn(), userSpeaking: false, now: Date(timeIntervalSince1970: 100))
         await waitUntil("completed suggestion") { model.card?.isStreaming == false }
 
         #expect(model.card?.action == .suggestAnswer)
@@ -193,11 +193,11 @@ struct LiveCopilotModelTests {
             settings: LiveAISettings()
         )
 
-        model.receive(turn(source: .mic), userSpeaking: false)
-        model.receive(turn(text: "Could you repeat that?", start: 63, end: 64), userSpeaking: true)
+        await model.receive(turn(source: .mic), userSpeaking: false)
+        await model.receive(turn(text: "Could you repeat that?", start: 63, end: 64), userSpeaking: true)
         #expect(server.recordedRequests.isEmpty)
 
-        model.receive(turn(text: "Could you repeat that?", start: 65, end: 66), userSpeaking: false)
+        await model.receive(turn(text: "Could you repeat that?", start: 65, end: 66), userSpeaking: false)
         await waitUntil("classifier request") { server.recordedRequests.count == 1 }
         try? await Task.sleep(for: .milliseconds(30))
         #expect(model.card == nil)
@@ -219,7 +219,7 @@ struct LiveCopilotModelTests {
             settings: LiveAISettings(preferredName: "Hoang")
         )
 
-        model.receive(turn(text: "Hoang, please send the runbook by Friday."), userSpeaking: false)
+        await model.receive(turn(text: "Hoang, please send the runbook by Friday."), userSpeaking: false)
         await waitUntil("commitment completion") { model.card?.isStreaming == false }
 
         #expect(model.card?.action == .flagCommitment)
@@ -234,13 +234,13 @@ struct LiveCopilotModelTests {
             provider: client(server), fastModel: "fast", deepModel: "deep",
             settings: LiveAISettings(sensitivity: .off)
         )
-        model.receive(turn(source: .mic, text: "context", start: 0, end: 61), userSpeaking: false)
+        await model.receive(turn(source: .mic, text: "context", start: 0, end: 61), userSpeaking: false)
         #expect(model.canCatchUp)
 
         model.requestCatchUp()
         // Deliberately synchronous with request admission, before its Task is
         // guaranteed an executor turn: this is the regression boundary.
-        model.setAutomaticSuppressed(true)
+        await model.setAutomaticSuppressed(true)
         await waitUntil("catch-up completion") { model.card?.isStreaming == false }
         try? await Task.sleep(for: .milliseconds(60))
 
@@ -259,7 +259,7 @@ struct LiveCopilotModelTests {
         )
 
         model.requestAsk()
-        model.setAutomaticSuppressed(true)
+        await model.setAutomaticSuppressed(true)
 
         #expect(model.askPlaceholderVisible)
         #expect(server.recordedRequests.isEmpty)
@@ -277,14 +277,14 @@ struct LiveCopilotModelTests {
             provider: client(server), fastModel: "fast", deepModel: "deep",
             settings: LiveAISettings(sensitivity: .quiet)
         )
-        model.receive(turn(), userSpeaking: false)
+        await model.receive(turn(), userSpeaking: false)
         await waitUntil("proactive completion") { model.card?.isStreaming == false }
 
-        model.applyLiveSettings(LiveAISettings(sensitivity: .off))
+        await model.applyLiveSettings(LiveAISettings(sensitivity: .off))
         #expect(model.card == nil)
 
         model.requestCatchUp()
-        model.applyLiveSettings(LiveAISettings(sensitivity: .off))
+        await model.applyLiveSettings(LiveAISettings(sensitivity: .off))
         await waitUntil("requested completion") { model.card?.isStreaming == false }
         #expect(model.card?.requested == true)
         #expect(model.card?.action == .catchUp)
@@ -298,9 +298,9 @@ struct LiveCopilotModelTests {
             provider: client(server), fastModel: "fast", deepModel: "deep",
             settings: LiveAISettings()
         )
-        model.receive(turn(source: .mic, text: "context", start: 0, end: 61), userSpeaking: false)
+        await model.receive(turn(source: .mic, text: "context", start: 0, end: 61), userSpeaking: false)
         model.requestCatchUp()
-        model.applyLiveSettings(LiveAISettings(aiFeaturesEnabled: false))
+        await model.applyLiveSettings(LiveAISettings(aiFeaturesEnabled: false))
 
         #expect(model.card == nil)
         #expect(model.availability == .disabled)
@@ -318,7 +318,7 @@ struct LiveCopilotModelTests {
             provider: client(server), fastModel: "fast", deepModel: "deep",
             settings: LiveAISettings()
         )
-        model.receive(turn(), userSpeaking: false)
+        await model.receive(turn(), userSpeaking: false)
         await waitUntil("proactive completion") { model.card?.isStreaming == false }
 
         model.setCardHovered(true)
@@ -345,12 +345,12 @@ struct LiveCopilotModelTests {
             settings: LiveAISettings()
         )
         let firstNow = Date(timeIntervalSince1970: 100)
-        model.receive(turn(), userSpeaking: false, now: firstNow)
+        await model.receive(turn(), userSpeaking: false, now: firstNow)
         await waitUntil("first proactive completion") { model.card?.text == "First" }
         model.setCardHovered(true)
         model.dismissCard()
 
-        model.receive(
+        await model.receive(
             turn(text: "Hoang, can you restate the migration risk?", start: 120, end: 122),
             userSpeaking: false,
             now: firstNow.addingTimeInterval(50)
@@ -366,7 +366,7 @@ struct LiveCopilotModelTests {
             provider: provider, fastModel: "fast", deepModel: "deep",
             settings: LiveAISettings()
         )
-        model.receive(turn(), userSpeaking: false)
+        await model.receive(turn(), userSpeaking: false)
         await waitUntil("classifier suspension") { provider.classifierStarted }
 
         model.requestCatchUp()
@@ -395,7 +395,7 @@ struct LiveCopilotModelTests {
             deepModel: "deep",
             settings: LiveAISettings()
         )
-        model.receive(turn(), userSpeaking: false)
+        await model.receive(turn(), userSpeaking: false)
         await waitUntil("meeting A classifier") { delayed.classifierStarted }
 
         let staleReplacement = Task { @MainActor in
@@ -419,7 +419,7 @@ struct LiveCopilotModelTests {
             deepModel: "b-deep",
             settings: LiveAISettings(sensitivity: .off)
         )
-        model.receive(turn(), userSpeaking: false)
+        await model.receive(turn(), userSpeaking: false)
         await gate.release()
         delayed.releaseClassifierFailure()
         await staleReplacement.value
@@ -443,7 +443,7 @@ struct LiveCopilotModelTests {
             provider: client(server), fastModel: "fast", deepModel: "deep",
             settings: LiveAISettings()
         )
-        model.receive(turn(), userSpeaking: false)
+        await model.receive(turn(), userSpeaking: false)
         await waitUntil("proactive answer") { model.card?.text == "Proactive answer." }
         for _ in 0..<300 {
             if await expiry.started { break }
@@ -481,7 +481,7 @@ struct LiveCopilotModelTests {
             settings: LiveAISettings()
         )
 
-        model.receive(turn(), userSpeaking: false)
+        await model.receive(turn(), userSpeaking: false)
         await waitUntil("cap pause") {
             if case .paused = model.availability { return true }
             return false
@@ -498,7 +498,7 @@ struct LiveCopilotModelTests {
         model.requestAsk()
         #expect(!model.askPlaceholderVisible)
 
-        model.applyLiveSettings(LiveAISettings(sensitivity: .active, preferredName: "Mai"))
+        await model.applyLiveSettings(LiveAISettings(sensitivity: .active, preferredName: "Mai"))
         #expect(!model.canCatchUp, "live AI preference edits must not release a cap pause")
         #expect(!model.canAsk)
 
@@ -517,7 +517,7 @@ struct LiveCopilotModelTests {
             provider: client(server), fastModel: "fast", deepModel: "deep",
             settings: LiveAISettings()
         )
-        model.receive(turn(), userSpeaking: false)
+        await model.receive(turn(), userSpeaking: false)
         await waitUntil("authentication hard pause") { model.availability == .setupRequired }
 
         #expect(!model.canCatchUp)

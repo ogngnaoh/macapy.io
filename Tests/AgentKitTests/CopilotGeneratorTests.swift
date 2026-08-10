@@ -493,4 +493,35 @@ struct CopilotGeneratorTests {
             #expect(result.error as? ProviderError == .server(status: status, message: "provider unavailable"))
         }
     }
+
+    @Test func everyAppShellBudgetSeamReportsTheExactMessageCharacterCount() async throws {
+        let recorder = RequestRecorder()
+        let generator = CopilotGenerator(
+            provider: RecordingProvider(recorder: recorder),
+            model: "deep"
+        )
+        let context = "Them: quoted \"fact\"\nYou: control \u{0001}"
+
+        _ = await collect(generator.suggestedAnswer(context: context, target: "risk?"))
+        _ = await collect(generator.commitment(context: context, target: "send Friday"))
+        _ = await collect(generator.catchUp(context: context))
+        _ = await collect(generator.query(context: context, question: "what changed?"))
+
+        let requests = await recorder.requests
+        #expect(requests.count == 4)
+        #expect(CopilotGenerator.suggestedAnswerRequestCharacterCount(
+            context: context,
+            target: "risk?"
+        ) == requests[0].messages.reduce(0) { $0 + $1.content.count })
+        #expect(CopilotGenerator.commitmentRequestCharacterCount(
+            context: context,
+            target: "send Friday"
+        ) == requests[1].messages.reduce(0) { $0 + $1.content.count })
+        #expect(CopilotGenerator.catchUpRequestCharacterCount(context: context)
+            == requests[2].messages.reduce(0) { $0 + $1.content.count })
+        #expect(CopilotGenerator.queryRequestCharacterCount(
+            context: context,
+            question: "what changed?"
+        ) == requests[3].messages.reduce(0) { $0 + $1.content.count })
+    }
 }

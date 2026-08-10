@@ -8,6 +8,11 @@ import TranscribeKit
 protocol PanelPresenting {
     func show(session: SessionController, store: TranscriptStore, copilot: LiveCopilotModel)
     func hide()
+    func focusQuery()
+}
+
+extension PanelPresenting {
+    func focusQuery() {}
 }
 
 /// Owns the compact always-on-top floating panel shown while a session runs.
@@ -28,6 +33,13 @@ final class FloatingPanelController: PanelPresenting {
 
     func hide() {
         panel?.orderOut(nil)
+    }
+
+    /// A nonactivating panel does not steal the meeting app's activation, but
+    /// its text field still needs a key window to accept typing after the
+    /// global Ask shortcut. SwiftUI's focus revision then selects the field.
+    func focusQuery() {
+        panel?.makeKeyAndOrderFront(nil)
     }
 
     private func makePanel(

@@ -207,22 +207,32 @@ final class AppShellCoordinator {
         switch session.state {
         case .capturing:
             session.pause()
-            copilot.setAutomaticSuppressed(true)
             let pausing = pipeline
-            pauseResumeTask = Task { await pausing?.pause() }
+            pauseResumeTask = Task { [weak self] in
+                await self?.copilot.setAutomaticSuppressed(true)
+                await pausing?.pause()
+            }
         case .paused:
             session.resume()
-            copilot.setAutomaticSuppressed(false)
             let resuming = pipeline
-            pauseResumeTask = Task { await resuming?.resume() }
+            pauseResumeTask = Task { [weak self] in
+                await self?.copilot.setAutomaticSuppressed(false)
+                await resuming?.resume()
+            }
         case .idle:
             break
         }
     }
 
     func requestCatchUp() { copilot.requestCatchUp() }
-    func requestAsk() { copilot.requestAsk() }
-    func requestDismissCopilot() { copilot.dismissCard() }
+    func requestAsk() {
+        guard copilot.canAsk else { return }
+        copilot.requestAsk()
+        panel.focusQuery()
+    }
+    func requestDismissCopilot() {
+        copilot.dismissCard()
+    }
 
     private func syncPanel() {
         if session.isCapturing {
@@ -263,7 +273,7 @@ final class AppShellCoordinator {
             self.copilotTurnsTask = Task { @MainActor [weak self] in
                 for await turn in turns {
                     guard let self, self.pipeline === newPipeline else { return }
-                    self.copilot.receive(
+                    await self.copilot.receive(
                         turn,
                         userSpeaking: self.store.volatile[.mic] != nil
                     )
@@ -848,7 +858,7 @@ final class AppShellCoordinator {
             automaticArtifactGenerationRevision &+= 1
             // Disable synchronously before any suspension. This wins against a
             // stale startup or enable callback that later resumes.
-            copilot.applyLiveSettings(settings)
+            await copilot.applyLiveSettings(settings)
             for task in artifactGenerationTasks.values {
                 task.cancel()
             }
@@ -887,7 +897,7 @@ final class AppShellCoordinator {
             }
             break
         }
-        copilot.applyLiveSettings(settings)
+        await copilot.applyLiveSettings(settings)
         await cachedPostMeetingAgent?.setGenerationEnabled(true)
     }
 
