@@ -98,9 +98,16 @@ final class LiveCopilotModel {
     @ObservationIgnored private var expiryRemaining: TimeInterval = 25
     @ObservationIgnored private var expiryStartedAt: Date?
     @ObservationIgnored private let proactiveLifetime: TimeInterval
+    @ObservationIgnored private let waitForExpiry: @Sendable (TimeInterval) async throws -> Void
 
-    init(proactiveLifetime: TimeInterval = 25) {
+    init(
+        proactiveLifetime: TimeInterval = 25,
+        waitForExpiry: @escaping @Sendable (TimeInterval) async throws -> Void = { delay in
+            try await Task.sleep(for: .seconds(delay))
+        }
+    ) {
         self.proactiveLifetime = proactiveLifetime
+        self.waitForExpiry = waitForExpiry
     }
 
     var canCatchUp: Bool {
@@ -253,8 +260,8 @@ final class LiveCopilotModel {
             expiryStartedAt = nil
             expiryTask?.cancel()
             expiryTask = nil
-        } else if card != nil {
-            scheduleExpiry()
+        } else if let cardID = card?.id {
+            scheduleExpiry(cardID: cardID)
         }
     }
 
@@ -324,7 +331,8 @@ final class LiveCopilotModel {
             try Task.checkCancellation()
             guard decision.meetsThreshold(threshold),
                   let action = decision.action,
-                  let target = decision.target
+                  let target = decision.target,
+                  activeWorkID == workID
             else {
                 finish(workID, retainCard: false)
                 return
@@ -352,13 +360,15 @@ final class LiveCopilotModel {
                 return
             }
             try await consume(stream, cardID: workID)
-            finish(workID, retainCard: true)
-            scheduleExpiry()
+            if finish(workID, retainCard: true) {
+                scheduleExpiry(cardID: workID)
+            }
         } catch is CancellationError {
             finish(workID, retainCard: false)
         } catch {
-            finish(workID, retainCard: false)
-            handle(error)
+            if finish(workID, retainCard: false) {
+                handle(error)
+            }
         }
     }
 
@@ -376,6 +386,7 @@ final class LiveCopilotModel {
         currentWorkRequested = true
         workTask = Task { [weak self] in
             guard let self else { return }
+            guard activeWorkID == workID, !Task.isCancelled else { return }
             card = LiveCopilotCard(
                 id: workID,
                 action: action,
@@ -391,8 +402,9 @@ final class LiveCopilotModel {
             } catch is CancellationError {
                 finish(workID, retainCard: false)
             } catch {
-                finish(workID, retainCard: false)
-                handle(error)
+                if finish(workID, retainCard: false) {
+                    handle(error)
+                }
             }
         }
     }
@@ -416,8 +428,9 @@ final class LiveCopilotModel {
         }
     }
 
-    private func finish(_ workID: UUID, retainCard: Bool) {
-        guard activeWorkID == workID else { return }
+    @discardableResult
+    private func finish(_ workID: UUID, retainCard: Bool) -> Bool {
+        guard activeWorkID == workID else { return false }
         activeWorkID = nil
         workTask = nil
         currentWorkRequested = false
@@ -427,6 +440,7 @@ final class LiveCopilotModel {
                 availability = provider == nil ? .setupRequired : .ready
             }
         }
+        return true
     }
 
     private func handle(_ error: any Error) {
@@ -462,15 +476,26 @@ final class LiveCopilotModel {
         }
     }
 
-    private func scheduleExpiry() {
-        guard card?.requested == false, !cardHovered, !cardFocused else { return }
+    private func scheduleExpiry(cardID: UUID) {
+        guard card?.id == cardID,
+              card?.requested == false,
+              !cardHovered,
+              !cardFocused
+        else { return }
         expiryTask?.cancel()
         let delay = max(0, expiryRemaining)
         expiryStartedAt = Date()
+        let waitForExpiry = self.waitForExpiry
         expiryTask = Task { [weak self] in
             do {
-                try await Task.sleep(for: .seconds(delay))
-                guard let self, !self.cardHovered, !self.cardFocused else { return }
+                try await waitForExpiry(delay)
+                try Task.checkCancellation()
+                guard let self,
+                      self.card?.id == cardID,
+                      self.card?.requested == false,
+                      !self.cardHovered,
+                      !self.cardFocused
+                else { return }
                 self.dismissCard()
             } catch {}
         }

@@ -75,6 +75,11 @@ public actor PostMeetingAgent {
     /// admission and immediately before persistence so an already-completed
     /// provider reply cannot race rows onto disk after cancellation.
     private var generationEnabled = true
+    /// Monotonic kill-switch generation. Disabling AI advances it, so an
+    /// attempt admitted before an off -> on transition can never resume just
+    /// because generation is enabled again by the time an earlier await
+    /// returns.
+    private var generationEpoch: UInt64 = 0
     private let log = Logger(subsystem: "io.macapy.app", category: "AgentKit")
 
     public init(
@@ -92,6 +97,7 @@ public actor PostMeetingAgent {
     @discardableResult
     public func generateArtifacts(meetingID: UUID) async -> Outcome {
         guard generationEnabled, !Task.isCancelled else { return .cancelled }
+        let admittedEpoch = generationEpoch
         guard !generatingMeetingIDs.contains(meetingID) else { return .skippedGenerationInFlight }
         generatingMeetingIDs.insert(meetingID)
         defer {
@@ -126,13 +132,23 @@ public actor PostMeetingAgent {
                 model: context.model,
                 chunkBudgetCharacters: chunkBudgetCharacters
             )
+            // `makeContext`, transcript loading, and every store access above
+            // are suspension points where AI-off can interleave. Revalidate
+            // in this actor stretch immediately before creating *and*
+            // registering provider work.
+            guard generationEnabled,
+                  generationEpoch == admittedEpoch,
+                  !Task.isCancelled
+            else { return .cancelled }
             let extractionTask = Task { try await extractor.extract(transcript) }
             extractionTasks[meetingID] = extractionTask
             let extraction = try await extractionTask.value
             // The kill switch can interleave at every await above. Keep this
             // checkpoint adjacent to the one transactional persistence call.
-            try Task.checkCancellation()
-            guard generationEnabled else { return .cancelled }
+            guard generationEnabled,
+                  generationEpoch == admittedEpoch,
+                  !Task.isCancelled
+            else { return .cancelled }
             let rows = try await artifacts.insertDrafts(try extraction.drafts(), meetingID: meetingID)
             let elapsed = Date().timeIntervalSince(startedAt)
             lastDraftedInSeconds = elapsed
@@ -163,6 +179,7 @@ public actor PostMeetingAgent {
     public func setGenerationEnabled(_ enabled: Bool) async {
         generationEnabled = enabled
         guard !enabled else { return }
+        generationEpoch &+= 1
         let tasks = Array(extractionTasks.values)
         for task in tasks { task.cancel() }
         for task in tasks { _ = await task.result }
