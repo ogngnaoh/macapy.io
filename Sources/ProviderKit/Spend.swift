@@ -68,7 +68,8 @@ public struct PricingTable: Sendable, Equatable, Codable {
     /// Starting rates for the built-in profiles' default models, in USD per
     /// million tokens. Every built-in profile's default fast/deep model must
     /// have an entry (`PricingDefaultsTests`) — a missing rate books rows with
-    /// no cost, and costless rows never count toward the per-meeting cap.
+    /// no cost, while `SpendMeter` conservatively retains the request hold so
+    /// the persistent unknown cannot fail an active meeting's cap open.
     ///
     /// **These are starting points to confirm against the provider's own
     /// pricing page** (DeepSeek rates checked against api-docs.deepseek.com
@@ -148,6 +149,12 @@ public actor SpendMeter {
     /// `nil` means uncapped (PRD FR-015: the cap is opt-in).
     public private(set) var capUSD: Double?
     private var reservations: [UUID: ReservationState] = [:]
+    /// Conservative debits for successful calls whose final cost could not be
+    /// represented by the persistent ledger (missing usage, unknown pricing,
+    /// or a failed ledger write). They last for this meter's meeting lifetime
+    /// so a cap can never fail open merely because accounting was incomplete.
+    private var uncertainDebits: [UUID: (meetingID: UUID, costUSD: Double)] = [:]
+    private var settlementWaiters: [UUID: CheckedContinuation<Void, any Error>] = [:]
 
     public init(ledger: any SpendLedger, pricing: PricingTable, capUSD: Double?) {
         self.ledger = ledger
@@ -168,7 +175,9 @@ public actor SpendMeter {
     public func authorize(meetingID: UUID?) async throws {
         guard let capUSD, let meetingID else { return }
         let spent = try await ledger.totalCostUSD(meetingID: meetingID)
-        let committed = spent + reservedCostUSD(meetingID: meetingID)
+        let committed = spent
+            + uncertainCostUSD(meetingID: meetingID)
+            + reservedCostUSD(meetingID: meetingID)
         guard committed < capUSD else {
             throw ProviderError.capReached(spentUSD: committed, capUSD: capUSD)
         }
@@ -181,7 +190,9 @@ public actor SpendMeter {
         var heldCost = estimate
         if let capUSD, let meetingID {
             let spent = try await ledger.totalCostUSD(meetingID: meetingID)
-            let committed = spent + reservedCostUSD(meetingID: meetingID)
+            let committed = spent
+                + uncertainCostUSD(meetingID: meetingID)
+                + reservedCostUSD(meetingID: meetingID)
             if let estimate {
                 guard committed + estimate <= capUSD else {
                     throw ProviderError.capReached(spentUSD: committed, capUSD: capUSD)
@@ -220,7 +231,7 @@ public actor SpendMeter {
     ) async throws -> SpendEntry? {
         guard var state = reservations[reservation.id] else { return nil }
         guard let usage else {
-            reservations.removeValue(forKey: reservation.id)
+            finishReservation(reservation.id, state: state, retainingUncertainDebit: true)
             return nil
         }
 
@@ -239,19 +250,64 @@ public actor SpendMeter {
             purpose: state.purpose,
             at: at
         )
-        defer { reservations.removeValue(forKey: reservation.id) }
-        try await ledger.record(entry)
-        return entry
+        do {
+            try await ledger.record(entry)
+            finishReservation(
+                reservation.id,
+                state: state,
+                retainingUncertainDebit: actualCost == nil
+            )
+            return entry
+        } catch {
+            // The provider has completed successfully, so deleting the hold
+            // here would make the next request believe the failed write was a
+            // free call. Preserve at least the reservation ceiling in memory.
+            finishReservation(reservation.id, state: state, retainingUncertainDebit: true)
+            throw error
+        }
     }
 
     /// Releases a call that failed or was cancelled before reporting usage.
     public func cancel(_ reservation: SpendReservation) {
         reservations.removeValue(forKey: reservation.id)
+        resumeSettlementWaitersIfIdle()
     }
 
     /// The amount currently held by calls in flight for this meeting.
     public func reservedUSD(meetingID: UUID) -> Double {
         reservedCostUSD(meetingID: meetingID)
+    }
+
+    /// Conservative completed-call debits not represented in the ledger.
+    /// Exposed for diagnostics and focused invariant tests; callers should use
+    /// `spentUSD` for the user-facing persistent estimate.
+    public func uncertainUSD(meetingID: UUID) -> Double {
+        uncertainCostUSD(meetingID: meetingID)
+    }
+
+    /// Suspends until every active reservation has either settled or been
+    /// cancelled. Lifecycle owners use this before discarding a meeting meter,
+    /// ensuring detached ledger settlement has completed. Cancelling the
+    /// waiter throws `CancellationError` without cancelling provider calls or
+    /// leaking a continuation.
+    public func waitForSettlements() async throws {
+        try Task.checkCancellation()
+        guard !reservations.isEmpty else { return }
+
+        let waiterID = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                if reservations.isEmpty {
+                    continuation.resume()
+                } else if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else {
+                    settlementWaiters[waiterID] = continuation
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelSettlementWaiter(waiterID) }
+        }
     }
 
     /// Books one call. Returns the entry written, or `nil` when the endpoint
@@ -317,6 +373,40 @@ public actor SpendMeter {
             .compactMap(\.heldCostUSD)
             .reduce(0, +)
     }
+
+    private func uncertainCostUSD(meetingID: UUID) -> Double {
+        uncertainDebits.values
+            .filter { $0.meetingID == meetingID }
+            .map(\.costUSD)
+            .reduce(0, +)
+    }
+
+    private func finishReservation(
+        _ id: UUID,
+        state: ReservationState,
+        retainingUncertainDebit: Bool
+    ) {
+        reservations.removeValue(forKey: id)
+        if retainingUncertainDebit,
+           let meetingID = state.meetingID,
+           let heldCostUSD = state.heldCostUSD,
+           heldCostUSD > 0
+        {
+            uncertainDebits[id] = (meetingID, heldCostUSD)
+        }
+        resumeSettlementWaitersIfIdle()
+    }
+
+    private func cancelSettlementWaiter(_ id: UUID) {
+        settlementWaiters.removeValue(forKey: id)?.resume(throwing: CancellationError())
+    }
+
+    private func resumeSettlementWaitersIfIdle() {
+        guard reservations.isEmpty else { return }
+        let waiters = settlementWaiters.values
+        settlementWaiters.removeAll()
+        for waiter in waiters { waiter.resume() }
+    }
 }
 
 /// Wraps any `LLMProvider` so the cap is checked before every call and a ledger
@@ -363,7 +453,14 @@ public struct MeteredProvider: LLMProvider {
                         // The upstream may have delivered its billed usage
                         // before the failure or cancellation reached us; the
                         // original error still wins.
-                        await settleLoggingFailure(held, usage: usage, request: request)
+                        if usage != nil {
+                            await settleLoggingFailure(held, usage: usage, request: request)
+                        } else {
+                            // Explicit cancellation/transport failure without
+                            // reported usage is not a successful completion and
+                            // must release its reservation.
+                            await meter.cancel(held)
+                        }
                         reservation = nil
                         throw error
                     }

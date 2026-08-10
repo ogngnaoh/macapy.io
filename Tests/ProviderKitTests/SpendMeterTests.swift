@@ -13,6 +13,16 @@ import Testing
 /// consulted by the provider decorator alone.
 struct SpendMeterTests {
 
+    private actor FailingRecordLedger: SpendLedger {
+        struct WriteFailure: Error {}
+
+        func record(_ entry: SpendEntry) async throws {
+            throw WriteFailure()
+        }
+
+        func totalCostUSD(meetingID: UUID) async throws -> Double { 0 }
+    }
+
     private static let meeting = UUID()
     private static let otherMeeting = UUID()
 
@@ -255,6 +265,150 @@ struct SpendMeterTests {
         #expect(entry?.purpose == .classifier)
         #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0)
         #expect(await ledger.entries.count == 1)
+    }
+
+    @Test func successfulCallWithoutUsageRetainsItsReservationAsAnUncertainDebit() async throws {
+        let meter = SpendMeter(
+            ledger: InMemorySpendLedger(),
+            pricing: Self.pricing,
+            capUSD: 1.0
+        )
+        let reservation = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+        let held = try #require(reservation.estimatedCostUSD)
+
+        let entry = try await meter.settle(reservation, usage: nil)
+
+        #expect(entry == nil)
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0)
+        #expect(await meter.uncertainUSD(meetingID: Self.meeting) >= held)
+        await meter.updateCapUSD(held * 1.5)
+        await #expect(throws: ProviderError.self) {
+            _ = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+        }
+    }
+
+    @Test func normalStreamWithoutUsageCannotMakeASequentialCallFailOpen() async throws {
+        let ledger = InMemorySpendLedger()
+        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: 1.0)
+        var request = CompletionRequest.hello
+        request.maxTokens = 5_000
+        let held = try #require(await meter.requestCostCeilingUSD(request))
+        let server = try FakeOpenAIServer.start(responses: [
+            .sse(frames: [
+                OpenAIFixtures.contentDelta("complete answer"),
+                OpenAIFixtures.finish(reason: "stop"),
+                OpenAIFixtures.done,
+            ])
+        ])
+        defer { server.stop() }
+        let provider = MeteredProvider(
+            upstream: OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test"),
+            meter: meter,
+            meetingID: Self.meeting
+        )
+
+        for try await _ in provider.stream(request) {}
+
+        #expect(await ledger.entries.isEmpty)
+        #expect(await meter.uncertainUSD(meetingID: Self.meeting) >= held)
+        await meter.updateCapUSD(held * 1.5)
+        await #expect(throws: ProviderError.self) {
+            _ = try await meter.reserve(request, meetingID: Self.meeting)
+        }
+    }
+
+    @Test func successfulUnpricedCallCannotFailOpenAndCapRaisingAddsCapacity() async throws {
+        let meter = SpendMeter(
+            ledger: InMemorySpendLedger(),
+            pricing: PricingTable(rates: [:]),
+            capUSD: 0.20
+        )
+        let first = try await meter.reserve(.hello, meetingID: Self.meeting)
+
+        _ = try await meter.settle(
+            first,
+            usage: TokenUsage(promptTokens: 10, completionTokens: 5)
+        )
+
+        #expect(await meter.uncertainUSD(meetingID: Self.meeting) == 0.20)
+        await #expect(throws: ProviderError.self) {
+            _ = try await meter.reserve(.hello, meetingID: Self.meeting)
+        }
+
+        await meter.updateCapUSD(0.40)
+        let second = try await meter.reserve(.hello, meetingID: Self.meeting)
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0.20)
+        await meter.cancel(second)
+    }
+
+    @Test func failedLedgerWriteRetainsAConservativeDebit() async throws {
+        let meter = SpendMeter(
+            ledger: FailingRecordLedger(),
+            pricing: Self.pricing,
+            capUSD: 0.20
+        )
+        let reservation = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+        let held = try #require(reservation.estimatedCostUSD)
+
+        await #expect(throws: FailingRecordLedger.WriteFailure.self) {
+            _ = try await meter.settle(
+                reservation,
+                usage: TokenUsage(promptTokens: 10, completionTokens: 5)
+            )
+        }
+
+        #expect(await meter.uncertainUSD(meetingID: Self.meeting) >= held)
+        await #expect(throws: ProviderError.self) {
+            _ = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+        }
+    }
+
+    @Test func waitForSettlementsIsAwaitableAndCancellationSafe() async throws {
+        let meter = SpendMeter(
+            ledger: InMemorySpendLedger(),
+            pricing: Self.pricing,
+            capUSD: 0.20
+        )
+        let reservation = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+        let waiter = Task {
+            try await meter.waitForSettlements()
+            return true
+        }
+        await Task.yield()
+
+        await meter.cancel(reservation)
+        #expect(try await waiter.value)
+
+        let second = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+        let cancelledWaiter = Task { try await meter.waitForSettlements() }
+        await Task.yield()
+        cancelledWaiter.cancel()
+        await #expect(throws: CancellationError.self) { try await cancelledWaiter.value }
+        await meter.cancel(second)
+        try await meter.waitForSettlements()
+    }
+
+    @Test func transportFailureWithoutUsageReleasesTheReservation() async throws {
+        let ledger = InMemorySpendLedger()
+        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: 0.20)
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 503, body: OpenAIFixtures.errorBody(message: "down"))
+        ])
+        defer { server.stop() }
+        let provider = MeteredProvider(
+            upstream: OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test"),
+            meter: meter,
+            meetingID: Self.meeting
+        )
+
+        do {
+            for try await _ in provider.stream(Self.expensiveRequest) {}
+        } catch {}
+
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0)
+        #expect(await meter.uncertainUSD(meetingID: Self.meeting) == 0)
+        let next = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+        await meter.cancel(next)
     }
 
     @Test func cancellationReleasesCapacityForTheNextCall() async throws {

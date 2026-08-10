@@ -162,7 +162,7 @@ public struct Completion: Sendable, Equatable {
     public var usage: TokenUsage?
 
     public init(finishReason: String?, usage: TokenUsage?) {
-        self.finishReason = finishReason
+        self.finishReason = finishReason.map(ProviderError.safeTerminalReason)
         self.usage = usage
     }
 }
@@ -221,6 +221,21 @@ public enum ProviderError: Error, Equatable {
 }
 
 public extension ProviderError {
+    /// Reduces provider-controlled terminal text to a fixed diagnostic
+    /// vocabulary. `nil`, empty, and novel values are intentionally
+    /// indistinguishable so transcript-like hostile strings cannot escape in
+    /// an error, log, or streaming completion.
+    static func safeTerminalReason(_ reason: String?) -> String {
+        switch reason {
+        case "stop": return "stop"
+        case "length": return "length"
+        case "content_filter": return "content_filter"
+        case "tool_calls": return "tool_calls"
+        case "function_call": return "function_call"
+        default: return "unknown"
+        }
+    }
+
     /// A log-safe rendering: the case name (plus any status code), **never**
     /// the endpoint's message — a provider is free to echo request content
     /// back in an error string, and that content is exactly what must not
@@ -235,7 +250,7 @@ public extension ProviderError {
         case .inStreamError: return "inStreamError"
         case .malformedResponse: return "malformedResponse"
         case .decodingFailed: return "decodingFailed"
-        case .truncated(let reason): return "truncated(\(reason))"
+        case .truncated(let reason): return "truncated(\(Self.safeTerminalReason(reason)))"
         case .missingCredentials: return "missingCredentials"
         case .capReached: return "capReached"
         }

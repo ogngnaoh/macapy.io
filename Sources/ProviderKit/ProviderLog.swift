@@ -32,7 +32,7 @@ enum ProviderLog {
             promptTokens=\(usage?.promptTokens ?? -1, privacy: .public) \
             cachedTokens=\(usage?.cachedTokens ?? -1, privacy: .public) \
             completionTokens=\(usage?.completionTokens ?? -1, privacy: .public) \
-            finish=\(finishReason ?? "none", privacy: .public)
+            finish=\(ProviderError.safeTerminalReason(finishReason), privacy: .public)
             """
         )
     }

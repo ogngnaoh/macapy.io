@@ -61,13 +61,14 @@ public struct OpenAICompatibleClient: LLMProvider {
             throw ProviderError.malformedResponse("body is not a chat completion with message content")
         }
 
-        // A non-stop finish means the endpoint cut the reply (`length`) or
-        // withheld part of it (`content_filter`); the payload cannot be
-        // trusted as the whole answer even if it parses, so this is checked
-        // *before* decoding is attempted. Absent finish_reason passes: not
-        // every compatible endpoint sends one on non-streaming replies.
-        let finishReason = choices.first?["finish_reason"] as? String
-        if let finishReason, finishReason != "stop" {
+        // Only an explicit natural stop is a complete structured reply.
+        // Missing and provider-invented reasons are both truncation; terminal
+        // labels are reduced to a fixed safe vocabulary before they can enter
+        // errors, logs, or downstream completion state.
+        let finishReason = ProviderError.safeTerminalReason(
+            choices.first?["finish_reason"] as? String
+        )
+        if finishReason != "stop" {
             let failure = ProviderError.truncated(finishReason: finishReason)
             ProviderLog.failed(model: request.model, purpose: request.purpose, error: failure)
             throw failure
@@ -132,7 +133,9 @@ public struct OpenAICompatibleClient: LLMProvider {
             if let content = chunk.content, !content.isEmpty {
                 continuation.yield(.token(content))
             }
-            if let reason = chunk.finishReason { finishReason = reason }
+            if let reason = chunk.finishReason {
+                finishReason = ProviderError.safeTerminalReason(reason)
+            }
             if let chunkUsage = chunk.usage { usage = chunkUsage }
         }
 

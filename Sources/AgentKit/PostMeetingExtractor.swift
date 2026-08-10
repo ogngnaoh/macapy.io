@@ -7,6 +7,12 @@ import ProviderKit
 /// reduce with a merge call, so no meeting length hard-fails (slice-03
 /// decision 2).
 public struct PostMeetingExtractor: Sendable {
+    /// A complete extraction is bounded even for map/reduce calls. 4,096 is
+    /// enough for the 3–5 sentence summary plus a long meeting's explicit
+    /// decisions and actions while keeping reservation and spend estimates
+    /// finite before the request begins.
+    static let maxOutputTokens = 4_096
+
     let provider: any LLMProvider
     let model: String
     /// Per-call transcript budget in characters (~4 chars/token ⇒ 60k ≈ 15k
@@ -53,7 +59,8 @@ public struct PostMeetingExtractor: Sendable {
             model: model,
             messages: [.system(Self.systemPrompt), .user(user)],
             purpose: .artifact,
-            responseFormat: MeetingExtraction.responseFormat
+            responseFormat: MeetingExtraction.responseFormat,
+            maxTokens: Self.maxOutputTokens
         )
         return try await provider.complete(request, as: MeetingExtraction.self)
     }
