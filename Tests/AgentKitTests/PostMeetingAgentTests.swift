@@ -7,6 +7,25 @@ import Testing
 
 @testable import AgentKit
 
+private actor ProviderContextGate {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var entered = false
+    private var released = false
+
+    func suspendUntilReleased() async {
+        entered = true
+        guard !released else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
+    }
+}
+
 /// The agent's paths beyond decode: chunked map-reduce (check 4), the
 /// retroactive/no-provider path (check 5), the cap gate (check 6), and the
 /// skip guards (check 7's unit half).
@@ -299,5 +318,79 @@ struct PostMeetingAgentTests {
             return
         }
         #expect(server.recordedRequests.count == 2)
+    }
+
+    @Test func globalAIOffDuringProviderAdmissionMakesZeroRequestsAndRemainsRetryable() async throws {
+        let harness = try await AgentHarness.start()
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+        ])
+        defer { server.stop() }
+        let gate = ProviderContextGate()
+        let agent = PostMeetingAgent(meetings: harness.meetings, artifacts: harness.artifacts) { _ in
+            await gate.suspendUntilReleased()
+            return PostMeetingProviderContext(
+                provider: OpenAICompatibleClient(
+                    profile: .fake(baseURL: server.baseURL), apiKey: "sk-test"),
+                model: "fake-model"
+            )
+        }
+
+        let attempt = Task { await agent.generateArtifacts(meetingID: harness.meetingID) }
+        for _ in 0..<300 {
+            if await gate.entered { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await gate.entered)
+        await agent.setGenerationEnabled(false)
+        await gate.release()
+
+        #expect(await attempt.value == .cancelled)
+        #expect(server.recordedRequests.isEmpty)
+        #expect(try await harness.artifacts.artifacts(for: harness.meetingID).isEmpty)
+
+        await agent.setGenerationEnabled(true)
+        guard case .drafted = await agent.generateArtifacts(meetingID: harness.meetingID) else {
+            Issue.record("AI-off admission cancellation must remain retryable")
+            return
+        }
+        #expect(server.recordedRequests.count == 1)
+    }
+
+    @Test func rapidAIOffThenOnCannotResurrectAnAdmittedOldAttempt() async throws {
+        let harness = try await AgentHarness.start()
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+        ])
+        defer { server.stop() }
+        let gate = ProviderContextGate()
+        let agent = PostMeetingAgent(meetings: harness.meetings, artifacts: harness.artifacts) { _ in
+            await gate.suspendUntilReleased()
+            return PostMeetingProviderContext(
+                provider: OpenAICompatibleClient(
+                    profile: .fake(baseURL: server.baseURL), apiKey: "sk-test"),
+                model: "fake-model"
+            )
+        }
+
+        let oldAttempt = Task { await agent.generateArtifacts(meetingID: harness.meetingID) }
+        for _ in 0..<300 {
+            if await gate.entered { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await gate.entered)
+        await agent.setGenerationEnabled(false)
+        await agent.setGenerationEnabled(true)
+        await gate.release()
+
+        #expect(await oldAttempt.value == .cancelled)
+        #expect(server.recordedRequests.isEmpty)
+        #expect(try await harness.artifacts.artifacts(for: harness.meetingID).isEmpty)
+
+        guard case .drafted = await agent.generateArtifacts(meetingID: harness.meetingID) else {
+            Issue.record("a fresh post-toggle attempt should draft")
+            return
+        }
+        #expect(server.recordedRequests.count == 1)
     }
 }

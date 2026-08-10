@@ -9,6 +9,63 @@ import TranscribeKit
 
 @testable import AppShell
 
+private final class DelayedClassifierFailureProvider: LLMProvider, @unchecked Sendable {
+    private let lock = NSLock()
+    private var classifierRelease: CheckedContinuation<Void, Never>?
+    private var didStartClassifier = false
+
+    var classifierStarted: Bool {
+        lock.withLock { didStartClassifier }
+    }
+
+    func releaseClassifierFailure() {
+        let continuation = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+            defer { classifierRelease = nil }
+            return classifierRelease
+        }
+        continuation?.resume()
+    }
+
+    func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
+        AsyncThrowingStream { continuation in
+            continuation.yield(.token("Replacement catch-up."))
+            continuation.yield(.completed(Completion(
+                finishReason: "stop",
+                usage: TokenUsage(promptTokens: 10, completionTokens: 3)
+            )))
+            continuation.finish()
+        }
+    }
+
+    func completeReportingUsage<T: Decodable>(
+        _ request: CompletionRequest,
+        as type: T.Type
+    ) async throws -> CompletedCall<T> {
+        await withCheckedContinuation { continuation in
+            lock.withLock {
+                didStartClassifier = true
+                classifierRelease = continuation
+            }
+        }
+        throw ProviderError.transport("delayed classifier failure")
+    }
+}
+
+private actor ControlledExpiryWaiter {
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private(set) var started = false
+
+    func wait(_: TimeInterval) async {
+        started = true
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func release() {
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
 @MainActor
 struct LiveCopilotModelTests {
     private func client(_ server: FakeOpenAIServer) -> OpenAICompatibleClient {
@@ -263,6 +320,61 @@ struct LiveCopilotModelTests {
         )
         await waitUntil("second proactive completion") { model.card?.text == "Second" }
         await waitUntil("second proactive expiry") { model.card == nil }
+    }
+
+    @Test func delayedErrorFromPreemptedWorkCannotPauseReplacementCard() async throws {
+        let provider = DelayedClassifierFailureProvider()
+        let model = LiveCopilotModel()
+        model.beginMeeting(
+            provider: provider, fastModel: "fast", deepModel: "deep",
+            settings: LiveAISettings()
+        )
+        model.receive(turn(), userSpeaking: false)
+        await waitUntil("classifier suspension") { provider.classifierStarted }
+
+        model.requestCatchUp()
+        await waitUntil("replacement catch-up") {
+            model.card?.requested == true && model.card?.isStreaming == false
+        }
+        provider.releaseClassifierFailure()
+        try? await Task.sleep(for: .milliseconds(30))
+
+        #expect(model.card?.text == "Replacement catch-up.")
+        #expect(model.card?.requested == true)
+        #expect(model.availability == .ready)
+    }
+
+    @Test func cancelledExpiryCannotDismissAReplacementRequestedCard() async throws {
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: Self.decision())),
+            Self.answer("Proactive answer."),
+            Self.answer("Requested catch-up."),
+        ])
+        defer { server.stop() }
+        let expiry = ControlledExpiryWaiter()
+        let model = LiveCopilotModel(waitForExpiry: { await expiry.wait($0) })
+        model.beginMeeting(
+            provider: client(server), fastModel: "fast", deepModel: "deep",
+            settings: LiveAISettings()
+        )
+        model.receive(turn(), userSpeaking: false)
+        await waitUntil("proactive answer") { model.card?.text == "Proactive answer." }
+        for _ in 0..<300 {
+            if await expiry.started { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await expiry.started)
+
+        model.requestCatchUp()
+        await waitUntil("requested replacement") {
+            model.card?.text == "Requested catch-up." && model.card?.isStreaming == false
+        }
+        await expiry.release()
+        try? await Task.sleep(for: .milliseconds(30))
+
+        #expect(model.card?.text == "Requested catch-up.")
+        #expect(model.card?.requested == true)
+        #expect(model.availability == .ready)
     }
 
     @Test func capFailureShowsQuietPauseWithoutAProviderRequest() async throws {
