@@ -81,6 +81,9 @@ struct PostMeetingAgentTests {
             (request.jsonBody?["messages"] as? [[String: Any]])?.last?["content"] as? String
         }
         #expect(userMessages.count == expectedChunks + 1)
+        #expect(server.recordedRequests.allSatisfy {
+            $0.jsonBody?["max_tokens"] as? Int == PostMeetingExtractor.maxOutputTokens
+        }, "every map and reduce request must carry the explicit output ceiling")
         // Map calls run concurrently, so parts arrive in any order — but each
         // position 1...n must appear exactly once.
         let mapMessages = userMessages.dropLast()

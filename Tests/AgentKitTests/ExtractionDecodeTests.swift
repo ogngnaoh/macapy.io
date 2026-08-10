@@ -124,6 +124,7 @@ struct ExtractionDecodeTests {
 
         let body = try #require(server.recordedRequests.first?.jsonBody)
         #expect(body["model"] as? String == "fake-model")
+        #expect(body["max_tokens"] as? Int == PostMeetingExtractor.maxOutputTokens)
         let format = try #require(body["response_format"] as? [String: Any])
         let jsonSchema = try #require(format["json_schema"] as? [String: Any])
         #expect(jsonSchema["name"] as? String == "meeting_extraction")

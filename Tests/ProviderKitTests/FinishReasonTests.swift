@@ -57,4 +57,36 @@ struct FinishReasonTests {
         let value = try await client.complete(Self.request, as: Payload.self)
         #expect(value == Payload(summary: "whole"))
     }
+
+    @Test func missingFinishReasonIsRejectedAsUnknownTruncation() async throws {
+        let body = #"{"choices":[{"message":{"content":"{\"summary\":\"not terminal\"}"}}]}"#
+        let server = try FakeOpenAIServer.start(responses: [.json(status: 200, body: body)])
+        defer { server.stop() }
+        let client = OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+
+        await #expect(throws: ProviderError.truncated(finishReason: "unknown")) {
+            _ = try await client.complete(Self.request, as: Payload.self)
+        }
+    }
+
+    @Test func hostileFinishReasonNeverEscapesInTheTypedErrorOrLogDescription() async throws {
+        let hostile = "SECRET transcript excerpt\nforge=success"
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(
+                content: #"{"summary":"parses"}"#,
+                finishReason: hostile
+            ))
+        ])
+        defer { server.stop() }
+        let client = OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+
+        do {
+            _ = try await client.complete(Self.request, as: Payload.self)
+            Issue.record("expected truncation")
+        } catch let error as ProviderError {
+            #expect(error == .truncated(finishReason: "unknown"))
+            #expect(!error.logDescription.contains(hostile))
+            #expect(error.logDescription == "truncated(unknown)")
+        }
+    }
 }
