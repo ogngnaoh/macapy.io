@@ -104,7 +104,8 @@ let package = Package(
             dependencies: [
                 "AgentKit", "PersistKit", "ProviderKit", "ProviderTestSupport",
                 "TranscribeKit", "CaptureKit",
-            ]
+            ],
+            resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "PersistKitTests",

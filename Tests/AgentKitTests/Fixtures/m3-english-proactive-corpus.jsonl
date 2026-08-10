@@ -1,0 +1,140 @@
+{"id":"Q01","category":"directed_question","source":"system","text":"Hoang, can you summarize the main migration risk for us?","expected":"suggest_answer"}
+{"id":"Q02","category":"directed_question","source":"system","text":"Hoang, what date should we use for the customer rollout?","expected":"suggest_answer"}
+{"id":"Q03","category":"directed_question","source":"system","text":"Can you explain why the backfill must finish before cutover, Hoang?","expected":"suggest_answer"}
+{"id":"Q04","category":"directed_question","source":"system","text":"Hoang, which of these two launch options do you recommend?","expected":"suggest_answer"}
+{"id":"Q05","category":"directed_question","source":"system","text":"Could you tell us whether the API change is backward compatible, Hoang?","expected":"suggest_answer"}
+{"id":"Q06","category":"directed_question","source":"system","text":"Hoang, how much engineering time does the fix require?","expected":"suggest_answer"}
+{"id":"Q07","category":"directed_question","source":"system","text":"What do you need from design before you can ship this, Hoang?","expected":"suggest_answer"}
+{"id":"Q08","category":"directed_question","source":"system","text":"Hoang, do you agree that Friday is a safe release date?","expected":"suggest_answer"}
+{"id":"Q09","category":"directed_question","source":"system","text":"Can you walk us through the rollback plan, Hoang?","expected":"suggest_answer"}
+{"id":"Q10","category":"directed_question","source":"system","text":"Hoang, where is the current latency regression coming from?","expected":"suggest_answer"}
+{"id":"Q11","category":"directed_question","source":"system","text":"Would you answer the security team's question about token storage, Hoang?","expected":"suggest_answer"}
+{"id":"Q12","category":"directed_question","source":"system","text":"Hoang, what is blocking the database migration right now?","expected":"suggest_answer"}
+{"id":"Q13","category":"directed_question","source":"system","text":"Can you confirm whether your service is ready for the load test, Hoang?","expected":"suggest_answer"}
+{"id":"Q14","category":"directed_question","source":"system","text":"Hoang, why did the canary fail last night?","expected":"suggest_answer"}
+{"id":"Q15","category":"directed_question","source":"system","text":"Which metric should we use as the launch gate, Hoang?","expected":"suggest_answer"}
+{"id":"Q16","category":"directed_question","source":"system","text":"Hoang, are you comfortable owning the incident review?","expected":"suggest_answer"}
+{"id":"Q17","category":"directed_question","source":"system","text":"Could you clarify the difference between the two estimates, Hoang?","expected":"suggest_answer"}
+{"id":"Q18","category":"directed_question","source":"system","text":"Hoang, what should we tell the support team about this outage?","expected":"suggest_answer"}
+{"id":"Q19","category":"directed_question","source":"system","text":"Can you give us your decision on the caching proposal, Hoang?","expected":"suggest_answer"}
+{"id":"Q20","category":"directed_question","source":"system","text":"Hoang, when can your team start the integration test?","expected":"suggest_answer"}
+{"id":"C01","category":"user_commitment","source":"system","text":"Hoang, please send the revised rollout plan by Thursday at noon.","expected":"flag_commitment"}
+{"id":"C02","category":"user_commitment","source":"system","text":"Hoang, you will own the database backfill and report completion tomorrow.","expected":"flag_commitment"}
+{"id":"C03","category":"user_commitment","source":"system","text":"Please file the security exception before Friday, Hoang.","expected":"flag_commitment"}
+{"id":"C04","category":"user_commitment","source":"system","text":"Hoang, take the action to schedule the customer migration for August 18.","expected":"flag_commitment"}
+{"id":"C05","category":"user_commitment","source":"system","text":"Hoang, please update the runbook with the rollback steps by end of day.","expected":"flag_commitment"}
+{"id":"C06","category":"user_commitment","source":"system","text":"The load-test report is yours, Hoang; publish it by Monday morning.","expected":"flag_commitment"}
+{"id":"C07","category":"user_commitment","source":"system","text":"Hoang, you are responsible for notifying support before the release.","expected":"flag_commitment"}
+{"id":"C08","category":"user_commitment","source":"system","text":"Please review the API contract and post your approval today, Hoang.","expected":"flag_commitment"}
+{"id":"C09","category":"user_commitment","source":"system","text":"Hoang, own the follow-up with finance and send their answer by Wednesday.","expected":"flag_commitment"}
+{"id":"C10","category":"user_commitment","source":"system","text":"Hoang, please create the incident timeline before the retrospective.","expected":"flag_commitment"}
+{"id":"C11","category":"user_commitment","source":"system","text":"The team agreed that you, Hoang, will verify the production logs tonight.","expected":"flag_commitment"}
+{"id":"C12","category":"user_commitment","source":"system","text":"Hoang, deliver the accessibility audit results at our next meeting.","expected":"flag_commitment"}
+{"id":"C13","category":"user_commitment","source":"system","text":"Please assign the remaining migration tickets to owners by 3 PM, Hoang.","expected":"flag_commitment"}
+{"id":"C14","category":"user_commitment","source":"system","text":"Hoang, document the cache invalidation decision in the architecture record.","expected":"flag_commitment"}
+{"id":"C15","category":"user_commitment","source":"system","text":"Hoang, you need to rotate the staging credential before tomorrow's test.","expected":"flag_commitment"}
+{"id":"C16","category":"user_commitment","source":"system","text":"Please compare the vendor quotes and share a recommendation on Friday, Hoang.","expected":"flag_commitment"}
+{"id":"C17","category":"user_commitment","source":"system","text":"Hoang, take responsibility for closing the two launch-blocking bugs today.","expected":"flag_commitment"}
+{"id":"C18","category":"user_commitment","source":"system","text":"The release notes are assigned to you, Hoang, and are due before cutover.","expected":"flag_commitment"}
+{"id":"C19","category":"user_commitment","source":"system","text":"Hoang, please invite legal to the policy review by tomorrow afternoon.","expected":"flag_commitment"}
+{"id":"C20","category":"user_commitment","source":"system","text":"Hoang, prepare a five-minute demo for the Monday product review.","expected":"flag_commitment"}
+{"id":"R01","category":"rhetorical_question","source":"system","text":"Who could possibly object to having fewer production incidents?","expected":"none"}
+{"id":"R02","category":"rhetorical_question","source":"system","text":"Isn't reliability what every customer wants?","expected":"none"}
+{"id":"R03","category":"rhetorical_question","source":"system","text":"What could go wrong with deploying on a Friday night?","expected":"none"}
+{"id":"R04","category":"rhetorical_question","source":"system","text":"Do we really want another month of manual reconciliation?","expected":"none"}
+{"id":"R05","category":"rhetorical_question","source":"system","text":"How many times have we heard that the fix is almost done?","expected":"none"}
+{"id":"R06","category":"rhetorical_question","source":"system","text":"Wouldn't it be nice if the vendor answered on time?","expected":"none"}
+{"id":"R07","category":"rhetorical_question","source":"system","text":"Why make this harder than it needs to be?","expected":"none"}
+{"id":"R08","category":"rhetorical_question","source":"system","text":"Does anyone enjoy reading a four-hundred-page runbook?","expected":"none"}
+{"id":"R09","category":"rhetorical_question","source":"system","text":"What kind of launch has no rollback plan?","expected":"none"}
+{"id":"R10","category":"rhetorical_question","source":"system","text":"Can a team really move fast without clear ownership?","expected":"none"}
+{"id":"R11","category":"rhetorical_question","source":"system","text":"Is there ever a good time for an outage?","expected":"none"}
+{"id":"R12","category":"rhetorical_question","source":"system","text":"Who doesn't want the build to be faster?","expected":"none"}
+{"id":"R13","category":"rhetorical_question","source":"system","text":"Why would we repeat a migration that already failed?","expected":"none"}
+{"id":"R14","category":"rhetorical_question","source":"system","text":"Are we supposed to pretend the alert never fired?","expected":"none"}
+{"id":"R15","category":"rhetorical_question","source":"system","text":"What is a deadline worth if nobody owns it?","expected":"none"}
+{"id":"T01","category":"third_party_question","source":"system","text":"Maya, can you summarize the customer feedback for us?","expected":"none"}
+{"id":"T02","category":"third_party_question","source":"system","text":"Alex, what date should we use for the rollout?","expected":"none"}
+{"id":"T03","category":"third_party_question","source":"system","text":"Priya, could you explain the failed load test?","expected":"none"}
+{"id":"T04","category":"third_party_question","source":"system","text":"Jordan, do you approve the new security policy?","expected":"none"}
+{"id":"T05","category":"third_party_question","source":"system","text":"Sam, when will your team finish the migration?","expected":"none"}
+{"id":"T06","category":"third_party_question","source":"system","text":"Lina, can you walk everyone through the design proposal?","expected":"none"}
+{"id":"T07","category":"third_party_question","source":"system","text":"Marcus, which vendor would you recommend?","expected":"none"}
+{"id":"T08","category":"third_party_question","source":"system","text":"Nora, are the legal terms ready for signature?","expected":"none"}
+{"id":"T09","category":"third_party_question","source":"system","text":"Diego, why did the overnight job fail?","expected":"none"}
+{"id":"T10","category":"third_party_question","source":"system","text":"Fatima, how much budget remains for the pilot?","expected":"none"}
+{"id":"T11","category":"third_party_question","source":"system","text":"Chris, could you answer the support team's question?","expected":"none"}
+{"id":"T12","category":"third_party_question","source":"system","text":"Aisha, what is blocking the policy review?","expected":"none"}
+{"id":"T13","category":"third_party_question","source":"system","text":"Ben, can you confirm that staging is healthy?","expected":"none"}
+{"id":"T14","category":"third_party_question","source":"system","text":"Sofia, which metric should be the launch gate?","expected":"none"}
+{"id":"T15","category":"third_party_question","source":"system","text":"Evan, would you present the incident timeline?","expected":"none"}
+{"id":"N01","category":"undirected_question","source":"system","text":"Does anyone know when the vendor contract expires?","expected":"none"}
+{"id":"N02","category":"undirected_question","source":"system","text":"Who has context on the authentication failure?","expected":"none"}
+{"id":"N03","category":"undirected_question","source":"system","text":"Can somebody check whether staging is available?","expected":"none"}
+{"id":"N04","category":"undirected_question","source":"system","text":"What should the team prioritize after the launch?","expected":"none"}
+{"id":"N05","category":"undirected_question","source":"system","text":"Is there an owner for the billing migration?","expected":"none"}
+{"id":"N06","category":"undirected_question","source":"system","text":"When is the earliest possible release window?","expected":"none"}
+{"id":"N07","category":"undirected_question","source":"system","text":"Could someone explain why the alert was muted?","expected":"none"}
+{"id":"N08","category":"undirected_question","source":"system","text":"Which service is producing these timeout errors?","expected":"none"}
+{"id":"N09","category":"undirected_question","source":"system","text":"Are there any objections to the proposed schedule?","expected":"none"}
+{"id":"N10","category":"undirected_question","source":"system","text":"How much work remains before code freeze?","expected":"none"}
+{"id":"N11","category":"undirected_question","source":"system","text":"Can anyone share the latest customer numbers?","expected":"none"}
+{"id":"N12","category":"undirected_question","source":"system","text":"Why is the dashboard showing stale data?","expected":"none"}
+{"id":"N13","category":"undirected_question","source":"system","text":"Should the group postpone the integration test?","expected":"none"}
+{"id":"N14","category":"undirected_question","source":"system","text":"What evidence would change this decision?","expected":"none"}
+{"id":"N15","category":"undirected_question","source":"system","text":"Who can join the customer call tomorrow?","expected":"none"}
+{"id":"S01","category":"suggestion_not_commitment","source":"system","text":"Hoang, maybe you could look at the flaky test when you have time.","expected":"none"}
+{"id":"S02","category":"suggestion_not_commitment","source":"system","text":"It might be useful for you to skim the vendor proposal, Hoang.","expected":"none"}
+{"id":"S03","category":"suggestion_not_commitment","source":"system","text":"Hoang could perhaps join the migration review if his schedule permits.","expected":"none"}
+{"id":"S04","category":"suggestion_not_commitment","source":"system","text":"One idea is for you to explore a smaller cache, Hoang.","expected":"none"}
+{"id":"S05","category":"suggestion_not_commitment","source":"system","text":"Hoang, we could consider having you draft something later.","expected":"none"}
+{"id":"S06","category":"suggestion_not_commitment","source":"system","text":"Maybe Hoang can help with the report, but nothing is assigned yet.","expected":"none"}
+{"id":"S07","category":"suggestion_not_commitment","source":"system","text":"Hoang, it would be nice if you checked the logs sometime.","expected":"none"}
+{"id":"S08","category":"suggestion_not_commitment","source":"system","text":"We might ask you to own the demo eventually, Hoang.","expected":"none"}
+{"id":"S09","category":"suggestion_not_commitment","source":"system","text":"Hoang is a possible reviewer for the architecture note.","expected":"none"}
+{"id":"S10","category":"suggestion_not_commitment","source":"system","text":"Perhaps you could think about a rollback option, Hoang.","expected":"none"}
+{"id":"S11","category":"suggestion_not_commitment","source":"system","text":"Hoang, no action yet, but keep the accessibility audit in mind.","expected":"none"}
+{"id":"S12","category":"suggestion_not_commitment","source":"system","text":"If time allows, you might compare the two estimates, Hoang.","expected":"none"}
+{"id":"S13","category":"suggestion_not_commitment","source":"system","text":"Hoang could be a good person to contact legal later.","expected":"none"}
+{"id":"S14","category":"suggestion_not_commitment","source":"system","text":"We may want you to revisit the launch checklist, Hoang.","expected":"none"}
+{"id":"S15","category":"suggestion_not_commitment","source":"system","text":"Hoang, consider whether a canary would reduce risk.","expected":"none"}
+{"id":"O01","category":"other_owner_commitment","source":"system","text":"Maya will send the revised rollout plan by Thursday.","expected":"none"}
+{"id":"O02","category":"other_owner_commitment","source":"system","text":"Alex owns the database backfill and will report tomorrow.","expected":"none"}
+{"id":"O03","category":"other_owner_commitment","source":"system","text":"Priya must file the security exception before Friday.","expected":"none"}
+{"id":"O04","category":"other_owner_commitment","source":"system","text":"Jordan is scheduling the customer migration for August 18.","expected":"none"}
+{"id":"O05","category":"other_owner_commitment","source":"system","text":"Sam will update the rollback runbook by end of day.","expected":"none"}
+{"id":"O06","category":"other_owner_commitment","source":"system","text":"Lina owns the load-test report due Monday morning.","expected":"none"}
+{"id":"O07","category":"other_owner_commitment","source":"system","text":"Marcus is responsible for notifying support before release.","expected":"none"}
+{"id":"O08","category":"other_owner_commitment","source":"system","text":"Nora will review the API contract and approve it today.","expected":"none"}
+{"id":"O09","category":"other_owner_commitment","source":"system","text":"Diego owns the finance follow-up due Wednesday.","expected":"none"}
+{"id":"O10","category":"other_owner_commitment","source":"system","text":"Fatima will create the incident timeline before the retrospective.","expected":"none"}
+{"id":"O11","category":"other_owner_commitment","source":"system","text":"Chris agreed to verify the production logs tonight.","expected":"none"}
+{"id":"O12","category":"other_owner_commitment","source":"system","text":"Aisha will deliver the accessibility audit next meeting.","expected":"none"}
+{"id":"O13","category":"other_owner_commitment","source":"system","text":"Ben is assigning the migration tickets by 3 PM.","expected":"none"}
+{"id":"O14","category":"other_owner_commitment","source":"system","text":"Sofia owns documenting the cache decision.","expected":"none"}
+{"id":"O15","category":"other_owner_commitment","source":"system","text":"Evan must rotate the staging credential before tomorrow's test.","expected":"none"}
+{"id":"U01","category":"unowned_commitment","source":"system","text":"The revised rollout plan needs to be sent by Thursday.","expected":"none"}
+{"id":"U02","category":"unowned_commitment","source":"system","text":"Someone must own the database backfill tomorrow.","expected":"none"}
+{"id":"U03","category":"unowned_commitment","source":"system","text":"We need to file a security exception before Friday.","expected":"none"}
+{"id":"U04","category":"unowned_commitment","source":"system","text":"The customer migration should be scheduled for August 18.","expected":"none"}
+{"id":"U05","category":"unowned_commitment","source":"system","text":"The rollback runbook requires an update by end of day.","expected":"none"}
+{"id":"U06","category":"unowned_commitment","source":"system","text":"A load-test report is due Monday morning with no owner yet.","expected":"none"}
+{"id":"U07","category":"unowned_commitment","source":"system","text":"Support must be notified before the release.","expected":"none"}
+{"id":"U08","category":"unowned_commitment","source":"system","text":"The API contract needs review and approval today.","expected":"none"}
+{"id":"U09","category":"unowned_commitment","source":"system","text":"There is a finance follow-up due Wednesday, owner to be decided.","expected":"none"}
+{"id":"U10","category":"unowned_commitment","source":"system","text":"An incident timeline should exist before the retrospective.","expected":"none"}
+{"id":"U11","category":"unowned_commitment","source":"system","text":"We agreed that the production logs need verification tonight.","expected":"none"}
+{"id":"U12","category":"unowned_commitment","source":"system","text":"The accessibility audit results are due next meeting.","expected":"none"}
+{"id":"U13","category":"unowned_commitment","source":"system","text":"All remaining migration tickets need owners by 3 PM.","expected":"none"}
+{"id":"U14","category":"unowned_commitment","source":"system","text":"The cache invalidation decision must be documented.","expected":"none"}
+{"id":"U15","category":"unowned_commitment","source":"system","text":"A staging credential rotation is required before tomorrow's test.","expected":"none"}
+{"id":"Y01","category":"mic_user_speech","source":"mic","text":"Can you explain the migration risk to me?","expected":"none"}
+{"id":"Y02","category":"mic_user_speech","source":"mic","text":"What date should we use for rollout?","expected":"none"}
+{"id":"Y03","category":"mic_user_speech","source":"mic","text":"I will send the rollout plan by Thursday.","expected":"none"}
+{"id":"Y04","category":"mic_user_speech","source":"mic","text":"I can own the database backfill tomorrow.","expected":"none"}
+{"id":"Y05","category":"mic_user_speech","source":"mic","text":"Hoang, do you approve the launch?","expected":"none"}
+{"id":"Y06","category":"mic_user_speech","source":"mic","text":"Please remind me to update the runbook today.","expected":"none"}
+{"id":"Y07","category":"mic_user_speech","source":"mic","text":"Why did the load test fail?","expected":"none"}
+{"id":"Y08","category":"mic_user_speech","source":"mic","text":"I agree to notify support before release.","expected":"none"}
+{"id":"Y09","category":"mic_user_speech","source":"mic","text":"Could you tell me which metric is the launch gate?","expected":"none"}
+{"id":"Y10","category":"mic_user_speech","source":"mic","text":"I will prepare the demo for Monday.","expected":"none"}

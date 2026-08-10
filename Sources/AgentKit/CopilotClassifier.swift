@@ -72,7 +72,13 @@ public struct CopilotClassifier: Sendable {
             - flag_commitment: explicit, concrete work assigned to or accepted by the app user.
             - none: everything else, including rhetorical questions, vague possibilities, third-party work, and acknowledgements.
 
-            Catch-up is never a classifier action. Prefer none when uncertain. The target must be a concise verbatim or normalized description for proactive actions and null for none. Reply only with JSON matching the schema.
+            Apply these target and ownership rules first:
+            - Target the app user only by preferred name or unambiguous "you/your" with no other addressee. Room, other-person, and unaddressed questions are none.
+            - A commitment requires explicit assignment to or acceptance by the app user. Passive, "we"/team/someone, and ownerless work is none.
+            - Tentative markers ("maybe", "might", "could", "perhaps", "consider", "one idea", "if time allows", "nice", "possible", "may want", "no action") are none absent separate acceptance; using the user's name does not override this.
+            - A willingness, ability, or comfort question is suggest_answer until explicitly assigned or accepted.
+
+            Catch-up is never a classifier action. Prefer none when targeting or ownership is uncertain. The target must be a concise verbatim or normalized description for proactive actions and null for none. Reply only with JSON matching the schema.
             """
     }
 
