@@ -40,23 +40,43 @@ public actor CopilotWorkArbiter {
     }
 
     private var active: Active?
-    private var proactiveCardID: UUID?
+    private var retainedCard: CopilotWorkLease?
 
     public init() {}
 
     public func begin(_ priority: CopilotWorkPriority) -> CopilotWorkAdmission {
         switch priority {
-        case .background, .proactive:
-            guard active == nil, proactiveCardID == nil else { return .dropped }
+        case .background:
+            // A retained proactive card still owns the automatic presentation
+            // window. A retained requested card does not prevent the separate
+            // rolling-summary strip from refreshing in the background.
+            guard active == nil, retainedCard?.priority != .proactive else {
+                return .dropped
+            }
+            let lease = CopilotWorkLease(priority: priority)
+            active = Active(lease: lease)
+            return .started(lease)
+
+        case .proactive:
+            // A proactive moment outranks rolling-summary work, but never
+            // displaces another proactive/requested card or explicit work.
+            guard retainedCard == nil else { return .dropped }
+            if let current = active {
+                guard current.lease.priority == .background else { return .dropped }
+                current.task?.cancel()
+                let lease = CopilotWorkLease(priority: priority)
+                active = Active(lease: lease)
+                return .preempted(lease, previousID: current.lease.id)
+            }
             let lease = CopilotWorkLease(priority: priority)
             active = Active(lease: lease)
             return .started(lease)
 
         case .userRequest:
-            let previousID = active?.lease.id ?? proactiveCardID
+            let previousID = active?.lease.id ?? retainedCard?.id
             active?.task?.cancel()
             active = nil
-            proactiveCardID = nil
+            retainedCard = nil
             let lease = CopilotWorkLease(priority: priority)
             active = Active(lease: lease)
             if let previousID { return .preempted(lease, previousID: previousID) }
@@ -80,26 +100,56 @@ public actor CopilotWorkArbiter {
         guard active?.lease == lease else { return }
         active = nil
         if retainProactiveCard, lease.priority == .proactive {
-            proactiveCardID = lease.id
+            retainedCard = lease
+        }
+    }
+
+    /// Retains a completed requested or proactive card as the presentation
+    /// winner. Background work has no card and is never retained.
+    public func finish(_ lease: CopilotWorkLease, retainCard: Bool) {
+        guard active?.lease == lease else { return }
+        active = nil
+        if retainCard, lease.priority != .background {
+            retainedCard = lease
         }
     }
 
     public func cancel(_ lease: CopilotWorkLease) {
-        guard active?.lease == lease else { return }
-        active?.task?.cancel()
-        active = nil
+        if active?.lease == lease {
+            active?.task?.cancel()
+            active = nil
+        }
+        if retainedCard == lease { retainedCard = nil }
     }
 
     public func dismissProactiveCard() {
-        proactiveCardID = nil
+        guard retainedCard?.priority == .proactive else { return }
+        retainedCard = nil
+    }
+
+    /// Dismisses this lease whether it is still streaming or retained as the
+    /// visible result. Passing a stale lease cannot disturb the current owner.
+    public func dismiss(_ lease: CopilotWorkLease) {
+        cancel(lease)
     }
 
     public func cancelAll() {
         active?.task?.cancel()
         active = nil
-        proactiveCardID = nil
+        retainedCard = nil
     }
 
+    /// Use before applying every streamed event. A preempted task may finish
+    /// concurrently, but its lease can never regain ownership.
+    public func owns(_ lease: CopilotWorkLease) -> Bool { active?.lease == lease }
+
+    /// True for either the currently streaming owner or its retained result.
+    public func ownsPresentation(_ lease: CopilotWorkLease) -> Bool {
+        active?.lease == lease || retainedCard == lease
+    }
+
+    public var activeLease: CopilotWorkLease? { active?.lease }
+    public var retainedCardLease: CopilotWorkLease? { retainedCard }
     public var hasActiveWork: Bool { active != nil }
-    public var hasActiveProactiveCard: Bool { proactiveCardID != nil }
+    public var hasActiveProactiveCard: Bool { retainedCard?.priority == .proactive }
 }
