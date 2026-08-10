@@ -84,4 +84,74 @@ struct SettingsStoreTests {
 
         #expect(try await store.pricing() == table)
     }
+
+    @Test func liveAISettingsDefaultToEnabledQuietAndNoPreferredName() async throws {
+        let store = SettingsStore(database: try MacapyDatabase.inMemory())
+
+        let settings = try await store.liveAISettings()
+
+        #expect(settings.aiFeaturesEnabled)
+        #expect(settings.sensitivity == .quiet)
+        #expect(settings.preferredName == nil)
+    }
+
+    @Test func liveAISettingsRoundTrip() async throws {
+        let store = SettingsStore(database: try MacapyDatabase.inMemory())
+        let settings = LiveAISettings(
+            aiFeaturesEnabled: false,
+            sensitivity: .active,
+            preferredName: "Hoang"
+        )
+
+        try await store.setLiveAISettings(settings)
+
+        #expect(try await store.liveAISettings() == settings)
+    }
+
+    @Test func liveAISensitivityThresholdsAreTheProductContract() {
+        #expect(LiveAISensitivity.off.confidenceThreshold == 1.0)
+        #expect(LiveAISensitivity.quiet.confidenceThreshold == 0.90)
+        #expect(LiveAISensitivity.balanced.confidenceThreshold == 0.80)
+        #expect(LiveAISensitivity.active.confidenceThreshold == 0.70)
+    }
+
+    @Test func partialLegacyLiveAISettingsDecodeEachFieldIndependently() async throws {
+        let store = SettingsStore(database: try MacapyDatabase.inMemory())
+        try await store.set(#"{"preferredName":"Hoang"}"#, forKey: SettingsStore.liveAISettingsKey)
+
+        let settings = try await store.liveAISettings()
+
+        #expect(settings.aiFeaturesEnabled)
+        #expect(settings.sensitivity == .quiet)
+        #expect(settings.preferredName == "Hoang")
+    }
+
+    @Test func malformedLiveAIFieldsUseDefaultsWithoutDiscardingValidFields() async throws {
+        let store = SettingsStore(database: try MacapyDatabase.inMemory())
+        try await store.set(
+            #"{"aiFeaturesEnabled":"yes","sensitivity":"future-mode","preferredName":"Hoang"}"#,
+            forKey: SettingsStore.liveAISettingsKey
+        )
+
+        let settings = try await store.liveAISettings()
+
+        #expect(settings.aiFeaturesEnabled)
+        #expect(settings.sensitivity == .quiet)
+        #expect(settings.preferredName == "Hoang")
+    }
+
+    @Test func unreadableLiveAISettingsDoNotChangeProviderSettings() async throws {
+        let store = SettingsStore(database: try MacapyDatabase.inMemory())
+        let provider = ProviderSettings(
+            selectedProfileID: "deepseek",
+            fastModelOverrides: ["deepseek": "custom-fast"],
+            deepModelOverrides: ["deepseek": "custom-deep"],
+            perMeetingCapUSD: 0.25
+        )
+        try await store.setProviderSettings(provider)
+        try await store.set("{not json", forKey: SettingsStore.liveAISettingsKey)
+
+        #expect(try await store.liveAISettings() == LiveAISettings())
+        #expect(try await store.providerSettings() == provider)
+    }
 }

@@ -72,8 +72,12 @@ public struct SpeechAnalyzerEngine: STTEngine {
                         let tStart = start.isFinite ? Swift.max(0, start) : 0
                         let tEnd = end.isFinite ? Swift.max(tStart, end) : tStart
                         if result.isFinal {
-                            continuation.yield(.final(Segment(
-                                id: UUID(), source: source, text: text, tStart: tStart, tEnd: tEnd)))
+                            let segment = Segment(
+                                id: UUID(), source: source, text: text, tStart: tStart, tEnd: tEnd
+                            )
+                            for event in Self.events(forFinal: segment) {
+                                continuation.yield(event)
+                            }
                         } else {
                             continuation.yield(.volatile(text: text, tStart: tStart, tEnd: tEnd))
                         }
@@ -99,5 +103,15 @@ public struct SpeechAnalyzerEngine: STTEngine {
             }
             continuation.onTermination = { _ in task.cancel() }
         }
+    }
+
+    /// Apple final results are the MVP turn boundary. Keep this small policy
+    /// separate from analyzer plumbing so final → turn-ended ordering and the
+    /// empty-result exception are deterministic and directly testable.
+    static func events(forFinal segment: Segment) -> [TranscriptEvent] {
+        guard !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return [.final(segment)]
+        }
+        return [.final(segment), .turnEnded]
     }
 }

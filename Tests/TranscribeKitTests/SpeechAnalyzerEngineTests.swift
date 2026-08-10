@@ -2,7 +2,8 @@ import AVFoundation
 import CaptureKit
 import Foundation
 import Testing
-import TranscribeKit
+
+@testable import TranscribeKit
 
 /// Check 1 (de-risk spike): a committed `say`-generated fixture wav fed through
 /// the real `SpeechAnalyzerEngine` under `swift test` yields a nonempty
@@ -60,20 +61,31 @@ struct SpeechAnalyzerEngineTests {
         var finalTexts: [String] = []
         var times: [(Double, Double)] = []
         var streamFinished = false
+        var waitingForTurnEnd = false
+        var nonEmptyFinalCount = 0
+        var turnEndCount = 0
 
         for try await event in events {
             switch event {
             case let .volatile(text, tStart, tEnd):
+                #expect(!waitingForTurnEnd, "turnEnded must immediately follow a non-empty final")
                 anyVolatile = true
                 volatileCount += 1
                 _ = text
                 times.append((tStart, tEnd))
             case let .final(segment):
+                #expect(!waitingForTurnEnd, "turnEnded must immediately follow the previous non-empty final")
                 if anyVolatile { sawVolatileBeforeFinal = true }
                 finalTexts.append(segment.text)
                 times.append((segment.tStart, segment.tEnd))
+                if !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    waitingForTurnEnd = true
+                    nonEmptyFinalCount += 1
+                }
             case .turnEnded:
-                break
+                #expect(waitingForTurnEnd, "turnEnded must be paired with the immediately preceding final")
+                waitingForTurnEnd = false
+                turnEndCount += 1
             }
         }
         streamFinished = true  // reaching here means the stream completed after input ended
@@ -84,11 +96,29 @@ struct SpeechAnalyzerEngineTests {
         #expect(anyVolatile, "expected at least one volatile event")
         #expect(volatileCount >= 1)
         #expect(sawVolatileBeforeFinal, "expected a volatile to precede a final")
+        #expect(!waitingForTurnEnd)
+        #expect(turnEndCount == nonEmptyFinalCount)
 
         let keywords = ["quick", "brown", "fox", "lazy", "dog", "meeting", "device", "locally"]
         let hits = keywords.filter { full.contains($0) }
         #expect(hits.count >= 3, "expected ≥3 fixture keywords, got \(hits) in \"\(full)\"")
 
         #expect(times.allSatisfy { $0.0 >= 0 && $0.1 >= $0.0 }, "times must be non-negative and ordered")
+    }
+
+    @Test func nonEmptyFinalExpandsToFinalThenTurnEnded() {
+        let segment = Segment(
+            id: UUID(), source: .system, text: "A complete turn", tStart: 1, tEnd: 2
+        )
+
+        #expect(SpeechAnalyzerEngine.events(forFinal: segment) == [.final(segment), .turnEnded])
+    }
+
+    @Test func emptyFinalDoesNotCreateTurnBoundary() {
+        let segment = Segment(
+            id: UUID(), source: .mic, text: " \n ", tStart: 1, tEnd: 2
+        )
+
+        #expect(SpeechAnalyzerEngine.events(forFinal: segment) == [.final(segment)])
     }
 }
