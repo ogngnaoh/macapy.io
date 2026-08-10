@@ -483,7 +483,6 @@ final class LiveCopilotModel {
                 guard await self.owns(lease, revision: revision) else {
                     throw CancellationError()
                 }
-                self.providerWorkSucceeded()
                 _ = await self.finish(lease, revision: revision, retainCard: true)
             } catch is CancellationError {
                 _ = await self.finish(lease, revision: revision, retainCard: false)
@@ -701,7 +700,6 @@ final class LiveCopilotModel {
             guard await owns(lease, revision: revision) else {
                 throw CancellationError()
             }
-            providerWorkSucceeded()
             if await finish(lease, revision: revision, retainCard: true) {
                 scheduleExpiry(cardID: lease.id)
             }
@@ -814,7 +812,6 @@ final class LiveCopilotModel {
                 guard await self.owns(lease, revision: revision) else {
                     throw CancellationError()
                 }
-                self.providerWorkSucceeded()
                 _ = await self.finish(lease, revision: revision, retainCard: true)
             } catch is CancellationError {
                 _ = await self.finish(lease, revision: revision, retainCard: false)
@@ -903,6 +900,11 @@ final class LiveCopilotModel {
             case .completed(let text):
                 card?.text = text
                 card?.isStreaming = false
+                // `stop` has already been validated by `CopilotGenerator`.
+                // Fence recovery at that accepted terminal event so a user
+                // replacing the now-visible card cannot cancel the success
+                // reset before the stream iterator reaches its end.
+                providerWorkSucceeded()
                 availability = .ready
                 if !text.isEmpty, lease.priority == .proactive {
                     suggestionLatencyRecorder.recordFirstVisible(
