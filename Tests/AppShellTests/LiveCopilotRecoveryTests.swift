@@ -26,6 +26,22 @@ private actor ManualRecoveryScheduler {
     }
 }
 
+private actor TerminalStreamGate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    func wait() async {
+        guard !released else { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        released = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 private final class RecoveryQueueProvider: LLMProvider, @unchecked Sendable {
     enum StructuredOutcome {
         case decision(String)
@@ -34,6 +50,7 @@ private final class RecoveryQueueProvider: LLMProvider, @unchecked Sendable {
 
     enum StreamOutcome {
         case completed(String)
+        case completedThenWait(String, TerminalStreamGate)
         case failure(partial: String, ProviderError)
         case terminal(partial: String, reason: String?)
     }
@@ -65,6 +82,14 @@ private final class RecoveryQueueProvider: LLMProvider, @unchecked Sendable {
                 continuation.yield(.token(text))
                 continuation.yield(.completed(.init(finishReason: "stop", usage: nil)))
                 continuation.finish()
+            case .completedThenWait(let text, let gate):
+                let task = Task {
+                    continuation.yield(.token(text))
+                    continuation.yield(.completed(.init(finishReason: "stop", usage: nil)))
+                    await gate.wait()
+                    continuation.finish()
+                }
+                continuation.onTermination = { _ in task.cancel() }
             case .failure(let partial, let error):
                 continuation.yield(.token(partial))
                 continuation.finish(throwing: error)
@@ -257,9 +282,10 @@ struct LiveCopilotRecoveryTests {
         model.requestAsk()
         model.queryText = "What did they decide?"
         #expect(await model.submitAsk())
-        await waitUntil("requested answer") {
+        await waitUntil("requested answer and terminal success fence") {
             model.card?.text == "Meeting-grounded answer."
                 && model.card?.isStreaming == false
+                && model.transientRecoveryFailureCountForTesting == 0
         }
         #expect(model.transientRecoveryFailureCountForTesting == 0)
 
@@ -267,6 +293,41 @@ struct LiveCopilotRecoveryTests {
         try? await Task.sleep(for: .milliseconds(20))
         #expect(model.card?.text == "Meeting-grounded answer.")
         #expect(model.availability == .ready)
+        model.stopMeeting()
+    }
+
+    @Test func completedProviderOperationResetsRecoveryBeforeCardCanBeReplaced() async {
+        let scheduler = ManualRecoveryScheduler()
+        let terminalGate = TerminalStreamGate()
+        let provider = RecoveryQueueProvider(
+            structured: [.failure(.server(status: 503, message: nil))],
+            streams: [
+                .completedThenWait("Meeting-grounded answer.", terminalGate),
+                .failure(partial: "unsafe retry", .transport("offline")),
+            ]
+        )
+        let model = model(provider: provider, scheduler: scheduler)
+
+        await model.receive(turn(0), userSpeaking: false)
+        await waitUntil("automatic delay") { await scheduler.delays == [30] }
+
+        model.requestAsk()
+        model.queryText = "What did they decide?"
+        #expect(await model.submitAsk())
+        await waitUntil("completed first answer") {
+            model.card?.text == "Meeting-grounded answer."
+                && model.card?.isStreaming == false
+        }
+
+        model.requestAsk()
+        model.queryText = "What happens next?"
+        #expect(await model.submitAsk())
+        await waitUntil("fresh recovery sequence") { await scheduler.delays.count == 2 }
+        #expect(await scheduler.delays == [30, 30])
+        #expect(model.transientRecoveryFailureCountForTesting == 1)
+
+        await terminalGate.release()
+        await scheduler.release(1)
         model.stopMeeting()
     }
 
