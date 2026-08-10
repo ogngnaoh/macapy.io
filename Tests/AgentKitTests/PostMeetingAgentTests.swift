@@ -34,6 +34,32 @@ private actor AsyncFlag {
     }
 }
 
+/// Holds the terminal callback while recording the provider-context admission
+/// count. This models AppShell's meter cleanup window without coupling
+/// AgentKit's ownership test to the composition root.
+private actor GenerationCleanupProbe {
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var released = false
+    private(set) var cleanupStarted = false
+    private(set) var cleanupOutcomes: [PostMeetingAgent.Outcome] = []
+    private(set) var contextAdmissions = 0
+
+    func admittedContext() { contextAdmissions += 1 }
+
+    func finish(_ outcome: PostMeetingAgent.Outcome) async {
+        cleanupOutcomes.append(outcome)
+        cleanupStarted = true
+        guard !released else { return }
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func release() {
+        released = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
 /// The agent's paths beyond decode: chunked map-reduce (check 4), the
 /// retroactive/no-provider path (check 5), the cap gate (check 6), and the
 /// skip guards (check 7's unit half).
@@ -285,6 +311,57 @@ struct PostMeetingAgentTests {
         #expect(server.recordedRequests.count == 1)
         #expect(try await harness.artifacts.artifacts(for: harness.meetingID).count
             == ExtractionFixture.expectedKinds().count)
+    }
+
+    @Test func terminalCleanupRetainsMeetingOwnershipUntilItFinishes() async throws {
+        let harness = try await AgentHarness.start()
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 500, body: OpenAIFixtures.errorBody(message: "temporary outage")),
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json))
+        ])
+        defer { server.stop() }
+        let probe = GenerationCleanupProbe()
+        let upstream = OpenAICompatibleClient(
+            profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+        let agent = PostMeetingAgent(
+            meetings: harness.meetings,
+            artifacts: harness.artifacts,
+            onGenerationFinished: { _, outcome in await probe.finish(outcome) },
+            makeContext: { _ in
+                await probe.admittedContext()
+                return PostMeetingProviderContext(provider: upstream, model: "fake-model")
+            }
+        )
+
+        let owner = Task { await agent.generateArtifacts(meetingID: harness.meetingID) }
+        for _ in 0..<300 where !(await probe.cleanupStarted) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await probe.cleanupStarted)
+
+        let successor = await agent.generateArtifacts(meetingID: harness.meetingID)
+        #expect(successor == .skippedGenerationInFlight)
+        #expect(await probe.contextAdmissions == 1,
+                "a successor cannot look up or register a new meter during cleanup")
+        #expect(await probe.cleanupOutcomes.count == 1,
+                "the losing reentrancy caller does not own terminal cleanup")
+
+        await probe.release()
+        guard case .failed = await owner.value else {
+            Issue.record("the original failed generation should return after cleanup releases")
+            return
+        }
+
+        // Cleanup has finished and released ownership. A real successor can
+        // now resolve/register its own context and complete successfully.
+        guard case .drafted = await agent.generateArtifacts(meetingID: harness.meetingID) else {
+            Issue.record("a successor should be admitted after cleanup releases")
+            return
+        }
+        #expect(await probe.contextAdmissions == 2)
+        #expect(await probe.cleanupOutcomes.count == 2,
+                "the next owned terminal outcome receives its own cleanup callback")
+        #expect(server.recordedRequests.count == 2)
     }
 
     @Test func successfulGenerationRecordsTheG3WallTime() async throws {

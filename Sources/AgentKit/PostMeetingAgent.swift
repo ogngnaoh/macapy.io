@@ -67,6 +67,12 @@ public actor PostMeetingAgent {
     /// `nil` means "not configured" — the same quiet non-answer
     /// `ProviderRegistry.client(for:)` gives (SPEC G6: no object, no call).
     private let makeContext: @Sendable (UUID) async throws -> PostMeetingProviderContext?
+    /// Runs while this agent still owns `meetingID`. Keeping terminal cleanup
+    /// inside the reentrancy window prevents a successor from registering a
+    /// fresh spend meter between generation returning and its caller cleaning
+    /// up the old one.
+    private let onGenerationFinished:
+        (@Sendable (UUID, Outcome) async -> Void)?
     /// Wall time of the last successful generation, trigger to last row —
     /// the G3 number, surfaced in diagnostics (slice-03 decision 7).
     public private(set) var lastDraftedInSeconds: Double?
@@ -98,12 +104,15 @@ public actor PostMeetingAgent {
         artifacts: ArtifactStore,
         chunkBudgetCharacters: Int = 60_000,
         generationEnabled: Bool = true,
+        onGenerationFinished:
+            (@Sendable (UUID, Outcome) async -> Void)? = nil,
         makeContext: @escaping @Sendable (UUID) async throws -> PostMeetingProviderContext?
     ) {
         self.meetings = meetings
         self.artifacts = artifacts
         self.chunkBudgetCharacters = chunkBudgetCharacters
         self.generationEnabled = generationEnabled
+        self.onGenerationFinished = onGenerationFinished
         self.makeContext = makeContext
         self.persistDrafts = { drafts, meetingID in
             try await artifacts.insertDrafts(drafts, meetingID: meetingID)
@@ -118,6 +127,8 @@ public actor PostMeetingAgent {
         artifacts: ArtifactStore,
         chunkBudgetCharacters: Int = 60_000,
         generationEnabled: Bool = true,
+        onGenerationFinished:
+            (@Sendable (UUID, Outcome) async -> Void)? = nil,
         makeContext: @escaping @Sendable (UUID) async throws -> PostMeetingProviderContext?,
         persistDrafts: @escaping @Sendable ([DraftArtifact], UUID) async throws -> [ArtifactRecord]
     ) {
@@ -125,6 +136,7 @@ public actor PostMeetingAgent {
         self.artifacts = artifacts
         self.chunkBudgetCharacters = chunkBudgetCharacters
         self.generationEnabled = generationEnabled
+        self.onGenerationFinished = onGenerationFinished
         self.makeContext = makeContext
         self.persistDrafts = persistDrafts
     }
@@ -140,6 +152,21 @@ public actor PostMeetingAgent {
             extractionTasks[meetingID] = nil
             persistenceTasks[meetingID] = nil
         }
+        let outcome = await generateOwnedArtifacts(
+            meetingID: meetingID,
+            admittedEpoch: admittedEpoch
+        )
+        await onGenerationFinished?(meetingID, outcome)
+        return outcome
+    }
+
+    /// Performs one admitted attempt. Its caller retains meeting ownership
+    /// through the terminal callback, so every return below is safe to clean
+    /// up before another generation for the same meeting can begin.
+    private func generateOwnedArtifacts(
+        meetingID: UUID,
+        admittedEpoch: UInt64
+    ) async -> Outcome {
         do {
             try Task.checkCancellation()
             guard let meeting = try await meetings.meeting(id: meetingID) else {
