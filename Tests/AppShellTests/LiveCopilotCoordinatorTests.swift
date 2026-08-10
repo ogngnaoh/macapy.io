@@ -11,16 +11,16 @@ import TranscribeKit
 
 @MainActor
 struct LiveCopilotCoordinatorTests {
-    private actor BlockingGenerationLedger: SpendLedger {
+    private actor BlockingClassifierLedger: SpendLedger {
         private var entries: [SpendEntry] = []
-        private var generationRelease: CheckedContinuation<Void, Never>?
-        private var shouldBlockGeneration = true
-        private(set) var generationSettlementStarted = false
+        private var classifierRelease: CheckedContinuation<Void, Never>?
+        private var shouldBlockClassifier = true
+        private(set) var classifierSettlementStarted = false
 
         func record(_ entry: SpendEntry) async throws {
-            if entry.purpose == .generation, shouldBlockGeneration {
-                generationSettlementStarted = true
-                await withCheckedContinuation { generationRelease = $0 }
+            if entry.purpose == .classifier, shouldBlockClassifier {
+                classifierSettlementStarted = true
+                await withCheckedContinuation { classifierRelease = $0 }
             }
             entries.append(entry)
         }
@@ -32,10 +32,41 @@ struct LiveCopilotCoordinatorTests {
                 .reduce(0, +)
         }
 
-        func releaseGenerationSettlement() {
-            shouldBlockGeneration = false
-            generationRelease?.resume()
-            generationRelease = nil
+        func releaseClassifierSettlement() {
+            shouldBlockClassifier = false
+            classifierRelease?.resume()
+            classifierRelease = nil
+        }
+    }
+
+    /// Holds the first capped admission before a reservation exists. The
+    /// actor remains reentrant, so post-meeting work can prove that it does not
+    /// need to wait for an already-cancelled pre-reservation call.
+    private actor BlockingFirstTotalLedger: SpendLedger {
+        private var entries: [SpendEntry] = []
+        private var firstTotalRelease: CheckedContinuation<Void, Never>?
+        private var shouldBlockFirstTotal = true
+        private(set) var firstTotalStarted = false
+        private(set) var firstTotalReturned = false
+
+        func record(_ entry: SpendEntry) async throws { entries.append(entry) }
+
+        func totalCostUSD(meetingID: UUID) async throws -> Double {
+            if shouldBlockFirstTotal {
+                shouldBlockFirstTotal = false
+                firstTotalStarted = true
+                await withCheckedContinuation { firstTotalRelease = $0 }
+                firstTotalReturned = true
+            }
+            return entries
+                .filter { $0.meetingID == meetingID }
+                .compactMap(\.estCostUSD)
+                .reduce(0, +)
+        }
+
+        func releaseFirstTotal() {
+            firstTotalRelease?.resume()
+            firstTotalRelease = nil
         }
     }
 
@@ -64,6 +95,40 @@ struct LiveCopilotCoordinatorTests {
             _ request: CompletionRequest,
             as type: T.Type
         ) async throws -> CompletedCall<T> {
+            let json = #"{"action":"suggest_answer","confidence":0.97,"target":"migration risk"}"#
+            return CompletedCall(
+                value: try JSONDecoder().decode(type, from: Data(json.utf8)),
+                usage: TokenUsage(promptTokens: 20, completionTokens: 5)
+            )
+        }
+    }
+
+    private final class CountingLiveProvider: LLMProvider, @unchecked Sendable {
+        private let lock = NSLock()
+        private var _structuredCalls = 0
+        private var _streamCalls = 0
+
+        var calls: (structured: Int, stream: Int) {
+            lock.withLock { (_structuredCalls, _streamCalls) }
+        }
+
+        func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
+            lock.withLock { _streamCalls += 1 }
+            return AsyncThrowingStream { continuation in
+                continuation.yield(.token("late answer"))
+                continuation.yield(.completed(Completion(
+                    finishReason: "stop",
+                    usage: TokenUsage(promptTokens: 30, completionTokens: 3)
+                )))
+                continuation.finish()
+            }
+        }
+
+        func completeReportingUsage<T: Decodable>(
+            _ request: CompletionRequest,
+            as type: T.Type
+        ) async throws -> CompletedCall<T> {
+            lock.withLock { _structuredCalls += 1 }
             let json = #"{"action":"suggest_answer","confidence":0.97,"target":"migration risk"}"#
             return CompletedCall(
                 value: try JSONDecoder().decode(type, from: Data(json.utf8)),
@@ -394,10 +459,10 @@ struct LiveCopilotCoordinatorTests {
         #expect(purposes == [.classifier, .generation])
     }
 
-    @Test func blockedSettlementStopsCaptureAndDoesNotDelayNextMeeting() async throws {
+    @Test func blockedClassifierSettlementStopsCaptureAndDoesNotDelayNextMeeting() async throws {
         let server = try FakeOpenAIServer.start(responses: [Self.artifact])
         defer { server.stop() }
-        let ledger = BlockingGenerationLedger()
+        let ledger = BlockingClassifierLedger()
         let postMeeting = OpenAICompatibleClient(
             profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
         let shell = try await makeShell(
@@ -410,13 +475,13 @@ struct LiveCopilotCoordinatorTests {
         shell.coordinator.toggleSession()
         await shell.coordinator.settle()
         for _ in 0..<300 {
-            if await ledger.generationSettlementStarted { break }
+            if await ledger.classifierSettlementStarted { break }
             try? await Task.sleep(for: .milliseconds(10))
         }
-        #expect(await ledger.generationSettlementStarted)
+        #expect(await ledger.classifierSettlementStarted)
         #expect(server.recordedRequests.isEmpty)
 
-        // Stop directly while the metered live stream's detached settlement is
+        // Stop directly while the metered classifier's detached settlement is
         // deliberately held open. Capture teardown must not inherit that wait.
         shell.coordinator.toggleSession()
         let settling = Task { await shell.coordinator.settle() }
@@ -434,8 +499,8 @@ struct LiveCopilotCoordinatorTests {
 
         // The first meeting's artifact remains settlement-gated, but the next
         // meeting is allowed to attach and start capture immediately.
-        // Disable only automatic classification for meeting two so it does not
-        // create a second intentionally blocked ledger continuation.
+        // Disable automatic classification for meeting two so this test stays
+        // focused on the first meeting's blocked settlement.
         let settings = shell.coordinator.liveAISettingsModel()
         await settings.load()
         await settings.setSensitivity(.off)
@@ -447,7 +512,7 @@ struct LiveCopilotCoordinatorTests {
         #expect(await shell.counters.captureStarts == 2)
         #expect(server.recordedRequests.isEmpty)
 
-        await ledger.releaseGenerationSettlement()
+        await ledger.releaseClassifierSettlement()
         await settling.value
 
         #expect(server.recordedRequests.count == 1)
@@ -456,6 +521,59 @@ struct LiveCopilotCoordinatorTests {
 
         shell.coordinator.toggleSession()
         await shell.coordinator.settle()
+    }
+
+    @Test func cancelledPreReservationClassifierCannotStartLateAfterArtifact() async throws {
+        let server = try FakeOpenAIServer.start(responses: [Self.artifact])
+        defer { server.stop() }
+        let ledger = BlockingFirstTotalLedger()
+        let liveProvider = CountingLiveProvider()
+        let postMeeting = OpenAICompatibleClient(
+            profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+        let shell = try await makeShell(
+            server: server,
+            capUSD: 1,
+            postMeetingProvider: postMeeting,
+            liveProvider: liveProvider,
+            liveSpendLedger: ledger
+        )
+
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+        for _ in 0..<300 {
+            if await ledger.firstTotalStarted { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await ledger.firstTotalStarted)
+        #expect(liveProvider.calls.structured == 0)
+
+        shell.coordinator.toggleSession()
+        let settling = Task { await shell.coordinator.settle() }
+        for _ in 0..<300 where await shell.counters.captureStops < 1 {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await shell.counters.captureStops == 1)
+        await waitUntil("artifact generated while cancelled admission is suspended") {
+            server.recordedRequests.count == 1
+        }
+        #expect(server.recordedRequests.count == 1)
+        #expect(liveProvider.calls.structured == 0)
+        #expect(liveProvider.calls.stream == 0)
+
+        // The stale cap read resumes only after the artifact has crossed the
+        // network. SpendMeter must observe cancellation before inserting its
+        // reservation, so neither classifier nor generation can start late.
+        await ledger.releaseFirstTotal()
+        for _ in 0..<300 {
+            if await ledger.firstTotalReturned { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await ledger.firstTotalReturned)
+        try? await Task.sleep(for: .milliseconds(20))
+        #expect(liveProvider.calls.structured == 0)
+        #expect(liveProvider.calls.stream == 0)
+        #expect(server.recordedRequests.count == 1)
+        await settling.value
     }
 
     @Test func capReleaseSignalUsesOnlyCurrentMeetingMeter() async {
