@@ -32,6 +32,13 @@ final class MeetingPipeline {
     /// construction — no separate enable flag. Exposed to the coordinator via
     /// `currentRecorder` for the diagnostics section.
     let recorder: LatencyRecorder
+    /// Production fed-audio clock used to keep each source's STT event anchor
+    /// behind audio actually delivered to that source's analyzer.
+    let fedAudioClock: FedAudioClock
+    /// Per-meeting transcription stream failures. The counter stores no error
+    /// strings or transcript data and survives pipeline teardown via the
+    /// coordinator's retained reference.
+    let sttErrorCounter: STTErrorCounter
     /// Per-source signal levels for the strip (slice-4 decision 5), written by
     /// the fan-out tap, polled by the UI. Same on-by-construction pattern as
     /// `recorder`.
@@ -67,6 +74,8 @@ final class MeetingPipeline {
         store: TranscriptStore,
         locale: Locale = .current,
         recorder: LatencyRecorder = LatencyRecorder(sessionStart: Date()),
+        fedAudioClock: FedAudioClock = FedAudioClock(),
+        sttErrorCounter: STTErrorCounter = STTErrorCounter(),
         makeDiarizer: (@Sendable () throws -> DiarizationSession)? = nil
     ) {
         self.engine = engine
@@ -74,6 +83,8 @@ final class MeetingPipeline {
         self.store = store
         self.locale = locale
         self.recorder = recorder
+        self.fedAudioClock = fedAudioClock
+        self.sttErrorCounter = sttErrorCounter
         self.makeDiarizer = makeDiarizer
     }
 
@@ -160,9 +171,21 @@ final class MeetingPipeline {
             }
         }
 
-        try await engine.prepare(locale: locale)
-        if stopped { return }
-        let baseFormat = try await engine.preferredInputFormat()
+        let baseFormat: AVAudioFormat
+        do {
+            try await engine.prepare(locale: locale)
+            if stopped { return }
+            baseFormat = try await engine.preferredInputFormat()
+        } catch is CancellationError {
+            if !stopped { sttErrorCounter.increment() }
+            throw CancellationError()
+        } catch {
+            // Preparation/format failures belong to STT just as surely as a
+            // failed event stream. Count only this engine boundary; database,
+            // capture, and diarization failures have their own diagnostics.
+            sttErrorCounter.increment()
+            throw error
+        }
         if stopped { return }
 
         let commonFormat = baseFormat.commonFormat
@@ -195,9 +218,11 @@ final class MeetingPipeline {
             // computes RMS per chunk for the signal strip. Branch 0 is always
             // STT; the them-stream gets branch 1 for the diarizer.
             let meter = signalMeter
+            let fedAudioClock = self.fedAudioClock
             let diarizing = src == .system && diarizationSession != nil
             let fanOut = BoundedAudioFanOut.split(audio, branchCount: diarizing ? 2 : 1) { chunk in
                 meter.record(source: src, level: AudioLevel.rms(of: chunk.buffer))
+                fedAudioClock.record(chunk, source: src)
             }
             dropCounters.append(fanOut.drops)
             forwardingTasks.append(fanOut.forwarding)
@@ -223,7 +248,8 @@ final class MeetingPipeline {
             }
             let events = engine.transcribe(fanOut.branches[0], source: src)
             let recorder = self.recorder
-            let task = Task { @MainActor [weak self, store, recorder] in
+            let sttErrorCounter = self.sttErrorCounter
+            let task = Task { @MainActor [weak self, store, recorder, fedAudioClock, sttErrorCounter] in
                 do {
                     for try await event in events {
                         // Recorded right at the hook point events become
@@ -234,15 +260,31 @@ final class MeetingPipeline {
                         let arrivalWall = Date()
                         switch event {
                         case let .volatile(_, _, tEnd):
-                            recorder.record(kind: .volatile, audioTEnd: tEnd, arrivalWall: arrivalWall)
+                            recorder.record(
+                                kind: .volatile,
+                                audioTEnd: fedAudioClock.clampedEventEnd(tEnd, source: src),
+                                arrivalWall: arrivalWall
+                            )
                         case let .final(segment):
-                            recorder.record(kind: .final, audioTEnd: segment.tEnd, arrivalWall: arrivalWall)
+                            recorder.record(
+                                kind: .final,
+                                audioTEnd: fedAudioClock.clampedEventEnd(segment.tEnd, source: src),
+                                arrivalWall: arrivalWall
+                            )
                         case .turnEnded:
                             break
                         }
                         store.apply(event, from: src)
                     }
+                } catch is CancellationError {
+                    // Normal pipeline teardown must not inflate the STT error
+                    // tile if an engine chooses cancellation over EOF.
+                    if self?.stopped == false {
+                        sttErrorCounter.increment()
+                        self?.onFailure?(CancellationError())
+                    }
                 } catch {
+                    sttErrorCounter.increment()
                     self?.log.error("source \(src.rawValue) failed: \(error.localizedDescription)")
                     self?.onFailure?(error)
                 }

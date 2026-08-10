@@ -71,6 +71,12 @@ final class AppShellCoordinator {
     @ObservationIgnored private var askHotKey: HotKey?
     @ObservationIgnored private var dismissCopilotHotKey: HotKey?
     @ObservationIgnored private var pipeline: MeetingPipeline?
+    /// References to the current or most recently started meeting's lock-only
+    /// diagnostics. They remain readable after `pipeline` is released, then
+    /// switch together when the next pipeline is created.
+    @ObservationIgnored private var latestLatencyRecorder: LatencyRecorder?
+    @ObservationIgnored private var latestSTTErrorCounter: STTErrorCounter?
+    @ObservationIgnored private var latestDroppedChunks: Int?
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var stopTask: Task<Void, Never>?
     @ObservationIgnored private var pauseResumeTask: Task<Void, Never>?
@@ -253,6 +259,10 @@ final class AppShellCoordinator {
         let previousStop = stopTask
         let newPipeline = makePipeline(store)
         pipeline = newPipeline
+        latestLatencyRecorder = newPipeline.recorder
+        latestSTTErrorCounter = newPipeline.sttErrorCounter
+        latestDroppedChunks = 0
+        copilot.suggestionLatencyRecorder.reset()
         session.signalMeter = newPipeline.signalMeter
         newPipeline.onFailure = { [weak self] error in
             self?.handleFailure(from: newPipeline, error)
@@ -343,7 +353,7 @@ final class AppShellCoordinator {
     /// is a plain lock-protected class, so the diagnostics view polls it
     /// instead (see `DiagnosticsSectionView`).
     var currentRecorder: LatencyRecorder? {
-        pipeline?.recorder
+        latestLatencyRecorder
     }
 
     /// Signal-strip data source (slice-4 decision 5); nil when no pipeline has
@@ -354,7 +364,46 @@ final class AppShellCoordinator {
 
     /// Diagnostics "Dropped chunks" tile (slice-4 decision 4).
     var currentDroppedChunks: Int? {
-        pipeline?.droppedChunks
+        pipeline?.droppedChunks ?? latestDroppedChunks
+    }
+
+    struct DiagnosticsSnapshot: Sendable, Equatable {
+        let hasMeeting: Bool
+        let speech: LatencyReport?
+        let suggestion: SuggestionLatencyRecorder.Report
+        let memoryBytes: UInt64?
+        let artifactG3Seconds: Double?
+        let droppedChunks: Int
+        let sttErrorCount: Int
+    }
+
+    /// One coherent polling read for the diagnostics grid. The recorder and
+    /// counters are lock-protected snapshots; the actor-owned G3 value is read
+    /// only from an agent already constructed by normal app flow, so opening
+    /// Diagnostics never opens storage or configures a provider.
+    func diagnosticsSnapshot() async -> DiagnosticsSnapshot {
+        let recorder = latestLatencyRecorder
+        let sttCounter = latestSTTErrorCounter
+        let dropped = pipeline?.droppedChunks ?? latestDroppedChunks ?? 0
+        // Snapshot every per-meeting lock source before the actor hop to G3;
+        // a new meeting can begin while that await is suspended.
+        let speech = recorder?.report()
+        let suggestion = copilot.suggestionLatencyRecorder.report()
+        let memoryBytes = MemoryFootprint.currentBytes()
+        let g3: Double? = if let agent = cachedPostMeetingAgent {
+            await agent.lastDraftedInSeconds
+        } else {
+            nil
+        }
+        return DiagnosticsSnapshot(
+            hasMeeting: recorder != nil,
+            speech: speech,
+            suggestion: suggestion,
+            memoryBytes: memoryBytes,
+            artifactG3Seconds: g3,
+            droppedChunks: dropped,
+            sttErrorCount: sttCounter?.count ?? 0
+        )
     }
 
     func historyStore() -> MeetingStore? {
@@ -616,6 +665,7 @@ final class AppShellCoordinator {
 
     private func teardownPipeline() {
         guard let stopping = pipeline else { return }
+        latestDroppedChunks = stopping.droppedChunks
         pipeline = nil
         lifecycleEpoch &+= 1
         stopping.markStopped()  // synchronous: a suspended start() bails at its checkpoint
@@ -649,6 +699,12 @@ final class AppShellCoordinator {
             self?.activeCopilotLifecycleEpoch = nil
             let endedMeetingID = await stopping.stop()
             guard let self else { return }
+            // A newer pipeline may already own the retained diagnostics by the
+            // time this old drain completes. Never let its zero/current value
+            // be overwritten by stale teardown.
+            if self.latestLatencyRecorder === stopping.recorder {
+                self.latestDroppedChunks = stopping.droppedChunks
+            }
             // This unstructured owner is intentionally independent of the
             // artifact task's cancellation. Global AI-off may cancel artifact
             // generation, but a live reservation still needs to settle and an

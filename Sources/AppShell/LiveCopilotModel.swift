@@ -170,6 +170,10 @@ final class LiveCopilotModel {
     @ObservationIgnored private var cardHovered = false
     @ObservationIgnored private var cardFocused = false
     @ObservationIgnored private var hardPause: HardPause?
+    /// G2 is per-meeting, in-memory, and text-free. Kept as a stable object so
+    /// diagnostics polling can retain the ended meeting's report until the
+    /// next `beginMeeting` resets it.
+    @ObservationIgnored let suggestionLatencyRecorder: SuggestionLatencyRecorder
     @ObservationIgnored private var expiryRemaining: TimeInterval = 25
     @ObservationIgnored private var expiryStartedAt: Date?
     @ObservationIgnored private let proactiveLifetime: TimeInterval
@@ -180,6 +184,7 @@ final class LiveCopilotModel {
         (@Sendable () async -> Void)?
     @ObservationIgnored private let workAttachCheckpoint:
         (@Sendable () async -> Void)?
+    @ObservationIgnored private let diagnosticsNow: @Sendable () -> Date
 
     init(
         proactiveLifetime: TimeInterval = 25,
@@ -188,13 +193,17 @@ final class LiveCopilotModel {
         },
         providerReplacementCheckpoint: (@Sendable (UUID) async -> Void)? = nil,
         explicitAdmissionCheckpoint: (@Sendable () async -> Void)? = nil,
-        workAttachCheckpoint: (@Sendable () async -> Void)? = nil
+        workAttachCheckpoint: (@Sendable () async -> Void)? = nil,
+        suggestionLatencyRecorder: SuggestionLatencyRecorder = SuggestionLatencyRecorder(),
+        diagnosticsNow: @escaping @Sendable () -> Date = Date.init
     ) {
         self.proactiveLifetime = proactiveLifetime
         self.waitForExpiry = waitForExpiry
         self.providerReplacementCheckpoint = providerReplacementCheckpoint
         self.explicitAdmissionCheckpoint = explicitAdmissionCheckpoint
         self.workAttachCheckpoint = workAttachCheckpoint
+        self.suggestionLatencyRecorder = suggestionLatencyRecorder
+        self.diagnosticsNow = diagnosticsNow
     }
 
     var canCatchUp: Bool {
@@ -223,6 +232,7 @@ final class LiveCopilotModel {
         settings: LiveAISettings
     ) {
         stopMeeting()
+        suggestionLatencyRecorder.reset()
         activeMeetingID = meetingID
         let preferredName = Self.normalizedName(settings.preferredName)
         configuration = CopilotConfiguration(
@@ -374,6 +384,7 @@ final class LiveCopilotModel {
         workTask?.cancel()
         workTask = nil
         workLease = nil
+        cancelSuggestionTrigger(for: replacedWork)
         expiryTask?.cancel()
         expiryTask = nil
         card = nil
@@ -405,6 +416,7 @@ final class LiveCopilotModel {
         workTask?.cancel()
         workTask = nil
         workLease = nil
+        cancelSuggestionTrigger(for: replacedWork)
         expiryTask?.cancel()
         expiryTask = nil
         card = nil
@@ -481,6 +493,7 @@ final class LiveCopilotModel {
             workTask = nil
             workLease = nil
         }
+        cancelSuggestionTrigger(for: lease)
         expiryTask?.cancel()
         expiryTask = nil
         card = nil
@@ -537,6 +550,7 @@ final class LiveCopilotModel {
 
     func stopMeeting() {
         cancelAllLocalWorkAndPresentation(clearSummary: true)
+        suggestionLatencyRecorder.cancelPending()
         provider = nil
         activeMeetingID = nil
         desiredProviderReplacementID = nil
@@ -564,6 +578,11 @@ final class LiveCopilotModel {
             await arbiter.cancel(lease)
             return false
         }
+        // Start G2 at the actual automatic admission boundary, before the
+        // classifier request begins. `triggeredAt` remains the cooldown clock;
+        // diagnostics uses its own wall clock so synthetic gate times cannot
+        // produce false latency samples.
+        suggestionLatencyRecorder.trigger(lease.id, at: diagnosticsNow())
         let revision = beginAutomaticLease(lease)
         let preferredName = configuration.preferredName
         let threshold = configuration.confidenceThreshold
@@ -786,6 +805,7 @@ final class LiveCopilotModel {
         workTask?.cancel()
         workTask = nil
         workLease = nil
+        cancelSuggestionTrigger(for: replacedWork)
         expiryTask?.cancel()
         expiryTask = nil
         card = nil
@@ -845,10 +865,22 @@ final class LiveCopilotModel {
             switch event {
             case .delta(let token):
                 card?.text += token
+                if !token.isEmpty, lease.priority == .proactive {
+                    suggestionLatencyRecorder.recordFirstVisible(
+                        lease.id,
+                        at: diagnosticsNow()
+                    )
+                }
             case .completed(let text):
                 card?.text = text
                 card?.isStreaming = false
                 availability = .ready
+                if !text.isEmpty, lease.priority == .proactive {
+                    suggestionLatencyRecorder.recordFirstVisible(
+                        lease.id,
+                        at: diagnosticsNow()
+                    )
+                }
             case .cleared:
                 card = nil
                 presentationLease = nil
@@ -871,6 +903,11 @@ final class LiveCopilotModel {
         revision: UInt64,
         retainCard: Bool
     ) async -> Bool {
+        if lease.priority == .proactive,
+           !retainCard || card?.id != lease.id || card?.text.isEmpty != false
+        {
+            suggestionLatencyRecorder.cancel(lease.id)
+        }
         guard await owns(lease, revision: revision) else { return false }
         await arbiter.finish(lease, retainCard: retainCard)
         guard workRevision == revision else { return false }
@@ -896,6 +933,7 @@ final class LiveCopilotModel {
         lease: CopilotWorkLease,
         revision: UInt64
     ) async {
+        cancelSuggestionTrigger(for: lease)
         guard await owns(lease, revision: revision) else { return }
         _ = await finish(lease, revision: revision, retainCard: false)
         handle(error)
@@ -913,6 +951,7 @@ final class LiveCopilotModel {
 
     private func beginAutomaticLease(_ lease: CopilotWorkLease) -> UInt64 {
         workRevision &+= 1
+        cancelSuggestionTrigger(for: workLease)
         workTask?.cancel()
         workTask = nil
         workLease = lease
@@ -929,6 +968,7 @@ final class LiveCopilotModel {
 
     private func invalidateCurrentWork(preserveCompletedRequestedPresentation: Bool) {
         workRevision &+= 1
+        cancelSuggestionTrigger(for: workLease)
         workTask?.cancel()
         workTask = nil
         workLease = nil
@@ -945,6 +985,7 @@ final class LiveCopilotModel {
 
     private func cancelAllLocalWorkAndPresentation(clearSummary: Bool) {
         workRevision &+= 1
+        cancelSuggestionTrigger(for: workLease)
         admissionTask?.cancel()
         admissionTask = nil
         workTask?.cancel()
@@ -963,6 +1004,7 @@ final class LiveCopilotModel {
     private func cancelProactiveWorkAndPresentation() async {
         if workLease?.priority == .proactive, let lease = workLease {
             workRevision &+= 1
+            cancelSuggestionTrigger(for: lease)
             workTask?.cancel()
             workTask = nil
             workLease = nil
@@ -980,6 +1022,11 @@ final class LiveCopilotModel {
         }
         resetCardInteraction()
         if card == nil, !askFieldVisible { restoreAvailability() }
+    }
+
+    private func cancelSuggestionTrigger(for lease: CopilotWorkLease?) {
+        guard let lease, lease.priority == .proactive else { return }
+        suggestionLatencyRecorder.cancel(lease.id)
     }
 
     // MARK: - Query budget
