@@ -456,17 +456,27 @@ public struct MeteredProvider: LLMProvider {
                                 continuation.yield(event)
                             }
                         }
+                        // `AsyncThrowingStream` is allowed to end iteration
+                        // normally when its consumer task is cancelled. Turn
+                        // that silent termination back into the one failure
+                        // category that releases a no-usage reservation.
+                        try Task.checkCancellation()
                     } catch {
                         // The upstream may have delivered its billed usage
                         // before the failure or cancellation reached us; the
                         // original error still wins.
-                        if usage != nil {
-                            await settleLoggingFailure(held, usage: usage, request: request)
-                        } else {
-                            // Explicit cancellation/transport failure without
-                            // reported usage is not a successful completion and
-                            // must release its reservation.
+                        if error is CancellationError, usage == nil {
+                            // Caller-driven cancellation before reported usage
+                            // is the one streaming failure that proves there is
+                            // no known completed bill to retain.
                             await meter.cancel(held)
+                        } else {
+                            // Transport, HTTP, malformed, and in-band failures
+                            // may arrive after the provider accepted/billed the
+                            // request. With no trustworthy usage, retain the
+                            // request ceiling as an uncertain debit. If usage
+                            // was already reported, book it before rethrowing.
+                            await settleLoggingFailure(held, usage: usage, request: request)
                         }
                         reservation = nil
                         throw error
