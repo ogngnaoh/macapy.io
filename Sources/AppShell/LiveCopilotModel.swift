@@ -174,10 +174,14 @@ final class LiveCopilotModel {
     /// diagnostics polling can retain the ended meeting's report until the
     /// next `beginMeeting` resets it.
     @ObservationIgnored let suggestionLatencyRecorder: SuggestionLatencyRecorder
+    @ObservationIgnored private var recoveryController = CopilotRecoveryController()
+    @ObservationIgnored private var recoveryTask: Task<Void, Never>?
     @ObservationIgnored private var expiryRemaining: TimeInterval = 25
     @ObservationIgnored private var expiryStartedAt: Date?
     @ObservationIgnored private let proactiveLifetime: TimeInterval
     @ObservationIgnored private let waitForExpiry: @Sendable (TimeInterval) async throws -> Void
+    @ObservationIgnored private let waitForRecovery:
+        @Sendable (TimeInterval) async throws -> Void
     @ObservationIgnored private let providerReplacementCheckpoint:
         (@Sendable (UUID) async -> Void)?
     @ObservationIgnored private let explicitAdmissionCheckpoint:
@@ -191,6 +195,9 @@ final class LiveCopilotModel {
         waitForExpiry: @escaping @Sendable (TimeInterval) async throws -> Void = { delay in
             try await Task.sleep(for: .seconds(delay))
         },
+        waitForRecovery: @escaping @Sendable (TimeInterval) async throws -> Void = { delay in
+            try await Task.sleep(for: .seconds(delay))
+        },
         providerReplacementCheckpoint: (@Sendable (UUID) async -> Void)? = nil,
         explicitAdmissionCheckpoint: (@Sendable () async -> Void)? = nil,
         workAttachCheckpoint: (@Sendable () async -> Void)? = nil,
@@ -199,6 +206,7 @@ final class LiveCopilotModel {
     ) {
         self.proactiveLifetime = proactiveLifetime
         self.waitForExpiry = waitForExpiry
+        self.waitForRecovery = waitForRecovery
         self.providerReplacementCheckpoint = providerReplacementCheckpoint
         self.explicitAdmissionCheckpoint = explicitAdmissionCheckpoint
         self.workAttachCheckpoint = workAttachCheckpoint
@@ -267,6 +275,7 @@ final class LiveCopilotModel {
         // meeting start and embedded in the immutable stable prefix.
         if !settings.aiFeaturesEnabled {
             cancelAllLocalWorkAndPresentation(clearSummary: true)
+            cancelRecovery()
             availability = .disabled
             await arbiter.cancelAll()
             await contextManager.clearGeneratedSummary()
@@ -290,6 +299,7 @@ final class LiveCopilotModel {
     ) async {
         guard isMeetingActive, activeMeetingID == expectedMeetingID else { return }
         desiredProviderReplacementID = replacementID
+        cancelRecovery()
 
         let pendingAdmission = admissionTask
         let hadOpenAskSurface = askFieldVisible
@@ -376,7 +386,6 @@ final class LiveCopilotModel {
 
     func requestCatchUp() {
         guard canCatchUp else { return }
-        if case .transient = hardPause { hardPause = nil }
         let replacedWork = workLease
         let replacedPresentation = presentationLease
         workRevision &+= 1
@@ -408,7 +417,6 @@ final class LiveCopilotModel {
 
     func requestAsk() {
         guard canAsk else { return }
-        if case .transient = hardPause { hardPause = nil }
         let replacedWork = workLease
         let replacedPresentation = presentationLease
         workRevision &+= 1
@@ -471,6 +479,11 @@ final class LiveCopilotModel {
                     lease: lease,
                     revision: revision
                 )
+                try Task.checkCancellation()
+                guard await self.owns(lease, revision: revision) else {
+                    throw CancellationError()
+                }
+                self.providerWorkSucceeded()
                 _ = await self.finish(lease, revision: revision, retainCard: true)
             } catch is CancellationError {
                 _ = await self.finish(lease, revision: revision, retainCard: false)
@@ -521,6 +534,7 @@ final class LiveCopilotModel {
 
     func releaseAuthenticationPauseAfterConfigurationChange() {
         guard hardPause == .authenticationOrConfiguration else { return }
+        cancelRecovery()
         hardPause = nil
         if card == nil, !askFieldVisible, configuration.aiFeaturesEnabled {
             availability = provider == nil ? .setupRequired : .ready
@@ -529,6 +543,7 @@ final class LiveCopilotModel {
 
     func releaseCapPauseAfterCapIncrease() {
         guard hardPause == .cap else { return }
+        cancelRecovery()
         hardPause = nil
         if card == nil, !askFieldVisible, configuration.aiFeaturesEnabled {
             availability = provider == nil ? .setupRequired : .ready
@@ -551,6 +566,7 @@ final class LiveCopilotModel {
     func stopMeeting() {
         cancelAllLocalWorkAndPresentation(clearSummary: true)
         suggestionLatencyRecorder.cancelPending()
+        cancelRecovery()
         provider = nil
         activeMeetingID = nil
         desiredProviderReplacementID = nil
@@ -626,11 +642,14 @@ final class LiveCopilotModel {
                 preferredName: preferredName
             )
             try Task.checkCancellation()
+            guard await owns(lease, revision: revision) else {
+                throw CancellationError()
+            }
             guard decision.meetsThreshold(threshold),
                   let action = decision.action,
-                  let target = decision.target,
-                  await owns(lease, revision: revision)
+                  let target = decision.target
             else {
+                providerWorkSucceeded()
                 let finished = await finish(lease, revision: revision, retainCard: false)
                 if finished { await startRollingSummaryIfEligible() }
                 return
@@ -678,6 +697,11 @@ final class LiveCopilotModel {
                 throw CancellationError()
             }
             try await consume(stream, lease: lease, revision: revision)
+            try Task.checkCancellation()
+            guard await owns(lease, revision: revision) else {
+                throw CancellationError()
+            }
+            providerWorkSucceeded()
             if await finish(lease, revision: revision, retainCard: true) {
                 scheduleExpiry(cardID: lease.id)
             }
@@ -710,6 +734,7 @@ final class LiveCopilotModel {
                 if case .refreshed(let summary) = result {
                     self.rollingSummaryText = summary.displayText
                 }
+                self.providerWorkSucceeded()
                 _ = await self.finish(lease, revision: revision, retainCard: false)
             } catch is CancellationError {
                 _ = await self.finish(lease, revision: revision, retainCard: false)
@@ -785,6 +810,11 @@ final class LiveCopilotModel {
                     lease: lease,
                     revision: revision
                 )
+                try Task.checkCancellation()
+                guard await self.owns(lease, revision: revision) else {
+                    throw CancellationError()
+                }
+                self.providerWorkSucceeded()
                 _ = await self.finish(lease, revision: revision, retainCard: true)
             } catch is CancellationError {
                 _ = await self.finish(lease, revision: revision, retainCard: false)
@@ -797,7 +827,6 @@ final class LiveCopilotModel {
     private func beginExplicitRequest(
         keepAskField: Bool
     ) async -> (CopilotWorkLease, UInt64)? {
-        if case .transient = hardPause { hardPause = nil }
         let replacedWork = workLease
         let replacedPresentation = presentationLease
         workRevision &+= 1
@@ -935,7 +964,7 @@ final class LiveCopilotModel {
     ) async {
         cancelSuggestionTrigger(for: lease)
         guard await owns(lease, revision: revision) else { return }
-        _ = await finish(lease, revision: revision, retainCard: false)
+        guard await finish(lease, revision: revision, retainCard: false) else { return }
         handle(error)
     }
 
@@ -945,7 +974,7 @@ final class LiveCopilotModel {
         revision: UInt64
     ) async {
         guard await owns(lease, revision: revision) else { return }
-        _ = await finish(lease, revision: revision, retainCard: false)
+        guard await finish(lease, revision: revision, retainCard: false) else { return }
         latch(error, clearPresentation: false)
     }
 
@@ -1183,24 +1212,68 @@ final class LiveCopilotModel {
             card = nil
             presentationLease = nil
         }
-        if let providerError = error as? ProviderError {
-            switch providerError {
-            case .capReached:
-                hardPause = .cap
-                availability = .paused("AI paused — meeting cap reached.")
-            case .missingCredentials, .http, .malformedResponse:
-                hardPause = .authenticationOrConfiguration
-                availability = .setupRequired
-            default:
-                let message = "AI paused — \(providerError.userMessage)"
-                hardPause = .transient(message)
-                availability = .paused(message)
+        switch recoveryController.policy.disposition(for: error) {
+        case .cap:
+            recoveryTask?.cancel()
+            recoveryTask = nil
+            recoveryController.invalidate()
+            hardPause = .cap
+            availability = .paused("AI paused — meeting cap reached.")
+        case .authenticationOrConfiguration:
+            recoveryTask?.cancel()
+            recoveryTask = nil
+            recoveryController.invalidate()
+            hardPause = .authenticationOrConfiguration
+            availability = .setupRequired
+        case .transient:
+            let message: String
+            if let providerError = error as? ProviderError {
+                message = "AI paused — \(providerError.userMessage)"
+            } else {
+                message = "AI paused — the provider call failed."
             }
-        } else {
-            let message = "AI paused — the provider call failed."
             hardPause = .transient(message)
             availability = .paused(message)
+            scheduleRecovery()
         }
+    }
+
+    /// Reopens automatic admission after a monotonic delay but deliberately
+    /// does not replay the failed proactive moment. A new finalized turn is
+    /// required to admit fresh automatic work.
+    private func scheduleRecovery() {
+        guard let meetingID = activeMeetingID else { return }
+        recoveryTask?.cancel()
+        let ticket = recoveryController.recordTransientFailure()
+        let waitForRecovery = self.waitForRecovery
+        recoveryTask = Task { @MainActor [weak self] in
+            do {
+                try await waitForRecovery(ticket.delay)
+                try Task.checkCancellation()
+                guard let self,
+                      self.activeMeetingID == meetingID,
+                      self.configuration.aiFeaturesEnabled,
+                      self.recoveryController.owns(ticket)
+                else { return }
+                self.recoveryTask = nil
+                if case .transient = self.hardPause { self.hardPause = nil }
+                if self.workLease == nil { self.restoreAvailability() }
+            } catch {}
+        }
+    }
+
+    private func providerWorkSucceeded() {
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        recoveryController.recordSuccess()
+        if case .transient = hardPause { hardPause = nil }
+    }
+
+    private func cancelRecovery() {
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        recoveryController.invalidate()
+        if case .transient = hardPause { hardPause = nil }
     }
 
     private func restoreAvailability() {
@@ -1263,5 +1336,9 @@ final class LiveCopilotModel {
         retained: CopilotWorkLease?
     ) {
         (await arbiter.activeLease, await arbiter.retainedCardLease)
+    }
+
+    var transientRecoveryFailureCountForTesting: Int {
+        recoveryController.transientFailureCount
     }
 }
