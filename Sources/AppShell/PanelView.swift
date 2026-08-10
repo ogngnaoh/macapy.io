@@ -14,6 +14,7 @@ struct PanelView: View {
     @Environment(TranscriptStore.self) private var store
     @Environment(LiveCopilotModel.self) private var copilot
     @FocusState private var copilotCardFocused: Bool
+    @FocusState private var queryFieldFocused: Bool
 
     /// Panel speaker label: mic is the user ("You"); system-audio is the
     /// meeting's other participants ("Them").
@@ -28,8 +29,10 @@ struct PanelView: View {
         VStack(spacing: 0) {
             SignalStripView(mode: session.isCapturing ? .live : .quiet, meter: session.signalMeter)
             header
+            rollingSummaryStrip
             transcript
             copilotSurface
+            queryBar
             if session.isPaused {
                 pausedNote
             }
@@ -37,6 +40,9 @@ struct PanelView: View {
         }
         .frame(width: 340, height: 470)
         .background(DesignTokens.surface)
+        .onChange(of: copilot.askFocusRevision) { _, _ in
+            queryFieldFocused = copilot.askFieldVisible
+        }
     }
 
     private var header: some View {
@@ -92,6 +98,29 @@ struct PanelView: View {
         }
     }
 
+    @ViewBuilder
+    private var rollingSummaryStrip: some View {
+        if let summary = copilot.rollingSummaryText {
+            HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Space.s2) {
+                Text("So far")
+                    .font(MachineType.label())
+                    .textCase(.uppercase)
+                    .tracking(0.7)
+                    .foregroundStyle(DesignTokens.textSecondary)
+                Text(summary)
+                    .font(UIType.small)
+                    .foregroundStyle(DesignTokens.textSecondary)
+                    .lineLimit(3)
+                    .accessibilityLabel("So far in this meeting: \(summary)")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, DesignTokens.Space.s3)
+            .padding(.vertical, DesignTokens.Space.s1)
+            .overlay(alignment: .bottom) { Divider().overlay(DesignTokens.hairline) }
+            .accessibilityElement(children: .combine)
+        }
+    }
+
     private var pausedNote: some View {
         Text("Capture is stopped. Nothing is being heard.")
             .font(UIType.small)
@@ -118,7 +147,7 @@ struct PanelView: View {
                 .accessibilityLabel("Ask about this meeting")
                 .accessibilityHint("Keyboard shortcut Option Command K")
             Spacer()
-            Text("⌥⌘M · ⌥⌘P")
+            Text(copilot.askFieldVisible ? "Meeting only" : "⌥⌘M · ⌥⌘P")
                 .font(UIType.small)
                 .foregroundStyle(DesignTokens.textTertiary)
         }
@@ -133,9 +162,8 @@ struct PanelView: View {
         if let card = copilot.card {
             VStack(alignment: .leading, spacing: DesignTokens.Space.s1) {
                 HStack {
-                    Text(cardTitle(card.action))
+                    Text(cardTitle(card))
                         .font(MachineType.label())
-                        .textCase(.uppercase)
                         .tracking(0.7)
                         .foregroundStyle(DesignTokens.textSecondary)
                     Spacer()
@@ -162,21 +190,7 @@ struct PanelView: View {
             }
             .onExitCommand { copilot.dismissCard() }
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("Copilot \(cardTitle(card.action))")
-        } else if copilot.askPlaceholderVisible {
-            HStack {
-                Text("Ask is ready for the meeting-grounded query field in the next slice.")
-                    .font(UIType.small)
-                    .foregroundStyle(DesignTokens.textSecondary)
-                Spacer()
-                Button("Dismiss") { copilot.dismissCard() }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Dismiss Ask placeholder")
-                    .accessibilityHint(Self.dismissShortcutAccessibilityHint)
-            }
-            .padding(DesignTokens.Space.s3)
-            .overlay(alignment: .top) { Divider().overlay(DesignTokens.hairline) }
-            .onExitCommand { copilot.dismissCard() }
+            .accessibilityLabel("Copilot \(cardTitle(card))")
         } else if let message = availabilityMessage {
             Text(message)
                 .font(UIType.small)
@@ -189,6 +203,40 @@ struct PanelView: View {
         }
     }
 
+    @ViewBuilder
+    private var queryBar: some View {
+        if copilot.askFieldVisible {
+            HStack(spacing: DesignTokens.Space.s2) {
+                TextField(
+                    "Ask about this meeting",
+                    text: Binding(
+                        get: { copilot.queryText },
+                        set: { copilot.queryText = $0 }
+                    )
+                )
+                .textFieldStyle(.plain)
+                .font(UIType.body)
+                .focused($queryFieldFocused)
+                .onSubmit { Task { await copilot.submitAsk() } }
+                .onExitCommand { copilot.dismissCard() }
+                .accessibilityLabel("Ask about this meeting")
+                .accessibilityHint(
+                    "Type a question grounded only in this meeting, then press Return"
+                )
+                Button("Ask") { Task { await copilot.submitAsk() } }
+                    .buttonStyle(.plain)
+                    .font(UIType.small)
+                    .disabled(!copilot.canSubmitAsk)
+                    .accessibilityLabel("Submit meeting question")
+                    .accessibilityHint("Returns one answer using only this meeting")
+            }
+            .padding(.horizontal, DesignTokens.Space.s3)
+            .padding(.vertical, DesignTokens.Space.s2)
+            .overlay(alignment: .top) { Divider().overlay(DesignTokens.hairline) }
+            .accessibilityElement(children: .contain)
+        }
+    }
+
     private var availabilityMessage: String? {
         switch copilot.availability {
         case .disabled: "AI features are off. Capture is unaffected."
@@ -198,11 +246,12 @@ struct PanelView: View {
         }
     }
 
-    private func cardTitle(_ action: CopilotAction) -> String {
-        switch action {
-        case .suggestAnswer: "Suggested answer"
-        case .flagCommitment: "Commitment"
-        case .catchUp: "Catch up"
+    private func cardTitle(_ card: LiveCopilotCard) -> String {
+        switch card.kind {
+        case .query(let question): "You asked · \(question)"
+        case .action(.suggestAnswer): "Suggested answer"
+        case .action(.flagCommitment): "Commitment"
+        case .action(.catchUp): "Catch up"
         }
     }
 

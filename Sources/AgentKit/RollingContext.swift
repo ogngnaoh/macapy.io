@@ -353,6 +353,16 @@ public actor CopilotContextManager {
         )
     }
 
+    /// Clears only model-generated rolling state. Finalized transcript turns
+    /// and the immutable meeting prefix remain available for explicit work.
+    /// AppShell uses this for the global AI kill switch so re-enabling cannot
+    /// resurrect a summary produced before the switch was turned off.
+    public func clearGeneratedSummary() {
+        currentSummary = nil
+        lastSuccessfulTranscriptSeconds = nil
+        lastSuccessfulTurnCount = 0
+    }
+
     public func assembledContext() -> CopilotAssembledContext {
         // Initialization proves the unreserved immutable prefix fits.
         try! Self.assemble(

@@ -73,6 +73,33 @@ struct CopilotClassifierTests {
         #expect((body["response_format"] as? [String: String])?["type"] == "json_object")
         let messages = try #require(body["messages"] as? [[String: Any]])
         #expect((messages.last?["content"] as? String)?.contains("JSON Schema") == true)
+        let actualCharacters = messages.compactMap { $0["content"] as? String }
+            .reduce(0) { $0 + $1.count }
+        #expect(CopilotClassifier.requestCharacterCount(recentTurns: turns())
+            == actualCharacters)
+    }
+
+    @Test func oversizedLastTenAreRejectedBeforeAnyProviderCall() async throws {
+        let server = try FakeOpenAIServer.start(responses: [])
+        defer { server.stop() }
+        let client = OpenAICompatibleClient(
+            profile: .fake(baseURL: server.baseURL),
+            apiKey: "sk-test"
+        )
+        let hostile = (0..<10).map { index in
+            CopilotTurn(
+                source: .system,
+                text: String(repeating: "x", count: 7_000) + "-\(index)",
+                tStart: Double(index),
+                tEnd: Double(index + 1)
+            )
+        }
+
+        await #expect(throws: CopilotContextError.self) {
+            try await CopilotClassifier(provider: client, model: "fast")
+                .classify(recentTurns: hostile)
+        }
+        #expect(server.recordedRequests.isEmpty)
     }
 
     @Test(arguments: [
