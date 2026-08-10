@@ -188,6 +188,198 @@ struct SpendMeterTests {
         #expect(events.contains(.token("hello")))
     }
 
+    // MARK: - In-flight reservations
+
+    @Test func concurrentReservationsCannotAmplifyACapOverrun() async throws {
+        let ledger = InMemorySpendLedger()
+        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: 0.20)
+        let request = Self.expensiveRequest
+
+        let reservations = await withTaskGroup(of: SpendReservation?.self) { group in
+            for _ in 0..<2 {
+                group.addTask {
+                    try? await meter.reserve(request, meetingID: Self.meeting)
+                }
+            }
+            var values: [SpendReservation] = []
+            for await reservation in group {
+                if let reservation { values.append(reservation) }
+            }
+            return values
+        }
+
+        #expect(reservations.count == 1,
+                "only one concurrent maximum-cost call may claim the remaining cap")
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) > 0.15)
+        for reservation in reservations { await meter.cancel(reservation) }
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0)
+    }
+
+    @Test func anUnpricedCappedCallClaimsAllRemainingCapacity() async throws {
+        let meter = SpendMeter(
+            ledger: InMemorySpendLedger(),
+            pricing: PricingTable(rates: [:]),
+            capUSD: 0.20
+        )
+
+        let reservations = await withTaskGroup(of: SpendReservation?.self) { group in
+            for _ in 0..<2 {
+                group.addTask {
+                    try? await meter.reserve(.hello, meetingID: Self.meeting)
+                }
+            }
+            var values: [SpendReservation] = []
+            for await reservation in group {
+                if let reservation { values.append(reservation) }
+            }
+            return values
+        }
+
+        #expect(reservations.count == 1)
+        #expect(reservations.first?.estimatedCostUSD == nil)
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0.20)
+        for reservation in reservations { await meter.cancel(reservation) }
+    }
+
+    @Test func settlementBooksActualUsageAndReleasesTheReservation() async throws {
+        let ledger = InMemorySpendLedger()
+        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: 0.20)
+        var request = Self.expensiveRequest
+        request.purpose = .classifier
+        let reservation = try await meter.reserve(request, meetingID: Self.meeting)
+
+        let usage = TokenUsage(promptTokens: 1_000, cachedTokens: 800, completionTokens: 500)
+        let entry = try await meter.settle(reservation, usage: usage)
+
+        #expect(entry?.usage == usage)
+        #expect(entry?.purpose == .classifier)
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0)
+        #expect(await ledger.entries.count == 1)
+    }
+
+    @Test func cancellationReleasesCapacityForTheNextCall() async throws {
+        let meter = SpendMeter(
+            ledger: InMemorySpendLedger(),
+            pricing: Self.pricing,
+            capUSD: 0.20
+        )
+        let first = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+
+        await meter.cancel(first)
+        let second = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+
+        #expect(second.estimatedCostUSD == first.estimatedCostUSD)
+        await meter.cancel(second)
+    }
+
+    @Test func raisingTheLiveCapAllowsAPreviouslyRefusedCall() async throws {
+        let meter = SpendMeter(
+            ledger: InMemorySpendLedger(),
+            pricing: Self.pricing,
+            capUSD: 0.10
+        )
+        var refused = false
+        do {
+            _ = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+        } catch ProviderError.capReached {
+            refused = true
+        }
+        #expect(refused)
+
+        await meter.updateCapUSD(0.20)
+        let reservation = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+
+        #expect(await meter.capUSD == 0.20)
+        await meter.cancel(reservation)
+    }
+
+    @Test func nilMaxTokensUsesTheDocumentedCompatibilityCeiling() async throws {
+        let meter = SpendMeter(
+            ledger: InMemorySpendLedger(),
+            pricing: Self.pricing,
+            capUSD: nil
+        )
+        var request = CompletionRequest.hello
+        request.maxTokens = nil
+
+        let nilEstimate = await meter.requestCostCeilingUSD(request)
+        request.maxTokens = SpendMeter.fallbackMaxTokens
+        let explicitEstimate = await meter.requestCostCeilingUSD(request)
+
+        #expect(nilEstimate == explicitEstimate)
+        #expect((nilEstimate ?? 0) > 0)
+    }
+
+    @Test func streamedCallRefusedByReservationNeverReachesTheNetwork() async throws {
+        let ledger = InMemorySpendLedger()
+        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: 0.20)
+        let held = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+        RecordingURLProtocol.reset()
+        let provider = MeteredProvider(
+            upstream: OpenAICompatibleClient(
+                profile: .fake(baseURL: URL(string: "https://example.invalid/v1")!),
+                apiKey: "sk-test",
+                session: RecordingURLProtocol.session()
+            ),
+            meter: meter,
+            meetingID: Self.meeting
+        )
+
+        var thrown: Error?
+        do {
+            for try await _ in provider.stream(Self.expensiveRequest) {}
+        } catch {
+            thrown = error
+        }
+        await meter.cancel(held)
+
+        guard case .capReached = thrown as? ProviderError else {
+            Issue.record("expected ProviderError.capReached, got \(String(describing: thrown))")
+            return
+        }
+        #expect(RecordingURLProtocol.recordedRequests.isEmpty)
+    }
+
+    @Test func structuredCallRefusedByReservationNeverReachesTheNetwork() async throws {
+        struct Reply: Decodable { let answer: String }
+        let ledger = InMemorySpendLedger()
+        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: 0.20)
+        let held = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
+        RecordingURLProtocol.reset()
+        let provider = MeteredProvider(
+            upstream: OpenAICompatibleClient(
+                profile: .fake(baseURL: URL(string: "https://example.invalid/v1")!),
+                apiKey: "sk-test",
+                session: RecordingURLProtocol.session()
+            ),
+            meter: meter,
+            meetingID: Self.meeting
+        )
+
+        var thrown: Error?
+        do {
+            _ = try await provider.complete(Self.expensiveRequest, as: Reply.self)
+        } catch {
+            thrown = error
+        }
+        await meter.cancel(held)
+
+        guard case .capReached = thrown as? ProviderError else {
+            Issue.record("expected ProviderError.capReached, got \(String(describing: thrown))")
+            return
+        }
+        #expect(RecordingURLProtocol.recordedRequests.isEmpty)
+    }
+
+    private static var expensiveRequest: CompletionRequest {
+        CompletionRequest(
+            model: "fake-model",
+            messages: [.user("reserve this request")],
+            purpose: .generation,
+            maxTokens: 50_000
+        )
+    }
+
     private static func drain(_ provider: MeteredProvider) async throws -> [LLMEvent] {
         var events: [LLMEvent] = []
         for try await event in provider.stream(.hello) { events.append(event) }
