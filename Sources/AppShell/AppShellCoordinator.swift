@@ -74,7 +74,15 @@ final class AppShellCoordinator {
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var stopTask: Task<Void, Never>?
     @ObservationIgnored private var pauseResumeTask: Task<Void, Never>?
-    @ObservationIgnored private var artifactGenerationTask: Task<Void, Never>?
+    /// Every post-capture tail remains tracked until it finishes. A single
+    /// "latest" task is insufficient: cancelling an overwritten successor
+    /// does not cancel the predecessor it is awaiting.
+    @ObservationIgnored private var artifactGenerationTasks: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var artifactGenerationTailID: UUID?
+    /// Advanced synchronously on every AI-off transition. Automatic tails
+    /// capture this token at admission, so an old tail cannot resurrect after
+    /// off -> on even if its spend settlement completes later.
+    @ObservationIgnored private var automaticArtifactGenerationRevision: UInt64 = 0
     @ObservationIgnored private var copilotTurnsTask: Task<Void, Never>?
     @ObservationIgnored private var activeCopilotMeetingID: UUID?
     @ObservationIgnored private var activeCopilotLifecycleEpoch: UInt64?
@@ -527,37 +535,45 @@ final class AppShellCoordinator {
         let agent = PostMeetingAgent(
             meetings: meetings,
             artifacts: artifacts,
-            generationEnabled: globalAIFeaturesEnabled
-        ) { meetingID in
-            let settings = try await settingsStore.providerSettings()
-            guard (try await settingsStore.liveAISettings()).aiFeaturesEnabled else { return nil }
-            if let contextOverride {
-                return try await contextOverride(meetingID)
-            }
-            guard let client = try registry.client(for: settings),
-                  let profileID = settings.selectedProfileID,
-                  let profile = registry.profile(id: profileID)
-            else { return nil }
-            let meter: SpendMeter
-            if let existing = await meterRegistry.meter(meetingID: meetingID) {
-                meter = existing
-            } else {
-                let candidate = SpendMeter(
-                    ledger: ledgerOverride ?? ledger,
-                    pricing: try await settingsStore.pricing(),
-                    capUSD: settings.perMeetingCapUSD
+            generationEnabled: globalAIFeaturesEnabled,
+            onGenerationFinished: { [weak self] meetingID, outcome in
+                await self?.cleanupMeterAfterGeneration(
+                    meetingID: meetingID,
+                    outcome: outcome,
+                    expectedMeter: nil
                 )
-                // Manual generations can race (or retry after an uncertain
-                // settlement). Atomically retain exactly one meeting meter so
-                // every attempt sees the same conservative debit.
-                meter = await meterRegistry.registerIfAbsent(candidate, meetingID: meetingID)
+            },
+            makeContext: { meetingID in
+                let settings = try await settingsStore.providerSettings()
+                guard (try await settingsStore.liveAISettings()).aiFeaturesEnabled else { return nil }
+                if let contextOverride {
+                    return try await contextOverride(meetingID)
+                }
+                guard let client = try registry.client(for: settings),
+                      let profileID = settings.selectedProfileID,
+                      let profile = registry.profile(id: profileID)
+                else { return nil }
+                let meter: SpendMeter
+                if let existing = await meterRegistry.meter(meetingID: meetingID) {
+                    meter = existing
+                } else {
+                    let candidate = SpendMeter(
+                        ledger: ledgerOverride ?? ledger,
+                        pricing: try await settingsStore.pricing(),
+                        capUSD: settings.perMeetingCapUSD
+                    )
+                    // Manual generations can race (or retry after an uncertain
+                    // settlement). Atomically retain exactly one meeting meter so
+                    // every attempt sees the same conservative debit.
+                    meter = await meterRegistry.registerIfAbsent(candidate, meetingID: meetingID)
+                }
+                return PostMeetingProviderContext(
+                    provider: MeteredProvider(upstream: client, meter: meter, meetingID: meetingID),
+                    // Production ignores preserved model overrides for the MVP.
+                    model: profile.deepModel
+                )
             }
-            return PostMeetingProviderContext(
-                provider: MeteredProvider(upstream: client, meter: meter, meetingID: meetingID),
-                // Production ignores preserved model overrides for the MVP.
-                model: profile.deepModel
-            )
-        }
+        )
         cachedPostMeetingAgent = agent
         return agent
     }
@@ -584,13 +600,6 @@ final class AppShellCoordinator {
                 else { return nil }
                 let spentUSD = (try? await ledger.totalCostUSD(meetingID: meetingID)) ?? 0
                 return (spentUSD: spentUSD, capUSD: capUSD)
-            },
-            onGenerationFinished: { [weak self] meetingID, outcome in
-                await self?.cleanupMeterAfterGeneration(
-                    meetingID: meetingID,
-                    outcome: outcome,
-                    expectedMeter: nil
-                )
             }
         )
     }
@@ -630,12 +639,6 @@ final class AppShellCoordinator {
             self?.activeCopilotLifecycleEpoch = nil
             let endedMeetingID = await stopping.stop()
             guard let self else { return }
-            // Chained behind any earlier generation still in flight (two
-            // meetings ended in quick succession) so `settle()` awaiting the
-            // latest task transitively awaits them all — the same discipline
-            // stopTask uses (critic soft spot: an overwritten task kept
-            // running but became untracked).
-            let previousGeneration = self.artifactGenerationTask
             // This unstructured owner is intentionally independent of the
             // artifact task's cancellation. Global AI-off may cancel artifact
             // generation, but a live reservation still needs to settle and an
@@ -643,53 +646,114 @@ final class AppShellCoordinator {
             let settlementOwner = liveMeter.map { meter in
                 Task { try await meter.waitForSettlements() }
             }
-            self.artifactGenerationTask = Task { [weak self] in
-                await previousGeneration?.value
-                guard let self else { return }
+            self.enqueueArtifactGeneration(
+                endedMeetingID: endedMeetingID,
+                liveMeetingID: liveMeetingID,
+                liveMeter: liveMeter,
+                settlementOwner: settlementOwner
+            )
+        }
+    }
 
-                // Detached ledger settlement is post-capture bookkeeping. It
-                // gates artifact reuse/removal of this meter, but never source
-                // shutdown or admission of the next meeting.
-                if let settlementOwner {
-                    do {
-                        try await settlementOwner.value
-                    } catch {
-                        self.log.error("meeting spend drain failed: \(String(describing: type(of: error)), privacy: .public)")
-                        if endedMeetingID == nil, let liveMeetingID, let liveMeter {
-                            await self.meetingSpendRegistry.remove(
-                                meetingID: liveMeetingID, ifSameAs: liveMeter)
-                        }
-                        return
-                    }
-                }
+    /// Serializes automatic generation tails while retaining every task as a
+    /// first-class cancellation owner. Admission is snapshotted when the task
+    /// is created, not when an earlier settlement finally releases it.
+    private func enqueueArtifactGeneration(
+        endedMeetingID: UUID?,
+        liveMeetingID: UUID?,
+        liveMeter: SpendMeter?,
+        settlementOwner: Task<Void, Error>?
+    ) {
+        let taskID = UUID()
+        let previousGeneration = artifactGenerationTailID.flatMap {
+            artifactGenerationTasks[$0]
+        }
+        let enabledAtAdmission = globalAIFeaturesEnabled
+        let admissionRevision = automaticArtifactGenerationRevision
+        let task = Task { [weak self] in
+            await previousGeneration?.value
+            guard let self else { return }
+            await self.runArtifactGeneration(
+                endedMeetingID: endedMeetingID,
+                liveMeetingID: liveMeetingID,
+                liveMeter: liveMeter,
+                settlementOwner: settlementOwner,
+                enabledAtAdmission: enabledAtAdmission,
+                admissionRevision: admissionRevision
+            )
+            self.finishArtifactGenerationTask(taskID)
+        }
+        artifactGenerationTasks[taskID] = task
+        artifactGenerationTailID = taskID
+    }
 
-                if let endedMeetingID {
-                    guard !Task.isCancelled else { return }
-                    if let outcome = await self.postMeetingAgent()?.generateArtifacts(
-                        meetingID: endedMeetingID)
-                    {
-                        await self.cleanupMeterAfterGeneration(
-                            meetingID: endedMeetingID,
-                            outcome: outcome,
-                            expectedMeter: liveMeter
-                        )
-                    } else {
-                        await self.removeMeterIfSafe(
-                            meetingID: endedMeetingID,
-                            meter: liveMeter,
-                            ephemeral: false
-                        )
-                    }
-                } else if let liveMeetingID {
-                    // Ephemeral meetings have no manual artifact retry path and
-                    // no persistent state to protect after their settlement.
-                    await self.removeMeterIfSafe(
-                        meetingID: liveMeetingID,
-                        meter: liveMeter,
-                        ephemeral: true
-                    )
+    private func runArtifactGeneration(
+        endedMeetingID: UUID?,
+        liveMeetingID: UUID?,
+        liveMeter: SpendMeter?,
+        settlementOwner: Task<Void, Error>?,
+        enabledAtAdmission: Bool,
+        admissionRevision: UInt64
+    ) async {
+        // Detached ledger settlement is post-capture bookkeeping. It gates
+        // artifact reuse/removal of this meter, but never source shutdown or
+        // admission of the next meeting. It must drain even after this
+        // automatic task is cancelled.
+        if let settlementOwner {
+            do {
+                try await settlementOwner.value
+            } catch {
+                log.error("meeting spend drain failed: \(String(describing: type(of: error)), privacy: .public)")
+                if endedMeetingID == nil, let liveMeetingID, let liveMeter {
+                    await meetingSpendRegistry.remove(
+                        meetingID: liveMeetingID, ifSameAs: liveMeter)
                 }
+                return
             }
+        }
+
+        if let endedMeetingID {
+            // Every condition is required immediately before crossing the
+            // PostMeetingAgent admission boundary. In particular, enablement
+            // after a kill-switch transition cannot revive an older task.
+            guard !Task.isCancelled,
+                  enabledAtAdmission,
+                  globalAIFeaturesEnabled,
+                  automaticArtifactGenerationRevision == admissionRevision
+            else {
+                await removeMeterIfSafe(
+                    meetingID: endedMeetingID,
+                    meter: liveMeter,
+                    ephemeral: false
+                )
+                return
+            }
+            guard let agent = postMeetingAgent() else {
+                await removeMeterIfSafe(
+                    meetingID: endedMeetingID,
+                    meter: liveMeter,
+                    ephemeral: false
+                )
+                return
+            }
+            // Outcome-aware cleanup is owned by PostMeetingAgent and finishes
+            // before it releases this meeting's reentrancy guard.
+            _ = await agent.generateArtifacts(meetingID: endedMeetingID)
+        } else if let liveMeetingID {
+            // Ephemeral meetings have no artifact path or manual retry. Their
+            // meter cleanup intentionally outlives cancellation/AI-off.
+            await removeMeterIfSafe(
+                meetingID: liveMeetingID,
+                meter: liveMeter,
+                ephemeral: true
+            )
+        }
+    }
+
+    private func finishArtifactGenerationTask(_ taskID: UUID) {
+        artifactGenerationTasks[taskID] = nil
+        if artifactGenerationTailID == taskID {
+            artifactGenerationTailID = nil
         }
     }
 
@@ -706,7 +770,9 @@ final class AppShellCoordinator {
     func settle() async {
         await startTask?.value
         await stopTask?.value
-        await artifactGenerationTask?.value
+        while let task = artifactGenerationTasks.values.first {
+            await task.value
+        }
         await pauseResumeTask?.value
     }
 
@@ -721,7 +787,8 @@ final class AppShellCoordinator {
     private func removeMeterIfSafe(
         meetingID: UUID,
         meter: SpendMeter?,
-        ephemeral: Bool
+        ephemeral: Bool,
+        preserveUncertain: Bool = true
     ) async {
         let retainedMeter: SpendMeter?
         if let meter {
@@ -729,7 +796,7 @@ final class AppShellCoordinator {
         } else {
             retainedMeter = await meetingSpendRegistry.meter(meetingID: meetingID)
         }
-        if !ephemeral, let retainedMeter,
+        if preserveUncertain, !ephemeral, let retainedMeter,
            await retainedMeter.uncertainUSD(meetingID: meetingID) > 0
         {
             // Preserve conservative in-memory debit so a later manual artifact
@@ -752,10 +819,20 @@ final class AppShellCoordinator {
         // Removing it here would let that caller's in-flight request escape
         // both its reservation and any conservative uncertain debit.
         guard outcome != .skippedGenerationInFlight else { return }
+        let preserveUncertain: Bool
+        switch outcome {
+        case .failed, .halted, .cancelled, .skippedNoProvider:
+            preserveUncertain = true
+        case .drafted, .skippedExistingArtifacts, .skippedEmptyTranscript, .skippedEphemeral:
+            preserveUncertain = false
+        case .skippedGenerationInFlight:
+            return
+        }
         await removeMeterIfSafe(
             meetingID: meetingID,
             meter: expectedMeter,
-            ephemeral: false
+            ephemeral: false,
+            preserveUncertain: preserveUncertain
         )
     }
 
@@ -768,10 +845,13 @@ final class AppShellCoordinator {
         // copy and cannot be allowed to delay or roll back it.
         globalAIFeaturesEnabled = settings.aiFeaturesEnabled
         if !settings.aiFeaturesEnabled {
+            automaticArtifactGenerationRevision &+= 1
             // Disable synchronously before any suspension. This wins against a
             // stale startup or enable callback that later resumes.
             copilot.applyLiveSettings(settings)
-            artifactGenerationTask?.cancel()
+            for task in artifactGenerationTasks.values {
+                task.cancel()
+            }
             await cachedPostMeetingAgent?.setGenerationEnabled(false)
             return
         }

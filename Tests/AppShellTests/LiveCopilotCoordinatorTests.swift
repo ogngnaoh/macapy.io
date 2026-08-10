@@ -1174,6 +1174,13 @@ struct LiveCopilotCoordinatorTests {
         )
         #expect(await shell.coordinator.retainedSpendMeterCount() == 1,
                 "a failed manual call's uncertain debit must remain retained")
+        await shell.coordinator.cleanupMeterAfterGeneration(
+            meetingID: uncertainMeetingID,
+            outcome: .drafted([]),
+            expectedMeter: nil
+        )
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 0,
+                "a successful owner has no retry path and releases even an uncertain meter")
 
         let concurrentMeetingID = UUID()
         let concurrentOwner = SpendMeter(
@@ -1185,7 +1192,7 @@ struct LiveCopilotCoordinatorTests {
             outcome: .skippedGenerationInFlight,
             expectedMeter: nil
         )
-        #expect(await shell.coordinator.retainedSpendMeterCount() == 2,
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 1,
                 "the losing caller must not remove the meter owned by active generation")
 
         await shell.coordinator.cleanupMeterAfterGeneration(
@@ -1193,7 +1200,7 @@ struct LiveCopilotCoordinatorTests {
             outcome: .drafted([]),
             expectedMeter: nil
         )
-        #expect(await shell.coordinator.retainedSpendMeterCount() == 1,
+        #expect(await shell.coordinator.retainedSpendMeterCount() == 0,
                 "the successful owner releases its fallback meter")
     }
 
@@ -1363,6 +1370,54 @@ struct LiveCopilotCoordinatorTests {
         }
         #expect((try await shell.coordinator.settingsStore()?.liveAISettings().aiFeaturesEnabled) == true,
                 "failed persistence must not weaken the in-memory off latch")
+    }
+
+    @Test func aiOffThenOnCannotResurrectOldOrDisabledAdmissionArtifactTails() async throws {
+        let server = try FakeOpenAIServer.start(responses: [Self.artifact, Self.artifact])
+        defer { server.stop() }
+        let ledger = BlockingClassifierLedger()
+        let shell = try await makeShell(
+            server: server,
+            liveProvider: DeterministicLiveProvider(),
+            liveSpendLedger: ledger
+        )
+
+        // Meeting A's automatic tail is admitted while AI is enabled, then
+        // held behind its live classifier settlement.
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settleCaptureLifecycle()
+        for _ in 0..<300 where !(await ledger.classifierSettlementStarted) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await ledger.classifierSettlementStarted)
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settleCaptureLifecycle()
+
+        let live = shell.coordinator.liveAISettingsModel()
+        await live.load()
+        await live.setEnabled(false)
+
+        // Meeting B starts and ends while AI is off. Its tail is chained
+        // behind A but is permanently marked disabled-at-admission.
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settleCaptureLifecycle()
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settleCaptureLifecycle()
+        let meetings = try #require(shell.coordinator.historyStore())
+        let ended = try await meetings.listMeetings()
+        #expect(ended.count == 2)
+
+        // Re-enable before either tail can run. A's revision is stale and B
+        // was created while disabled, so neither may cross provider admission.
+        await live.setEnabled(true)
+        await ledger.releaseClassifierSettlement()
+        await shell.coordinator.settle()
+
+        #expect(server.recordedRequests.isEmpty)
+        for meeting in ended {
+            #expect(try await shell.coordinator.artifactStore()?
+                .artifacts(for: meeting.id).isEmpty == true)
+        }
     }
 
     @Test func globalAIOffCancelsManualArtifactsQuietlyAndManualRetryStillWorks() async throws {
