@@ -10,6 +10,50 @@ import TranscribeKit
 struct PanelView: View {
     static let dismissShortcutAccessibilityHint = "Keyboard shortcut Option Command D"
 
+    /// Fixed-panel layout contract. The response body scrolls inside its
+    /// bounded moment card, so a maximum-length requested answer remains
+    /// reachable without collapsing the live transcript out of the panel.
+    enum Layout {
+        static let panelWidth: CGFloat = 340
+        static let panelHeight: CGFloat = 470
+        static let minimumTranscriptHeight: CGFloat = 96
+        static let maximumCopilotSurfaceHeight: CGFloat = 174
+        static let maximumAnswerViewportHeight: CGFloat = 112
+        static let maximumRollingSummaryLines = 3
+    }
+
+    struct StreamingFragments: Equatable {
+        let settled: String
+        let volatile: String
+    }
+
+    /// Keep only the unfinished tail volatile while tokens are arriving. Once
+    /// the provider reports `stop`, the same text settles to ordinary ink.
+    static func streamingFragments(
+        for text: String,
+        isStreaming: Bool,
+        volatileCharacterLimit: Int = 48
+    ) -> StreamingFragments {
+        guard isStreaming, !text.isEmpty, volatileCharacterLimit > 0 else {
+            return StreamingFragments(settled: text, volatile: "")
+        }
+        let count = min(text.count, volatileCharacterLimit)
+        let split = text.index(text.endIndex, offsetBy: -count)
+        return StreamingFragments(
+            settled: String(text[..<split]),
+            volatile: String(text[split...])
+        )
+    }
+
+    static func rollingSummaryAccessibilityLabel(_ summary: String) -> String {
+        "So far in this meeting: \(summary)"
+    }
+
+    @MainActor
+    static func handleExitCommand(copilot: LiveCopilotModel) {
+        copilot.dismissCard()
+    }
+
     @Environment(SessionController.self) private var session
     @Environment(TranscriptStore.self) private var store
     @Environment(LiveCopilotModel.self) private var copilot
@@ -38,8 +82,11 @@ struct PanelView: View {
             }
             footer
         }
-        .frame(width: 340, height: 470)
+        .frame(width: Layout.panelWidth, height: Layout.panelHeight)
         .background(DesignTokens.surface)
+        // The command lives at the panel container so Escape is handled when
+        // focus is in either the query field or its Submit button.
+        .onExitCommand { Self.handleExitCommand(copilot: copilot) }
         .onChange(of: copilot.askFocusRevision) { _, _ in
             queryFieldFocused = copilot.askFieldVisible
         }
@@ -96,6 +143,8 @@ struct PanelView: View {
                 proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
             }
         }
+        .frame(minHeight: Layout.minimumTranscriptHeight)
+        .layoutPriority(1)
     }
 
     @ViewBuilder
@@ -110,14 +159,15 @@ struct PanelView: View {
                 Text(summary)
                     .font(UIType.small)
                     .foregroundStyle(DesignTokens.textSecondary)
-                    .lineLimit(3)
-                    .accessibilityLabel("So far in this meeting: \(summary)")
+                    .lineLimit(Layout.maximumRollingSummaryLines)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, DesignTokens.Space.s3)
             .padding(.vertical, DesignTokens.Space.s1)
             .overlay(alignment: .bottom) { Divider().overlay(DesignTokens.hairline) }
-            .accessibilityElement(children: .combine)
+            // Ignore child labels and announce the visible strip exactly once.
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Self.rollingSummaryAccessibilityLabel(summary))
         }
     }
 
@@ -166,6 +216,7 @@ struct PanelView: View {
                         .font(MachineType.label())
                         .tracking(0.7)
                         .foregroundStyle(DesignTokens.textSecondary)
+                        .lineLimit(2)
                     Spacer()
                     Button("Dismiss") { copilot.dismissCard() }
                         .buttonStyle(.plain)
@@ -173,22 +224,38 @@ struct PanelView: View {
                         .accessibilityLabel("Dismiss copilot card")
                         .accessibilityHint(Self.dismissShortcutAccessibilityHint)
                 }
-                Text(card.text.isEmpty && card.isStreaming ? "Thinking…" : card.text)
-                    .font(UIType.body)
-                    .foregroundStyle(DesignTokens.text)
+                if card.text.isEmpty && card.isStreaming {
+                    Text("Thinking…")
+                        .font(UIType.body)
+                        .foregroundStyle(DesignTokens.textSecondary)
+                } else {
+                    ScrollView(.vertical) {
+                        streamingAnswer(card)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: Layout.maximumAnswerViewportHeight)
                     .textSelection(.enabled)
+                    .accessibilityLabel(card.text)
+                }
             }
             .padding(DesignTokens.Space.s3)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(DesignTokens.raised)
-            .overlay(alignment: .top) { Divider().overlay(DesignTokens.hairline) }
+            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radiusCard))
+            .overlay {
+                RoundedRectangle(cornerRadius: DesignTokens.radiusCard)
+                    .stroke(DesignTokens.hairlineStrong, lineWidth: 1)
+            }
+            .shadow(color: .black.opacity(0.10), radius: 7, y: 4)
+            .padding(.horizontal, DesignTokens.Space.s3)
+            .padding(.vertical, DesignTokens.Space.s2)
+            .frame(maxHeight: Layout.maximumCopilotSurfaceHeight)
             .focusable()
             .focused($copilotCardFocused)
             .onHover { copilot.setCardHovered($0) }
             .onChange(of: copilotCardFocused) { _, focused in
                 copilot.setCardFocused(focused)
             }
-            .onExitCommand { copilot.dismissCard() }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Copilot \(cardTitle(card))")
         } else if let message = availabilityMessage {
@@ -216,16 +283,27 @@ struct PanelView: View {
                 )
                 .textFieldStyle(.plain)
                 .font(UIType.body)
+                .padding(.horizontal, DesignTokens.Space.s2)
+                .padding(.vertical, 5)
+                .background(DesignTokens.sunken)
+                .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radiusControl))
+                .overlay {
+                    RoundedRectangle(cornerRadius: DesignTokens.radiusControl)
+                        .stroke(
+                            queryFieldFocused ? DesignTokens.signal : DesignTokens.hairline,
+                            lineWidth: queryFieldFocused ? 2 : 1
+                        )
+                }
                 .focused($queryFieldFocused)
                 .onSubmit { Task { await copilot.submitAsk() } }
-                .onExitCommand { copilot.dismissCard() }
                 .accessibilityLabel("Ask about this meeting")
                 .accessibilityHint(
                     "Type a question grounded only in this meeting, then press Return"
                 )
-                Button("Ask") { Task { await copilot.submitAsk() } }
+                Button("⏎") { Task { await copilot.submitAsk() } }
                     .buttonStyle(.plain)
                     .font(UIType.small)
+                    .foregroundStyle(DesignTokens.textSecondary)
                     .disabled(!copilot.canSubmitAsk)
                     .accessibilityLabel("Submit meeting question")
                     .accessibilityHint("Returns one answer using only this meeting")
@@ -253,6 +331,17 @@ struct PanelView: View {
         case .action(.flagCommitment): "Commitment"
         case .action(.catchUp): "Catch up"
         }
+    }
+
+    private func streamingAnswer(_ card: LiveCopilotCard) -> Text {
+        let fragments = Self.streamingFragments(for: card.text, isStreaming: card.isStreaming)
+        let settled = Text(verbatim: fragments.settled)
+            .foregroundColor(DesignTokens.text)
+        let volatile = Text(verbatim: fragments.volatile)
+            .foregroundColor(DesignTokens.textSecondary)
+            .underline(pattern: .dot, color: DesignTokens.textTertiary)
+        return Text("\(settled)\(volatile)")
+            .font(UIType.body)
     }
 
     private static let bottomAnchor = "transcript-bottom"

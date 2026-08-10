@@ -611,9 +611,53 @@ struct LiveCopilotSlice2Tests {
     @Test func panelInteractionAccessibilityAndShortcutContractIsComplete() {
         #expect(PanelView.dismissShortcutAccessibilityHint
             == "Keyboard shortcut Option Command D")
+        #expect(PanelView.Layout.panelWidth == 340)
+        #expect(PanelView.Layout.panelHeight == 470)
+        #expect(PanelView.Layout.minimumTranscriptHeight >= 96)
+        #expect(PanelView.Layout.maximumCopilotSurfaceHeight
+            + PanelView.Layout.minimumTranscriptHeight
+            < PanelView.Layout.panelHeight)
+        #expect(PanelView.Layout.maximumAnswerViewportHeight
+            < PanelView.Layout.maximumCopilotSurfaceHeight)
+        #expect(PanelView.Layout.maximumRollingSummaryLines == 3)
+
+        let streaming = PanelView.streamingFragments(
+            for: String(repeating: "a", count: 60),
+            isStreaming: true
+        )
+        #expect(streaming.settled.count == 12)
+        #expect(streaming.volatile.count == 48)
+        let settled = PanelView.streamingFragments(
+            for: streaming.settled + streaming.volatile,
+            isStreaming: false
+        )
+        #expect(settled.settled.count == 60)
+        #expect(settled.volatile.isEmpty)
+        #expect(PanelView.rollingSummaryAccessibilityLabel("One decision")
+            == "So far in this meeting: One decision")
+
         #expect(HotKey.catchUpKeyCode == UInt32(kVK_ANSI_C))
         #expect(HotKey.askKeyCode == UInt32(kVK_ANSI_K))
         #expect(HotKey.dismissCopilotKeyCode == UInt32(kVK_ANSI_D))
         #expect(HotKey.copilotModifiers == UInt32(optionKey | cmdKey))
+    }
+
+    @Test func panelContainerEscapeDismissesTheOpenQuerySurface() {
+        let model = LiveCopilotModel()
+        model.beginMeeting(
+            provider: Slice2QueuedProvider(),
+            fastModel: "fast",
+            deepModel: "deep",
+            settings: LiveAISettings(sensitivity: .off)
+        )
+        model.requestAsk()
+        #expect(model.askFieldVisible)
+
+        // PanelView installs this handler on the common panel container, not
+        // only the text field, so it also applies when Submit has focus.
+        PanelView.handleExitCommand(copilot: model)
+
+        #expect(!model.askFieldVisible)
+        #expect(!model.canDismiss)
     }
 }
