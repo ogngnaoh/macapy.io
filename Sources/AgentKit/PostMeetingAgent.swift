@@ -97,11 +97,13 @@ public actor PostMeetingAgent {
         meetings: MeetingStore,
         artifacts: ArtifactStore,
         chunkBudgetCharacters: Int = 60_000,
+        generationEnabled: Bool = true,
         makeContext: @escaping @Sendable (UUID) async throws -> PostMeetingProviderContext?
     ) {
         self.meetings = meetings
         self.artifacts = artifacts
         self.chunkBudgetCharacters = chunkBudgetCharacters
+        self.generationEnabled = generationEnabled
         self.makeContext = makeContext
         self.persistDrafts = { drafts, meetingID in
             try await artifacts.insertDrafts(drafts, meetingID: meetingID)
@@ -115,12 +117,14 @@ public actor PostMeetingAgent {
         meetings: MeetingStore,
         artifacts: ArtifactStore,
         chunkBudgetCharacters: Int = 60_000,
+        generationEnabled: Bool = true,
         makeContext: @escaping @Sendable (UUID) async throws -> PostMeetingProviderContext?,
         persistDrafts: @escaping @Sendable ([DraftArtifact], UUID) async throws -> [ArtifactRecord]
     ) {
         self.meetings = meetings
         self.artifacts = artifacts
         self.chunkBudgetCharacters = chunkBudgetCharacters
+        self.generationEnabled = generationEnabled
         self.makeContext = makeContext
         self.persistDrafts = persistDrafts
     }

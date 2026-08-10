@@ -132,10 +132,16 @@ struct PostMeetingAgentTests {
         }
         let harness = try await AgentHarness.start(transcript: turns)
         let partial = #"{"summary":"partial","decisions":[],"action_items":[]}"#
+        let rendered = turns.map { "Them: \($0.text)" }
+        let expectedChunks = TranscriptChunker.chunks(rendered, budgetCharacters: 160).count
+        // Map requests are concurrent. Script every possible map response so
+        // cancellation timing cannot turn the intended typed 500 into the fake
+        // server's unrelated "no response left" fallback.
         let server = try FakeOpenAIServer.start(responses: [
-            .json(status: 200, body: OpenAIFixtures.completionBody(content: partial)),
             .json(status: 500, body: OpenAIFixtures.errorBody(message: "boom")),
-        ])
+        ] + (1..<expectedChunks).map { _ in
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: partial))
+        })
         defer { server.stop() }
 
         let outcome = await harness
@@ -326,6 +332,27 @@ struct PostMeetingAgentTests {
             return
         }
         #expect(server.recordedRequests.count == 2)
+    }
+
+    @Test func lazilyCreatedAgentCanStartWithGlobalGenerationDisabled() async throws {
+        let harness = try await AgentHarness.start()
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+        ])
+        defer { server.stop() }
+        let upstream = OpenAICompatibleClient(
+            profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+        let agent = PostMeetingAgent(
+            meetings: harness.meetings,
+            artifacts: harness.artifacts,
+            generationEnabled: false
+        ) { _ in
+            PostMeetingProviderContext(provider: upstream, model: "fake-model")
+        }
+
+        #expect(await agent.generateArtifacts(meetingID: harness.meetingID) == .cancelled)
+        #expect(server.recordedRequests.isEmpty)
+        #expect(try await harness.artifacts.artifacts(for: harness.meetingID).isEmpty)
     }
 
     @Test func globalAIOffDuringProviderAdmissionMakesZeroRequestsAndRemainsRetryable() async throws {

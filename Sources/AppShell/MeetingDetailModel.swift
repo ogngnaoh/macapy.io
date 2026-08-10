@@ -49,6 +49,11 @@ final class MeetingDetailModel {
     /// Non-`nil` (spent, cap) when a cap is configured; the model derives
     /// `halted` from spent ≥ cap.
     @ObservationIgnored private let capStatus: @Sendable (UUID) async -> (spentUSD: Double, capUSD: Double)?
+    /// Lets the composition root release a manually-created per-meeting spend
+    /// meter after this attempt reaches a terminal outcome. The coordinator
+    /// keeps uncertain debits and ignores the reentrancy skip.
+    @ObservationIgnored private let onGenerationFinished:
+        @Sendable (UUID, PostMeetingAgent.Outcome) async -> Void
     @ObservationIgnored private let log = Logger(subsystem: "io.macapy.app", category: "AppShell")
 
     init(
@@ -56,13 +61,16 @@ final class MeetingDetailModel {
         artifactStore: ArtifactStore?,
         agent: PostMeetingAgent?,
         isProviderConfigured: @escaping @Sendable () async -> Bool,
-        capStatus: @escaping @Sendable (UUID) async -> (spentUSD: Double, capUSD: Double)?
+        capStatus: @escaping @Sendable (UUID) async -> (spentUSD: Double, capUSD: Double)?,
+        onGenerationFinished:
+            @escaping @Sendable (UUID, PostMeetingAgent.Outcome) async -> Void = { _, _ in }
     ) {
         self.meeting = meeting
         self.artifactStore = artifactStore
         self.agent = agent
         self.isProviderConfigured = isProviderConfigured
         self.capStatus = capStatus
+        self.onGenerationFinished = onGenerationFinished
     }
 
     // MARK: - Grouped rows the pane renders
@@ -107,6 +115,7 @@ final class MeetingDetailModel {
         guard let agent else { return }
         state = .generating
         let outcome = await agent.generateArtifacts(meetingID: meeting.id)
+        await onGenerationFinished(meeting.id, outcome)
         switch outcome {
         case .drafted(let rows):
             artifacts = rows

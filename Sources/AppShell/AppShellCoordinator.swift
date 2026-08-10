@@ -49,6 +49,11 @@ final class AppShellCoordinator {
     @ObservationIgnored private let liveSpendLedgerOverride: (any SpendLedger)?
     @ObservationIgnored private let lifecycleCheckpoint:
         (@Sendable (LifecycleCheckpoint) async -> Void)?
+    /// Focused kill-switch test seam. Production persists through
+    /// `SettingsStore`; lifecycle tests can hold or fail the write while the
+    /// in-memory latch must already be authoritative.
+    @ObservationIgnored private let liveSettingsSaveOverride:
+        (@Sendable (LiveAISettings) async throws -> Void)?
     @ObservationIgnored private var cachedDatabase: MacapyDatabase?
     @ObservationIgnored private var cachedPersistentStore: MeetingStore?
     @ObservationIgnored private var cachedSettingsStore: SettingsStore?
@@ -75,10 +80,14 @@ final class AppShellCoordinator {
     @ObservationIgnored private var activeCopilotLifecycleEpoch: UInt64?
     @ObservationIgnored private var lifecycleEpoch: UInt64 = 0
     @ObservationIgnored private var providerTransportRevision: UInt64 = 0
+    @ObservationIgnored private var providerRefreshAttemptRevision: UInt64 = 0
     @ObservationIgnored private var providerSettingsRevision: UInt64 = 0
     @ObservationIgnored private var liveSettingsRevision: UInt64 = 0
     @ObservationIgnored private var latestProviderSettings: ProviderSettings?
     @ObservationIgnored private var latestLiveAISettings: LiveAISettings?
+    /// App-lifetime kill-switch truth. It changes before settings persistence
+    /// can suspend and seeds lazily-created post-meeting agents.
+    @ObservationIgnored private var globalAIFeaturesEnabled = true
     @ObservationIgnored private let log = Logger(subsystem: "io.macapy.app", category: "AppShell")
 
     /// Production wiring: real mic + system-audio capture, SpeechAnalyzer, and
@@ -110,7 +119,9 @@ final class AppShellCoordinator {
             (@Sendable (UUID) async throws -> PostMeetingProviderContext?)? = nil,
         liveProviderOverride: (any LLMProvider)? = nil,
         liveSpendLedgerOverride: (any SpendLedger)? = nil,
-        lifecycleCheckpoint: (@Sendable (LifecycleCheckpoint) async -> Void)? = nil
+        lifecycleCheckpoint: (@Sendable (LifecycleCheckpoint) async -> Void)? = nil,
+        liveSettingsSaveOverride:
+            (@Sendable (LiveAISettings) async throws -> Void)? = nil
     ) {
         self.panel = panel
         self.makePipeline = makePipeline
@@ -121,6 +132,7 @@ final class AppShellCoordinator {
         self.liveProviderOverride = liveProviderOverride
         self.liveSpendLedgerOverride = liveSpendLedgerOverride
         self.lifecycleCheckpoint = lifecycleCheckpoint
+        self.liveSettingsSaveOverride = liveSettingsSaveOverride
         if installHotKey {
             hotKey = HotKey.startStopMeeting { [weak self] in
                 self?.toggleSession()
@@ -266,6 +278,10 @@ final class AppShellCoordinator {
                 }
                 if self.latestLiveAISettings == nil {
                     self.latestLiveAISettings = liveSettings
+                    self.globalAIFeaturesEnabled = liveSettings.aiFeaturesEnabled
+                    if !liveSettings.aiFeaturesEnabled {
+                        await self.cachedPostMeetingAgent?.setGenerationEnabled(false)
+                    }
                 }
                 guard self.isCurrentStartup(newPipeline, epoch: startupEpoch) else { return }
                 try await newPipeline.start(mode: mode) { [weak self] meetingID, isEphemeral in
@@ -386,7 +402,7 @@ final class AppShellCoordinator {
                     self.providerTransportRevision &+= 1
                     let revision = self.providerTransportRevision
                     await self.applyCapChange(settings.perMeetingCapUSD)
-                    await self.refreshActiveCopilotProvider(
+                    _ = await self.refreshActiveCopilotProvider(
                         using: settings,
                         expectedTransportRevision: revision
                     )
@@ -399,8 +415,17 @@ final class AppShellCoordinator {
 
     func liveAISettingsModel() -> LiveAISettingsModel {
         if let cachedLiveAISettingsModel { return cachedLiveAISettingsModel }
-        let model = LiveAISettingsModel(store: settingsStore()) { [weak self] settings in
+        let onChange: @MainActor (LiveAISettings) async -> Void = { [weak self] settings in
             await self?.applyLiveAISettings(settings)
+        }
+        let model: LiveAISettingsModel
+        if let liveSettingsSaveOverride {
+            model = LiveAISettingsModel(
+                testingSaveSettings: liveSettingsSaveOverride,
+                onChange: onChange
+            )
+        } else {
+            model = LiveAISettingsModel(store: settingsStore(), onChange: onChange)
         }
         cachedLiveAISettingsModel = model
         return model
@@ -499,7 +524,11 @@ final class AppShellCoordinator {
         let meterRegistry = meetingSpendRegistry
         let contextOverride = postMeetingContextOverride
         let ledgerOverride = liveSpendLedgerOverride
-        let agent = PostMeetingAgent(meetings: meetings, artifacts: artifacts) { meetingID in
+        let agent = PostMeetingAgent(
+            meetings: meetings,
+            artifacts: artifacts,
+            generationEnabled: globalAIFeaturesEnabled
+        ) { meetingID in
             let settings = try await settingsStore.providerSettings()
             guard (try await settingsStore.liveAISettings()).aiFeaturesEnabled else { return nil }
             if let contextOverride {
@@ -555,6 +584,13 @@ final class AppShellCoordinator {
                 else { return nil }
                 let spentUSD = (try? await ledger.totalCostUSD(meetingID: meetingID)) ?? 0
                 return (spentUSD: spentUSD, capUSD: capUSD)
+            },
+            onGenerationFinished: { [weak self] meetingID, outcome in
+                await self?.cleanupMeterAfterGeneration(
+                    meetingID: meetingID,
+                    outcome: outcome,
+                    expectedMeter: nil
+                )
             }
         )
     }
@@ -629,12 +665,21 @@ final class AppShellCoordinator {
 
                 if let endedMeetingID {
                     guard !Task.isCancelled else { return }
-                    await self.postMeetingAgent()?.generateArtifacts(meetingID: endedMeetingID)
-                    await self.removeMeterIfSafe(
-                        meetingID: endedMeetingID,
-                        meter: liveMeter,
-                        ephemeral: false
-                    )
+                    if let outcome = await self.postMeetingAgent()?.generateArtifacts(
+                        meetingID: endedMeetingID)
+                    {
+                        await self.cleanupMeterAfterGeneration(
+                            meetingID: endedMeetingID,
+                            outcome: outcome,
+                            expectedMeter: liveMeter
+                        )
+                    } else {
+                        await self.removeMeterIfSafe(
+                            meetingID: endedMeetingID,
+                            meter: liveMeter,
+                            ephemeral: false
+                        )
+                    }
                 } else if let liveMeetingID {
                     // Ephemeral meetings have no manual artifact retry path and
                     // no persistent state to protect after their settlement.
@@ -678,18 +723,50 @@ final class AppShellCoordinator {
         meter: SpendMeter?,
         ephemeral: Bool
     ) async {
-        if !ephemeral, let meter, await meter.uncertainUSD(meetingID: meetingID) > 0 {
+        let retainedMeter: SpendMeter?
+        if let meter {
+            retainedMeter = meter
+        } else {
+            retainedMeter = await meetingSpendRegistry.meter(meetingID: meetingID)
+        }
+        if !ephemeral, let retainedMeter,
+           await retainedMeter.uncertainUSD(meetingID: meetingID) > 0
+        {
             // Preserve conservative in-memory debit so a later manual artifact
             // retry cannot fail open after an incomplete provider/ledger result.
             return
         }
-        await meetingSpendRegistry.remove(meetingID: meetingID)
+        if let retainedMeter {
+            await meetingSpendRegistry.remove(meetingID: meetingID, ifSameAs: retainedMeter)
+        } else {
+            await meetingSpendRegistry.remove(meetingID: meetingID)
+        }
+    }
+
+    func cleanupMeterAfterGeneration(
+        meetingID: UUID,
+        outcome: PostMeetingAgent.Outcome,
+        expectedMeter: SpendMeter?
+    ) async {
+        // This outcome belongs to another caller which still owns the meter.
+        // Removing it here would let that caller's in-flight request escape
+        // both its reservation and any conservative uncertain debit.
+        guard outcome != .skippedGenerationInFlight else { return }
+        await removeMeterIfSafe(
+            meetingID: meetingID,
+            meter: expectedMeter,
+            ephemeral: false
+        )
     }
 
     private func applyLiveAISettings(_ settings: LiveAISettings) async {
         liveSettingsRevision &+= 1
         let revision = liveSettingsRevision
         latestLiveAISettings = settings
+        // This assignment is deliberately before the first suspension. The
+        // kill switch is operational state; persistence is only its durable
+        // copy and cannot be allowed to delay or roll back it.
+        globalAIFeaturesEnabled = settings.aiFeaturesEnabled
         if !settings.aiFeaturesEnabled {
             // Disable synchronously before any suspension. This wins against a
             // stale startup or enable callback that later resumes.
@@ -699,23 +776,36 @@ final class AppShellCoordinator {
             return
         }
 
-        if activeCopilotMeetingID != nil, copilot.availability == .disabled {
+        while activeCopilotMeetingID != nil, copilot.availability == .disabled {
             // The retained provider may have stale credentials. Refresh while
             // admission is still disabled, and expose it only after both the
-            // transport drain and revision checks complete.
-            let providerSettings = (try? await settingsStore()?.providerSettings()) ?? ProviderSettings()
+            // transport drain and the current live/transport revisions commit.
+            // A transport callback can interleave while this callback awaits
+            // settings. In that case retry with the newest snapshot rather
+            // than exposing the retained provider.
+            let providerSettings: ProviderSettings
+            if let latestProviderSettings {
+                providerSettings = latestProviderSettings
+            } else {
+                providerSettings = (try? await settingsStore()?.providerSettings())
+                    ?? ProviderSettings()
+            }
             guard liveSettingsRevision == revision,
                   latestLiveAISettings?.aiFeaturesEnabled == true
             else { return }
             latestProviderSettings = providerSettings
             let transportRevision = providerTransportRevision
-            await refreshActiveCopilotProvider(
+            let committed = await refreshActiveCopilotProvider(
                 using: providerSettings,
                 expectedTransportRevision: transportRevision
             )
             guard liveSettingsRevision == revision,
                   latestLiveAISettings?.aiFeaturesEnabled == true
             else { return }
+            guard providerTransportRevision == transportRevision, committed else {
+                continue
+            }
+            break
         }
         copilot.applyLiveSettings(settings)
         await cachedPostMeetingAgent?.setGenerationEnabled(true)
@@ -812,17 +902,20 @@ final class AppShellCoordinator {
     private func refreshActiveCopilotProvider(
         using settings: ProviderSettings,
         expectedTransportRevision: UInt64
-    ) async {
+    ) async -> Bool {
+        providerRefreshAttemptRevision &+= 1
+        let attemptRevision = providerRefreshAttemptRevision
         guard let meetingID = activeCopilotMeetingID,
               let expectedEpoch = activeCopilotLifecycleEpoch,
               let meter = await meetingSpendRegistry.meter(meetingID: meetingID)
-        else { return }
+        else { return false }
 
         guard activeCopilotMeetingID == meetingID,
               activeCopilotLifecycleEpoch == expectedEpoch,
               lifecycleEpoch == expectedEpoch,
-              providerTransportRevision == expectedTransportRevision
-        else { return }
+              providerTransportRevision == expectedTransportRevision,
+              providerRefreshAttemptRevision == attemptRevision
+        else { return false }
 
         let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials)
         let profile = settings.selectedProfileID.flatMap(registry.profile(id:))
@@ -838,8 +931,9 @@ final class AppShellCoordinator {
         guard activeCopilotMeetingID == meetingID,
               activeCopilotLifecycleEpoch == expectedEpoch,
               lifecycleEpoch == expectedEpoch,
-              providerTransportRevision == expectedTransportRevision
-        else { return }
+              providerTransportRevision == expectedTransportRevision,
+              providerRefreshAttemptRevision == attemptRevision
+        else { return false }
         await copilot.replaceProviderAndWait(
             metered,
             fastModel: profile?.fastModel ?? EndpointProfile.deepSeek.fastModel,
@@ -847,6 +941,11 @@ final class AppShellCoordinator {
             expectedMeetingID: meetingID,
             replacementID: UUID()
         )
+        return activeCopilotMeetingID == meetingID
+            && activeCopilotLifecycleEpoch == expectedEpoch
+            && lifecycleEpoch == expectedEpoch
+            && providerTransportRevision == expectedTransportRevision
+            && providerRefreshAttemptRevision == attemptRevision
     }
 
     private func applyCapChange(_ capUSD: Double?) async {
@@ -868,5 +967,11 @@ final class AppShellCoordinator {
 
     func retainedUncertainSpend(meetingID: UUID) async -> Double? {
         await meetingSpendRegistry.uncertainUSD(meetingID: meetingID)
+    }
+
+    /// Focused ownership-test seam: production registers through live startup
+    /// or the post-meeting context factory.
+    func retainSpendMeterForTesting(_ meter: SpendMeter, meetingID: UUID) async {
+        await meetingSpendRegistry.register(meter, meetingID: meetingID)
     }
 }

@@ -55,11 +55,16 @@ final class LiveAISettingsModel {
     }
 
     func load() async {
+        guard !loaded else { return }
         settings = (try? await store?.liveAISettings()) ?? LiveAISettings()
         if settings.preferredName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
             settings.preferredName = Self.defaultPreferredName
         }
         loaded = true
+        // Loading establishes the app's in-memory operational latch too. The
+        // database value is durable input, not a separate source of truth once
+        // the model is alive.
+        await onChange(settings)
     }
 
     func setEnabled(_ enabled: Bool) async {
