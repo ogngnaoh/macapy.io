@@ -54,6 +54,39 @@ struct SpendMeterTests {
         }
     }
 
+    enum StreamingFailureFixture: CaseIterable, Sendable {
+        case rateLimited
+        case server
+        case malformed
+        case midStreamDisconnect
+        case inBand
+
+        var response: FakeOpenAIServer.Response {
+            switch self {
+            case .rateLimited:
+                .json(
+                    status: 429,
+                    body: OpenAIFixtures.errorBody(message: "slow down", type: "rate_limit_error")
+                )
+            case .server:
+                .json(status: 503, body: OpenAIFixtures.errorBody(message: "down"))
+            case .malformed:
+                .sse(frames: ["{not json at all", OpenAIFixtures.done])
+            case .midStreamDisconnect:
+                .sse(
+                    frames: [OpenAIFixtures.contentDelta("partial")],
+                    truncateAfterFrames: 1
+                )
+            case .inBand:
+                .sse(frames: [
+                    OpenAIFixtures.contentDelta("partial"),
+                    OpenAIFixtures.errorEvent(message: "upstream failed"),
+                    OpenAIFixtures.done,
+                ])
+            }
+        }
+    }
+
     private struct StructuredTransportFailure: LLMProvider {
         func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
             AsyncThrowingStream { $0.finish() }
@@ -64,6 +97,27 @@ struct SpendMeterTests {
             as type: T.Type
         ) async throws -> CompletedCall<T> {
             throw ProviderError.transport("connection lost after request upload")
+        }
+    }
+
+    private struct UsageThenFailureUpstream: LLMProvider {
+        static let failure = ProviderError.inStreamError(message: "failed after usage")
+
+        func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
+            AsyncThrowingStream { continuation in
+                continuation.yield(.completed(Completion(
+                    finishReason: "stop",
+                    usage: TokenUsage(promptTokens: 1_000, completionTokens: 500)
+                )))
+                continuation.finish(throwing: Self.failure)
+            }
+        }
+
+        func completeReportingUsage<T: Decodable>(
+            _ request: CompletionRequest,
+            as type: T.Type
+        ) async throws -> CompletedCall<T> {
+            throw Self.failure
         }
     }
 
@@ -569,11 +623,69 @@ struct SpendMeterTests {
         try await meter.waitForSettlements()
     }
 
-    @Test func transportFailureWithoutUsageReleasesTheReservation() async throws {
+    @Test(arguments: StreamingFailureFixture.allCases)
+    func streamingFailuresWithoutUsageRetainTheCeilingAndBlockASequentialCall(
+        failure: StreamingFailureFixture
+    ) async throws {
+        let request = Self.expensiveRequest
         let ledger = InMemorySpendLedger()
-        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: 0.20)
+        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: nil)
+        let held = try #require(await meter.requestCostCeilingUSD(request))
+        await meter.updateCapUSD(held * 1.5)
+        let server = try FakeOpenAIServer.start(responses: [failure.response])
+        defer { server.stop() }
+        let provider = MeteredProvider(
+            upstream: OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test"),
+            meter: meter,
+            meetingID: Self.meeting
+        )
+
+        var thrown: Error?
+        do {
+            for try await _ in provider.stream(request) {}
+        } catch {
+            thrown = error
+        }
+
+        switch failure {
+        case .rateLimited:
+            #expect(thrown as? ProviderError == .rateLimited(message: "slow down"))
+        case .server:
+            #expect(thrown as? ProviderError == .server(status: 503, message: "down"))
+        case .malformed:
+            guard case .malformedResponse = thrown as? ProviderError else {
+                Issue.record("expected ProviderError.malformedResponse, got \(String(describing: thrown))")
+                return
+            }
+        case .midStreamDisconnect:
+            guard case .transport = thrown as? ProviderError else {
+                Issue.record("expected ProviderError.transport, got \(String(describing: thrown))")
+                return
+            }
+        case .inBand:
+            #expect(thrown as? ProviderError == .inStreamError(message: "upstream failed"))
+        }
+
+        #expect(await ledger.entries.isEmpty)
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0)
+        #expect(await meter.uncertainUSD(meetingID: Self.meeting) >= held)
+        await #expect(throws: ProviderError.self) {
+            for try await _ in provider.stream(request) {}
+        }
+        #expect(server.recordedRequests.count == 1,
+                "the retained debit must reject the next call before the network")
+    }
+
+    @Test func streamingCancellationWithoutUsageReleasesTheCeilingForTheNextCall() async throws {
+        let request = Self.expensiveRequest
+        let ledger = InMemorySpendLedger()
+        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: nil)
+        let held = try #require(await meter.requestCostCeilingUSD(request))
+        await meter.updateCapUSD(held * 1.5)
+        let slowFrames = Array(repeating: OpenAIFixtures.contentDelta("still streaming"), count: 1_000)
         let server = try FakeOpenAIServer.start(responses: [
-            .json(status: 503, body: OpenAIFixtures.errorBody(message: "down"))
+            .sse(frames: slowFrames),
+            Self.streamedReply,
         ])
         defer { server.stop() }
         let provider = MeteredProvider(
@@ -582,14 +694,41 @@ struct SpendMeterTests {
             meetingID: Self.meeting
         )
 
-        do {
-            for try await _ in provider.stream(Self.expensiveRequest) {}
-        } catch {}
+        let first = Task {
+            for try await _ in provider.stream(request) {}
+        }
+        while server.recordedRequests.isEmpty { await Task.yield() }
+        first.cancel()
+        _ = await first.result
+        try await meter.waitForSettlements()
 
+        #expect(await ledger.entries.isEmpty)
         #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0)
         #expect(await meter.uncertainUSD(meetingID: Self.meeting) == 0)
-        let next = try await meter.reserve(Self.expensiveRequest, meetingID: Self.meeting)
-        await meter.cancel(next)
+
+        for try await _ in provider.stream(request) {}
+        #expect(server.recordedRequests.count == 2,
+                "true caller cancellation must return capacity for a sequential request")
+    }
+
+    @Test func streamingFailureAfterReportedUsageBooksUsageBeforeRethrowing() async throws {
+        let ledger = InMemorySpendLedger()
+        let meter = SpendMeter(ledger: ledger, pricing: Self.pricing, capUSD: 0.20)
+        let provider = MeteredProvider(
+            upstream: UsageThenFailureUpstream(),
+            meter: meter,
+            meetingID: Self.meeting
+        )
+
+        await #expect(throws: UsageThenFailureUpstream.failure) {
+            for try await _ in provider.stream(Self.expensiveRequest) {}
+        }
+
+        let entries = await ledger.entries
+        #expect(entries.count == 1)
+        #expect(entries.first?.usage == TokenUsage(promptTokens: 1_000, completionTokens: 500))
+        #expect(await meter.reservedUSD(meetingID: Self.meeting) == 0)
+        #expect(await meter.uncertainUSD(meetingID: Self.meeting) == 0)
     }
 
     @Test func cancellationReleasesCapacityForTheNextCall() async throws {
