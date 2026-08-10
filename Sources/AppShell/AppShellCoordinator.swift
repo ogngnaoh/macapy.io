@@ -39,6 +39,10 @@ final class AppShellCoordinator {
     /// between extraction and persistence. Production always leaves this nil.
     @ObservationIgnored private let postMeetingContextOverride:
         (@Sendable (UUID) async throws -> PostMeetingProviderContext?)?
+    /// Focused lifecycle-test seams. Production always resolves its upstream
+    /// provider and ledger from settings/persistence.
+    @ObservationIgnored private let liveProviderOverride: (any LLMProvider)?
+    @ObservationIgnored private let liveSpendLedgerOverride: (any SpendLedger)?
     @ObservationIgnored private var cachedDatabase: MacapyDatabase?
     @ObservationIgnored private var cachedPersistentStore: MeetingStore?
     @ObservationIgnored private var cachedSettingsStore: SettingsStore?
@@ -90,7 +94,9 @@ final class AppShellCoordinator {
         providerProfiles: [EndpointProfile] = EndpointProfile.wired,
         credentials: any CredentialStore = KeychainCredentialStore(),
         postMeetingContextOverride:
-            (@Sendable (UUID) async throws -> PostMeetingProviderContext?)? = nil
+            (@Sendable (UUID) async throws -> PostMeetingProviderContext?)? = nil,
+        liveProviderOverride: (any LLMProvider)? = nil,
+        liveSpendLedgerOverride: (any SpendLedger)? = nil
     ) {
         self.panel = panel
         self.makePipeline = makePipeline
@@ -98,6 +104,8 @@ final class AppShellCoordinator {
         self.providerProfiles = providerProfiles
         self.credentials = credentials
         self.postMeetingContextOverride = postMeetingContextOverride
+        self.liveProviderOverride = liveProviderOverride
+        self.liveSpendLedgerOverride = liveSpendLedgerOverride
         if installHotKey {
             hotKey = HotKey.startStopMeeting { [weak self] in
                 self?.toggleSession()
@@ -563,15 +571,27 @@ final class AppShellCoordinator {
         await pauseResumeTask?.value
     }
 
-    /// Teardown's single drain seam. Live work is cancelled and awaited here
-    /// before the post-meeting extractor can reuse the meeting meter.
-    ///
-    /// Integration hook: after ProviderKit's reservation-drain API lands,
-    /// resolve `activeCopilotMeetingID`'s meter and await that drain here,
-    /// immediately after `stopMeetingAndWait()` and before `stopping.stop()`
-    /// returns an id to artifact generation.
+    /// Teardown's single drain seam. Resolve the meter before cancellation,
+    /// then cancel/await presentation work and finally wait for detached ledger
+    /// settlement to release every reservation. Only after this returns may
+    /// `stopping.stop()` expose the meeting to post-meeting generation.
     private func drainLiveCopilotBeforePostMeetingGeneration() async {
+        let meter: SpendMeter?
+        if let meetingID = activeCopilotMeetingID {
+            meter = await meetingSpendRegistry.meter(meetingID: meetingID)
+        } else {
+            meter = nil
+        }
         await copilot.stopMeetingAndWait()
+        guard let meter else { return }
+        do {
+            try await meter.waitForSettlements()
+        } catch is CancellationError {
+            // Teardown/preemption cancellation is intentional, never an error
+            // state or a user-facing outage.
+        } catch {
+            log.error("meeting spend drain failed: \(String(describing: type(of: error)), privacy: .public)")
+        }
     }
 
     private func applyLiveAISettings(_ settings: LiveAISettings) async {
@@ -607,7 +627,9 @@ final class AppShellCoordinator {
         }
 
         let ledger: any SpendLedger
-        if ephemeral {
+        if let liveSpendLedgerOverride {
+            ledger = liveSpendLedgerOverride
+        } else if ephemeral {
             ledger = EphemeralSpendLedger()
         } else if let persistent = spendLedger() {
             ledger = persistent
@@ -622,7 +644,11 @@ final class AppShellCoordinator {
             capUSD: providerSettings.perMeetingCapUSD
         )
         await meetingSpendRegistry.register(meter, meetingID: meetingID)
-        let metered = MeteredProvider(upstream: client, meter: meter, meetingID: meetingID)
+        let metered = MeteredProvider(
+            upstream: liveProviderOverride ?? client,
+            meter: meter,
+            meetingID: meetingID
+        )
         copilot.beginMeeting(
             provider: metered,
             // Deliberately use the profile defaults, not persisted overrides.
