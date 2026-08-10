@@ -22,7 +22,10 @@ extension PanelPresenting {
 @MainActor
 final class FloatingPanelController: PanelPresenting {
     private var panel: NSPanel?
-    private static let panelSize = NSSize(width: 340, height: 470)
+    private static let panelSize = NSSize(
+        width: PanelView.Layout.panelWidth,
+        height: PanelView.Layout.panelHeight
+    )
 
     func show(session: SessionController, store: TranscriptStore, copilot: LiveCopilotModel) {
         if panel == nil {
