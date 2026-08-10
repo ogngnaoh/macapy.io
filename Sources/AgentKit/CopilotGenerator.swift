@@ -228,7 +228,23 @@ public struct CopilotGenerator: Sendable {
         request: CompletionRequest,
         maxWords: Int
     ) -> AsyncThrowingStream<CopilotTextEvent, Error> {
-        AsyncThrowingStream { continuation in
+        // Keep the budget guard at the final common entry point so every
+        // public overload is safe even when a caller bypasses AppShell's
+        // rolling-context compaction. Counting the constructed messages (and
+        // therefore query JSON quoting/escaping) also prevents the admission
+        // calculation from drifting away from what reaches the provider.
+        let requestCharacters = request.messages.reduce(0) { partial, message in
+            partial + message.content.count
+        }
+        guard requestCharacters <= CopilotContextLimits.hardCharacterLimit else {
+            return AsyncThrowingStream<CopilotTextEvent, Error> { continuation in
+                continuation.finish(throwing: CopilotContextError.requestContextExceedsBudget(
+                    characterCount: requestCharacters
+                ))
+            }
+        }
+
+        return AsyncThrowingStream<CopilotTextEvent, Error> { continuation in
             let task = Task {
                 var accumulated = ""
                 var completed = false
