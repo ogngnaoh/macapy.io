@@ -111,21 +111,43 @@ public struct PricingTable: Sendable, Equatable, Codable {
     }
 }
 
-/// Decides whether an AI call may proceed, and books what it cost.
+/// An opaque claim on part of a meeting's cap. Only the meter that issued it
+/// can settle or cancel it.
+public struct SpendReservation: Sendable, Equatable {
+    fileprivate let id: UUID
+    public let meetingID: UUID?
+    /// The conservative request ceiling held against the cap. `nil` means the
+    /// request's model is not in the pricing table, matching ledger rows whose
+    /// estimate is intentionally unknown rather than falsely reported as free.
+    public let estimatedCostUSD: Double?
+}
+
+/// Decides whether an AI call may proceed, reserves its maximum estimated
+/// request cost, and books the usage the endpoint actually reports.
 ///
-/// **The cap's honest guarantee:** `authorize` checks *booked* spend, and a
-/// call books only on completion — so N concurrent calls can each pass the gate
-/// before any of them books, overshooting the cap by up to N in-flight call
-/// costs (one call's overshoot is inherent: cost is unknowable pre-call).
-/// Bounding that with in-flight reservations is an M3 design item, deferred
-/// until the cascade exists to size it against. Since slice 3, the one place
-/// shipping code constructs a capped meter is
-/// `AppShellCoordinator.postMeetingAgent()` (from `perMeetingCapUSD` — V5).
+/// Booked spend plus every in-flight reservation must fit beneath the cap.
+/// This removes concurrency-amplified overruns. One call can still cost more
+/// than its reservation if the endpoint's tokenizer or accounting exceeds our
+/// conservative byte-based estimate; that single-call uncertainty is inherent
+/// until the provider reports usage.
 public actor SpendMeter {
+    private struct ReservationState: Sendable {
+        var meetingID: UUID?
+        var model: String
+        var purpose: Purpose
+        var heldCostUSD: Double?
+    }
+
+    /// M2 requests did not require `maxTokens`. Keeping them source-compatible
+    /// while making M3 reservations bounded requires a safe default; 4,096 is
+    /// deliberately above every current M2 structured artifact response.
+    static let fallbackMaxTokens = 4_096
+
     let ledger: any SpendLedger
     public let pricing: PricingTable
     /// `nil` means uncapped (PRD FR-015: the cap is opt-in).
-    public let capUSD: Double?
+    public private(set) var capUSD: Double?
+    private var reservations: [UUID: ReservationState] = [:]
 
     public init(ledger: any SpendLedger, pricing: PricingTable, capUSD: Double?) {
         self.ledger = ledger
@@ -133,15 +155,103 @@ public actor SpendMeter {
         self.capUSD = capUSD
     }
 
-    /// Throws `ProviderError.capReached` when this meeting has already spent
-    /// its allowance. Consulted *before* a request is built, so a capped call
-    /// costs nothing — not even a round trip.
+    /// Updates the live cap used by this meter. Existing calls keep their
+    /// reservations; subsequent calls immediately observe the new limit.
+    public func updateCapUSD(_ capUSD: Double?) {
+        self.capUSD = capUSD
+    }
+
+    /// Legacy M2 gate retained for source compatibility. New call paths must
+    /// use `reserve(_:meetingID:)`, which atomically gates and claims capacity.
+    /// This check includes reservations so an older caller cannot ignore M3
+    /// in-flight work, but it cannot reserve capacity without a request shape.
     public func authorize(meetingID: UUID?) async throws {
         guard let capUSD, let meetingID else { return }
         let spent = try await ledger.totalCostUSD(meetingID: meetingID)
-        guard spent < capUSD else {
-            throw ProviderError.capReached(spentUSD: spent, capUSD: capUSD)
+        let committed = spent + reservedCostUSD(meetingID: meetingID)
+        guard committed < capUSD else {
+            throw ProviderError.capReached(spentUSD: committed, capUSD: capUSD)
         }
+    }
+
+    /// Atomically gates a call and claims its conservative maximum estimated
+    /// cost before the upstream provider can receive a request.
+    public func reserve(_ request: CompletionRequest, meetingID: UUID?) async throws -> SpendReservation {
+        let estimate = requestCostCeilingUSD(request)
+        var heldCost = estimate
+        if let capUSD, let meetingID {
+            let spent = try await ledger.totalCostUSD(meetingID: meetingID)
+            let committed = spent + reservedCostUSD(meetingID: meetingID)
+            if let estimate {
+                guard committed + estimate <= capUSD else {
+                    throw ProviderError.capReached(spentUSD: committed, capUSD: capUSD)
+                }
+            } else {
+                // An unpriced custom model cannot produce a trustworthy cost
+                // ceiling. Preserve M2 compatibility by permitting one call,
+                // but make it claim every remaining dollar so concurrent
+                // unpriced calls cannot bypass the cap invariant.
+                guard committed < capUSD else {
+                    throw ProviderError.capReached(spentUSD: committed, capUSD: capUSD)
+                }
+                heldCost = capUSD - committed
+            }
+        }
+
+        let reservation = SpendReservation(id: UUID(), meetingID: meetingID, estimatedCostUSD: estimate)
+        reservations[reservation.id] = ReservationState(
+            meetingID: meetingID,
+            model: request.model,
+            purpose: request.purpose,
+            heldCostUSD: heldCost
+        )
+        return reservation
+    }
+
+    /// Settles one reservation using provider-reported usage. The reservation
+    /// stays held until the ledger write completes; once actual cost is known,
+    /// the held amount is raised to that cost first so concurrent gates cannot
+    /// exploit a slow database write.
+    @discardableResult
+    public func settle(
+        _ reservation: SpendReservation,
+        usage: TokenUsage?,
+        at: Date = Date()
+    ) async throws -> SpendEntry? {
+        guard var state = reservations[reservation.id] else { return nil }
+        guard let usage else {
+            reservations.removeValue(forKey: reservation.id)
+            return nil
+        }
+
+        let actualCost = pricing.estimatedCostUSD(model: state.model, usage: usage)
+        if let actualCost {
+            state.heldCostUSD = max(state.heldCostUSD ?? 0, actualCost)
+            reservations[reservation.id] = state
+        }
+
+        let entry = SpendEntry(
+            id: UUID(),
+            meetingID: state.meetingID,
+            model: state.model,
+            usage: usage,
+            estCostUSD: actualCost,
+            purpose: state.purpose,
+            at: at
+        )
+        defer { reservations.removeValue(forKey: reservation.id) }
+        try await ledger.record(entry)
+        return entry
+    }
+
+    /// Releases a call that failed or was cancelled before reporting usage.
+    public func cancel(_ reservation: SpendReservation) {
+        reservations.removeValue(forKey: reservation.id)
+    }
+
+    /// The amount currently held by calls in flight for this meeting.
+    public func reservedUSD(meetingID: UUID) -> Double {
+        reservedCostUSD(meetingID: meetingID)
     }
 
     /// Books one call. Returns the entry written, or `nil` when the endpoint
@@ -173,6 +283,40 @@ public actor SpendMeter {
     public func spentUSD(meetingID: UUID) async throws -> Double {
         try await ledger.totalCostUSD(meetingID: meetingID)
     }
+
+    /// A deliberately conservative estimate: one UTF-8 byte per prompt token
+    /// (plus message/request framing) and the request's explicit maximum output
+    /// tokens. Schemas count because providers bill their serialized contract
+    /// as prompt context. Unknown model pricing remains unknown, just like the
+    /// final ledger estimate.
+    func requestCostCeilingUSD(_ request: CompletionRequest) -> Double? {
+        guard pricing.rates[request.model] != nil else { return nil }
+        let messageBytes = request.messages.reduce(into: 0) { count, message in
+            count += message.content.utf8.count
+            count += message.reasoningContent?.utf8.count ?? 0
+            count += message.role.rawValue.utf8.count
+            count += 64 // conservative chat-token and JSON overhead per message
+        }
+        let schemaBytes = (request.responseFormat?.name.utf8.count ?? 0)
+            + (request.responseFormat?.schema.data.count ?? 0)
+        let promptTokenCeiling = messageBytes + schemaBytes + 256
+        let outputTokenCeiling = max(0, request.maxTokens ?? Self.fallbackMaxTokens)
+        return pricing.estimatedCostUSD(
+            model: request.model,
+            usage: TokenUsage(
+                promptTokens: promptTokenCeiling,
+                cachedTokens: 0,
+                completionTokens: outputTokenCeiling
+            )
+        )
+    }
+
+    private func reservedCostUSD(meetingID: UUID) -> Double {
+        reservations.values
+            .filter { $0.meetingID == meetingID }
+            .compactMap(\.heldCostUSD)
+            .reduce(0, +)
+    }
 }
 
 /// Wraps any `LLMProvider` so the cap is checked before every call and a ledger
@@ -196,8 +340,10 @@ public struct MeteredProvider: LLMProvider {
     public func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
         AsyncThrowingStream { continuation in
             let task = Task {
+                var reservation: SpendReservation?
                 do {
-                    try await meter.authorize(meetingID: meetingID)
+                    let held = try await meter.reserve(request, meetingID: meetingID)
+                    reservation = held
                     var usage: TokenUsage?
                     var terminalEvent: LLMEvent?
                     do {
@@ -217,16 +363,19 @@ public struct MeteredProvider: LLMProvider {
                         // The upstream may have delivered its billed usage
                         // before the failure or cancellation reached us; the
                         // original error still wins.
-                        await bookLoggingFailure(usage: usage, request: request)
+                        await settleLoggingFailure(held, usage: usage, request: request)
+                        reservation = nil
                         throw error
                     }
                     // A call that died mid-stream never reported counts, and
                     // inventing zeros would make the ledger lie — `usage == nil`
                     // books nothing.
-                    await bookLoggingFailure(usage: usage, request: request)
+                    await settleLoggingFailure(held, usage: usage, request: request)
+                    reservation = nil
                     if let terminalEvent { continuation.yield(terminalEvent) }
                     continuation.finish()
                 } catch {
+                    if let reservation { await meter.cancel(reservation) }
                     continuation.finish(throwing: error)
                 }
             }
@@ -238,10 +387,15 @@ public struct MeteredProvider: LLMProvider {
         _ request: CompletionRequest,
         as type: T.Type
     ) async throws -> CompletedCall<T> {
-        try await meter.authorize(meetingID: meetingID)
-        let result = try await upstream.completeReportingUsage(request, as: type)
-        await bookLoggingFailure(usage: result.usage, request: request)
-        return result
+        let reservation = try await meter.reserve(request, meetingID: meetingID)
+        do {
+            let result = try await upstream.completeReportingUsage(request, as: type)
+            await settleLoggingFailure(reservation, usage: result.usage, request: request)
+            return result
+        } catch {
+            await meter.cancel(reservation)
+            throw error
+        }
     }
 
     /// Books on a task detached from the caller — consumer-driven cancellation
@@ -256,15 +410,17 @@ public struct MeteredProvider: LLMProvider {
     /// artifact). The deliberate cost is a logged under-count in exactly
     /// those rare states; in the deletion case the cascade would have removed
     /// the row anyway.
-    private func bookLoggingFailure(usage: TokenUsage?, request: CompletionRequest) async {
-        guard let usage else { return }
+    private func settleLoggingFailure(
+        _ reservation: SpendReservation,
+        usage: TokenUsage?,
+        request: CompletionRequest
+    ) async {
         let meter = meter
-        let meetingID = meetingID
         let model = request.model
         let purpose = request.purpose
         do {
-            try await Task.detached {
-                try await meter.book(usage: usage, model: model, purpose: purpose, meetingID: meetingID)
+            _ = try await Task.detached {
+                try await meter.settle(reservation, usage: usage)
             }.value
         } catch {
             ProviderLog.bookingFailed(model: model, purpose: purpose, error: error)
