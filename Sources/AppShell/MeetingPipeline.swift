@@ -84,7 +84,10 @@ final class MeetingPipeline {
         stopped = true
     }
 
-    func start(mode: PersistenceMode) async throws {
+    func start(
+        mode: PersistenceMode,
+        onMeetingReady: (@MainActor (MeetingRecord.ID, Bool) async -> Void)? = nil
+    ) async throws {
         let resolvedStore: MeetingStore
         let ephemeral: Bool
         switch mode {
@@ -102,6 +105,13 @@ final class MeetingPipeline {
         meetingStore = resolvedStore
         meetingID = meeting.id
         isEphemeral = ephemeral
+
+        // Live intelligence needs the durable meeting id for spend attribution
+        // before any provider call, and its non-replaying turn consumer must be
+        // ready before capture below can emit. The coordinator attaches the
+        // stream before entering start(), then completes this callback here.
+        await onMeetingReady?(meeting.id, ephemeral)
+        if stopped { return }
 
         // BINDING (slice-04 doc Notes, from the slice-2 critic):
         // `TranscriptStore.finalsStream()` has no replay and `reset()`

@@ -34,6 +34,7 @@ final class ProviderSettingsModel {
     @ObservationIgnored private let settingsStore: SettingsStore?
     @ObservationIgnored private let ledger: (any SpendLedger)?
     @ObservationIgnored private let session: URLSession
+    @ObservationIgnored private let onSettingsChange: @MainActor (ProviderSettings) -> Void
     @ObservationIgnored private var keyedProfileIDs: Set<String> = []
     @ObservationIgnored private let log = Logger(subsystem: "io.macapy.app", category: "AppShell")
 
@@ -42,13 +43,15 @@ final class ProviderSettingsModel {
         credentials: any CredentialStore,
         settingsStore: SettingsStore?,
         ledger: (any SpendLedger)?,
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        onSettingsChange: @escaping @MainActor (ProviderSettings) -> Void = { _ in }
     ) {
         self.profiles = profiles
         self.credentials = credentials
         self.settingsStore = settingsStore
         self.ledger = ledger
         self.session = session
+        self.onSettingsChange = onSettingsChange
     }
 
     // MARK: - Loading
@@ -172,6 +175,7 @@ final class ProviderSettingsModel {
         } catch {
             log.error("failed to persist provider settings: \(error.localizedDescription)")
         }
+        onSettingsChange(settings)
     }
 
     // MARK: - Test connection
@@ -203,7 +207,10 @@ final class ProviderSettingsModel {
         } ?? client
 
         let request = CompletionRequest(
-            model: settings.fastModelOverrides[profile.id] ?? profile.fastModel,
+            // M3 MVP uses the live-verified profile default. Historical
+            // overrides stay stored for the multi-provider fast-follow but are
+            // intentionally ignored by every production call path.
+            model: profile.fastModel,
             messages: [.user("Reply with the single word: OK")],
             purpose: .classifier,
             maxTokens: 16

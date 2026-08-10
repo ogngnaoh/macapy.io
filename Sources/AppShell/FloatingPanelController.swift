@@ -6,7 +6,7 @@ import TranscribeKit
 /// substitute a no-op and never build an NSPanel/NSHostingView headlessly.
 @MainActor
 protocol PanelPresenting {
-    func show(session: SessionController, store: TranscriptStore)
+    func show(session: SessionController, store: TranscriptStore, copilot: LiveCopilotModel)
     func hide()
 }
 
@@ -17,11 +17,11 @@ protocol PanelPresenting {
 @MainActor
 final class FloatingPanelController: PanelPresenting {
     private var panel: NSPanel?
-    private static let panelSize = NSSize(width: 340, height: 380)
+    private static let panelSize = NSSize(width: 340, height: 470)
 
-    func show(session: SessionController, store: TranscriptStore) {
+    func show(session: SessionController, store: TranscriptStore, copilot: LiveCopilotModel) {
         if panel == nil {
-            panel = makePanel(session: session, store: store)
+            panel = makePanel(session: session, store: store, copilot: copilot)
         }
         panel?.orderFrontRegardless()
     }
@@ -30,7 +30,11 @@ final class FloatingPanelController: PanelPresenting {
         panel?.orderOut(nil)
     }
 
-    private func makePanel(session: SessionController, store: TranscriptStore) -> NSPanel {
+    private func makePanel(
+        session: SessionController,
+        store: TranscriptStore,
+        copilot: LiveCopilotModel
+    ) -> NSPanel {
         let panel = NSPanel(
             contentRect: NSRect(origin: .zero, size: Self.panelSize),
             styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
@@ -46,7 +50,10 @@ final class FloatingPanelController: PanelPresenting {
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.contentView = NSHostingView(
-            rootView: PanelView().environment(session).environment(store)
+            rootView: PanelView()
+                .environment(session)
+                .environment(store)
+                .environment(copilot)
         )
         position(panel)
         return panel

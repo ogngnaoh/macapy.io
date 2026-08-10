@@ -1,4 +1,5 @@
 import DiarizeKit
+import PersistKit
 import ProviderKit
 import SwiftUI
 
@@ -67,6 +68,7 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         SettingsBody {
+            LiveAISettingsSection(model: coordinator.liveAISettingsModel())
             FormRow(label: "Start / stop meeting") {
                 Text("⌥⌘M").font(MachineType.number(11)).foregroundStyle(DesignTokens.text)
             }
@@ -112,6 +114,54 @@ struct GeneralSettingsView: View {
         }
         .sheet(item: $deleteModel) { model in
             DeleteEverythingSheet(model: model, onDismiss: { deleteModel = nil })
+        }
+    }
+}
+
+struct LiveAISettingsSection: View {
+    @Bindable var model: LiveAISettingsModel
+    @State private var preferredName = ""
+
+    var body: some View {
+        Group {
+            FormRow(label: "AI features") {
+                Toggle("", isOn: Binding(
+                    get: { model.settings.aiFeaturesEnabled },
+                    set: { value in Task { await model.setEnabled(value) } }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .accessibilityLabel("AI features")
+            }
+            FormRow(label: "Copilot sensitivity") {
+                Picker("Copilot sensitivity", selection: Binding(
+                    get: { model.settings.sensitivity },
+                    set: { value in Task { await model.setSensitivity(value) } }
+                )) {
+                    Text("Off").tag(LiveAISensitivity.off)
+                    Text("Quiet").tag(LiveAISensitivity.quiet)
+                    Text("Balanced").tag(LiveAISensitivity.balanced)
+                    Text("Active").tag(LiveAISensitivity.active)
+                }
+                .labelsHidden()
+                .frame(maxWidth: 180)
+                .accessibilityLabel("Copilot sensitivity")
+            }
+            FormRow(label: "Preferred name") {
+                TextField("Name used in meetings", text: $preferredName)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 230)
+                    .onSubmit { Task { await model.setPreferredName(preferredName) } }
+                    .accessibilityLabel("Preferred name")
+                Button("Apply") { Task { await model.setPreferredName(preferredName) } }
+            }
+            FormRow(label: "") {
+                FormNote("AI-off cancels copilot and artifact calls. Capture, transcription, and history continue.")
+            }
+        }
+        .task {
+            await model.load()
+            preferredName = model.settings.preferredName ?? ""
         }
     }
 }
@@ -176,8 +226,6 @@ struct DiarizationSetupControl: View {
 struct ProvidersSettingsView: View {
     @Bindable var model: ProviderSettingsModel
     @State private var keyEntry = ""
-    @State private var fastModel = ""
-    @State private var deepModel = ""
 
     var body: some View {
         SettingsBody {
@@ -211,7 +259,6 @@ struct ProvidersSettingsView: View {
         }
         .task {
             await model.load()
-            syncFields()
         }
     }
 
@@ -243,23 +290,8 @@ struct ProvidersSettingsView: View {
                 }
             }
 
-            FormRow(label: "Fast model") {
-                TextField(profile.fastModel, text: $fastModel)
-                    .textFieldStyle(.roundedBorder)
-                    .font(MachineType.number(11))
-                    .frame(maxWidth: 230)
-                    .onSubmit {
-                        Task { await model.setModelOverride(fastModel, tier: .fast, for: profile.id) }
-                    }
-            }
-            FormRow(label: "Deep model") {
-                TextField(profile.deepModel, text: $deepModel)
-                    .textFieldStyle(.roundedBorder)
-                    .font(MachineType.number(11))
-                    .frame(maxWidth: 230)
-                    .onSubmit {
-                        Task { await model.setModelOverride(deepModel, tier: .deep, for: profile.id) }
-                    }
+            FormRow(label: "Models") {
+                FormNote("Uses the verified DeepSeek fast and deep defaults for this MVP.")
             }
 
             FormRow(label: "") {
@@ -295,7 +327,6 @@ struct ProvidersSettingsView: View {
 
     private func select(_ profile: EndpointProfile) async {
         await model.select(profileID: profile.id)
-        syncFields()
     }
 
     private func saveKey(for profile: EndpointProfile) async {
@@ -304,12 +335,6 @@ struct ProvidersSettingsView: View {
         keyEntry = ""
     }
 
-    private func syncFields() {
-        guard let profile = model.selectedProfile else { return }
-        fastModel = model.settings.fastModelOverrides[profile.id] ?? ""
-        deepModel = model.settings.deepModelOverrides[profile.id] ?? ""
-        keyEntry = ""
-    }
 }
 
 // MARK: - Spend

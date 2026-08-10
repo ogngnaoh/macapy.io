@@ -34,6 +34,17 @@ struct MenuBarMenu: View {
                 coordinator.togglePause()
             }
             .keyboardShortcut("p", modifiers: [.option, .command])
+
+            Button("Catch up") { coordinator.requestCatchUp() }
+                .keyboardShortcut("c", modifiers: [.option, .command])
+                .disabled(!coordinator.copilot.canCatchUp)
+
+            Button("Ask") { coordinator.requestAsk() }
+                .keyboardShortcut("k", modifiers: [.option, .command])
+                .disabled(
+                    coordinator.copilot.availability == .disabled
+                        || coordinator.copilot.availability == .setupRequired
+                )
         }
 
         // Applies to the *next* meeting only (slice-04 doc decision 9) —

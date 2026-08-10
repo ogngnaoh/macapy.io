@@ -41,6 +41,26 @@ final class HotKey {
         )
     }
 
+    /// ⌥⌘C — catch up on the last 90 transcript-seconds.
+    static func catchUp(handler: @escaping @MainActor () -> Void) -> HotKey {
+        HotKey(
+            keyCode: UInt32(kVK_ANSI_C),
+            carbonModifiers: UInt32(optionKey | cmdKey),
+            id: 3,
+            handler: handler
+        )
+    }
+
+    /// ⌥⌘K — focus/open the meeting query affordance.
+    static func askCopilot(handler: @escaping @MainActor () -> Void) -> HotKey {
+        HotKey(
+            keyCode: UInt32(kVK_ANSI_K),
+            carbonModifiers: UInt32(optionKey | cmdKey),
+            id: 4,
+            handler: handler
+        )
+    }
+
     init(keyCode: UInt32, carbonModifiers: UInt32, id: UInt32, handler: @escaping @MainActor () -> Void) {
         self.handler = handler
         self.id = id

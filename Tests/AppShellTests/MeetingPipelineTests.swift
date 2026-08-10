@@ -110,7 +110,9 @@ struct MeetingPipelineTests {
     /// No-op panel so the coordinator never builds an NSPanel/NSHostingView.
     final class FakePanel: PanelPresenting {
         private(set) var shown = false
-        func show(session: SessionController, store: TranscriptStore) { shown = true }
+        func show(session: SessionController, store: TranscriptStore, copilot: LiveCopilotModel) {
+            shown = true
+        }
         func hide() { shown = false }
     }
 
