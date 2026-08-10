@@ -23,7 +23,8 @@ actor EphemeralSpendLedger: SpendLedger {
 
 /// Crosses the MainActor/Sendable boundary for the one-meter-per-meeting
 /// invariant. The live copilot registers first; the post-meeting agent reuses
-/// and then removes the same meter after extraction settles.
+/// and removes it after extraction only when no conservative uncertainty must
+/// survive for a later manual retry.
 actor MeetingSpendRegistry {
     private var meters: [UUID: SpendMeter] = [:]
 
@@ -31,19 +32,20 @@ actor MeetingSpendRegistry {
     func meter(meetingID: UUID) -> SpendMeter? { meters[meetingID] }
     func remove(meetingID: UUID) { meters[meetingID] = nil }
 
-    /// Updates every live meter and reports whether at least one cap became
-    /// strictly less restrictive (`nil` means unlimited). Only that event may
-    /// release a latched cap pause.
-    func updateCaps(_ capUSD: Double?) async -> Bool {
-        var raised = false
-        for meter in meters.values {
+    /// Updates every retained meter, while reporting a cap increase only for
+    /// the meeting that is currently live. Older meters can remain here while
+    /// an artifact retry is pending; their cap changes must never release the
+    /// current meeting's latched cap pause.
+    func updateCaps(_ capUSD: Double?, activeMeetingID: UUID?) async -> Bool {
+        var activeCapRaised = false
+        for (meetingID, meter) in meters {
             let previous = await meter.capUSD
-            if let previous {
-                raised = raised || capUSD == nil || (capUSD ?? previous) > previous
+            if meetingID == activeMeetingID, let previous {
+                activeCapRaised = capUSD == nil || (capUSD ?? previous) > previous
             }
             await meter.updateCapUSD(capUSD)
         }
-        return raised
+        return activeCapRaised
     }
 }
 
@@ -171,6 +173,36 @@ final class LiveCopilotModel {
         } else if card == nil, !askPlaceholderVisible {
             restoreAvailability()
         }
+    }
+
+    /// Rebinds transport/configuration for an active meeting without invoking
+    /// `beginMeeting`: transcript context, the snapshotted preferred name,
+    /// cooldown state, and meeting-time configuration therefore survive key
+    /// replacement, profile selection, and AI off → on. Any work owned by
+    /// the old client is cancelled and drained before the replacement becomes
+    /// reachable.
+    func replaceProviderAndWait(
+        _ provider: (any LLMProvider)?,
+        fastModel: String,
+        deepModel: String
+    ) async {
+        guard isMeetingActive else { return }
+        let inFlight = workTask
+        cancelAndClear()
+        await inFlight?.value
+        guard isMeetingActive else { return }
+
+        self.provider = provider
+        if let provider {
+            classifier = CopilotClassifier(provider: provider, model: fastModel)
+            generator = CopilotGenerator(provider: provider, model: deepModel)
+            if hardPause == .authenticationOrConfiguration { hardPause = nil }
+        } else {
+            classifier = nil
+            generator = nil
+            hardPause = .authenticationOrConfiguration
+        }
+        restoreAvailability()
     }
 
     func receive(_ transcriptTurn: TranscriptTurn, userSpeaking: Bool, now: Date = Date()) {

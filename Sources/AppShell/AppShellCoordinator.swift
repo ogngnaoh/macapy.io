@@ -342,9 +342,13 @@ final class AppShellCoordinator {
             ledger: spendLedger(),
             onSettingsChange: { [weak self] settings in
                 guard let self else { return }
-                self.copilot.releaseAuthenticationPauseAfterConfigurationChange()
-                let capRaised = await self.meetingSpendRegistry.updateCaps(settings.perMeetingCapUSD)
+                let activeMeetingID = self.activeCopilotMeetingID
+                let capRaised = await self.meetingSpendRegistry.updateCaps(
+                    settings.perMeetingCapUSD,
+                    activeMeetingID: activeMeetingID
+                )
                 if capRaised { self.copilot.releaseCapPauseAfterCapIncrease() }
+                await self.refreshActiveCopilotProvider(using: settings)
             }
         )
         cachedProviderSettingsModel = model
@@ -523,23 +527,21 @@ final class AppShellCoordinator {
         stopTask = Task { [weak self] in
             inFlightStart?.cancel()
             await previousStop?.value
-            // Cancellation and reservation release complete before the
-            // post-meeting agent can reuse this meeting's meter.
-            await self?.drainLiveCopilotBeforePostMeetingGeneration()
+            // Capture is the critical path: cancel and drain presentation work
+            // first, but never wait here for detached spend settlement.
+            await self?.copilot.stopMeetingAndWait()
             self?.copilotTurnsTask?.cancel()
             self?.copilotTurnsTask = nil
             let liveMeetingID = self?.activeCopilotMeetingID
+            let liveMeter: SpendMeter?
+            if let liveMeetingID, let self {
+                liveMeter = await self.meetingSpendRegistry.meter(meetingID: liveMeetingID)
+            } else {
+                liveMeter = nil
+            }
             self?.activeCopilotMeetingID = nil
             let endedMeetingID = await stopping.stop()
-            // The meeting-end trigger (slice-03 decision 1). A *separate*
-            // task, not more of stopTask: the next meeting's start serializes
-            // behind stopTask, and a multi-second extraction must never delay
-            // capture (FR-008 is post-meeting work; capture always wins).
-            // Ephemeral meetings return nil and never reach here (check 7).
-            guard let endedMeetingID, let self else {
-                if let liveMeetingID { await self?.meetingSpendRegistry.remove(meetingID: liveMeetingID) }
-                return
-            }
+            guard let self else { return }
             // Chained behind any earlier generation still in flight (two
             // meetings ended in quick succession) so `settle()` awaiting the
             // latest task transitively awaits them all — the same discipline
@@ -548,8 +550,38 @@ final class AppShellCoordinator {
             let previousGeneration = self.artifactGenerationTask
             self.artifactGenerationTask = Task { [weak self] in
                 await previousGeneration?.value
-                await self?.postMeetingAgent()?.generateArtifacts(meetingID: endedMeetingID)
-                await self?.meetingSpendRegistry.remove(meetingID: endedMeetingID)
+                guard let self else { return }
+
+                // Detached ledger settlement is post-capture bookkeeping. It
+                // gates artifact reuse/removal of this meter, but never source
+                // shutdown or admission of the next meeting.
+                if let liveMeter {
+                    do {
+                        try await liveMeter.waitForSettlements()
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        self.log.error("meeting spend drain failed: \(String(describing: type(of: error)), privacy: .public)")
+                        return
+                    }
+                }
+
+                if let endedMeetingID {
+                    await self.postMeetingAgent()?.generateArtifacts(meetingID: endedMeetingID)
+                    await self.removeMeterIfSafe(
+                        meetingID: endedMeetingID,
+                        meter: liveMeter,
+                        ephemeral: false
+                    )
+                } else if let liveMeetingID {
+                    // Ephemeral meetings have no manual artifact retry path and
+                    // no persistent state to protect after their settlement.
+                    await self.removeMeterIfSafe(
+                        meetingID: liveMeetingID,
+                        meter: liveMeter,
+                        ephemeral: true
+                    )
+                }
             }
         }
     }
@@ -571,36 +603,28 @@ final class AppShellCoordinator {
         await pauseResumeTask?.value
     }
 
-    /// Teardown's single drain seam. Resolve the meter before cancellation,
-    /// then cancel/await presentation work and finally wait for detached ledger
-    /// settlement to release every reservation. Only after this returns may
-    /// `stopping.stop()` expose the meeting to post-meeting generation.
-    private func drainLiveCopilotBeforePostMeetingGeneration() async {
-        let meter: SpendMeter?
-        if let meetingID = activeCopilotMeetingID {
-            meter = await meetingSpendRegistry.meter(meetingID: meetingID)
-        } else {
-            meter = nil
+    private func removeMeterIfSafe(
+        meetingID: UUID,
+        meter: SpendMeter?,
+        ephemeral: Bool
+    ) async {
+        if !ephemeral, let meter, await meter.uncertainUSD(meetingID: meetingID) > 0 {
+            // Preserve conservative in-memory debit so a later manual artifact
+            // retry cannot fail open after an incomplete provider/ledger result.
+            return
         }
-        await copilot.stopMeetingAndWait()
-        guard let meter else { return }
-        do {
-            try await meter.waitForSettlements()
-        } catch is CancellationError {
-            // Teardown/preemption cancellation is intentional, never an error
-            // state or a user-facing outage.
-        } catch {
-            log.error("meeting spend drain failed: \(String(describing: type(of: error)), privacy: .public)")
-        }
+        await meetingSpendRegistry.remove(meetingID: meetingID)
     }
 
     private func applyLiveAISettings(_ settings: LiveAISettings) async {
         copilot.applyLiveSettings(settings)
-        guard let agent = cachedPostMeetingAgent else { return }
         if !settings.aiFeaturesEnabled {
             artifactGenerationTask?.cancel()
+        } else if activeCopilotMeetingID != nil {
+            let providerSettings = (try? await settingsStore()?.providerSettings()) ?? ProviderSettings()
+            await refreshActiveCopilotProvider(using: providerSettings)
         }
-        await agent.setGenerationEnabled(settings.aiFeaturesEnabled)
+        await cachedPostMeetingAgent?.setGenerationEnabled(settings.aiFeaturesEnabled)
     }
 
     private func configureCopilot(
@@ -612,20 +636,6 @@ final class AppShellCoordinator {
     ) async {
         activeCopilotMeetingID = meetingID
         let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials)
-        guard liveSettings.aiFeaturesEnabled,
-              let profileID = providerSettings.selectedProfileID,
-              let profile = registry.profile(id: profileID),
-              let client = try? registry.client(for: providerSettings)
-        else {
-            copilot.beginMeeting(
-                provider: nil,
-                fastModel: EndpointProfile.deepSeek.fastModel,
-                deepModel: EndpointProfile.deepSeek.deepModel,
-                settings: liveSettings
-            )
-            return
-        }
-
         let ledger: any SpendLedger
         if let liveSpendLedgerOverride {
             ledger = liveSpendLedgerOverride
@@ -644,17 +654,47 @@ final class AppShellCoordinator {
             capUSD: providerSettings.perMeetingCapUSD
         )
         await meetingSpendRegistry.register(meter, meetingID: meetingID)
-        let metered = MeteredProvider(
-            upstream: liveProviderOverride ?? client,
-            meter: meter,
-            meetingID: meetingID
-        )
+        let profile = providerSettings.selectedProfileID.flatMap(registry.profile(id:))
+        let client = (try? registry.client(for: providerSettings)) ?? nil
+        let metered: (any LLMProvider)? = client.map {
+            MeteredProvider(
+                upstream: liveProviderOverride ?? $0,
+                meter: meter,
+                meetingID: meetingID
+            )
+        }
         copilot.beginMeeting(
             provider: metered,
             // Deliberately use the profile defaults, not persisted overrides.
-            fastModel: profile.fastModel,
-            deepModel: profile.deepModel,
+            fastModel: profile?.fastModel ?? EndpointProfile.deepSeek.fastModel,
+            deepModel: profile?.deepModel ?? EndpointProfile.deepSeek.deepModel,
             settings: liveSettings
+        )
+    }
+
+    /// Re-resolves the selected profile and credential at the moment settings
+    /// change. The existing meter is intentionally reused: only transport and
+    /// fixed model defaults change; meeting context and accounting lifetime do
+    /// not.
+    private func refreshActiveCopilotProvider(using settings: ProviderSettings) async {
+        guard let meetingID = activeCopilotMeetingID,
+              let meter = await meetingSpendRegistry.meter(meetingID: meetingID)
+        else { return }
+
+        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials)
+        let profile = settings.selectedProfileID.flatMap(registry.profile(id:))
+        let client = (try? registry.client(for: settings)) ?? nil
+        let metered: (any LLMProvider)? = client.map {
+            MeteredProvider(
+                upstream: liveProviderOverride ?? $0,
+                meter: meter,
+                meetingID: meetingID
+            )
+        }
+        await copilot.replaceProviderAndWait(
+            metered,
+            fastModel: profile?.fastModel ?? EndpointProfile.deepSeek.fastModel,
+            deepModel: profile?.deepModel ?? EndpointProfile.deepSeek.deepModel
         )
     }
 }

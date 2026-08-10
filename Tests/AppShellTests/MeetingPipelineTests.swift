@@ -18,10 +18,12 @@ struct MeetingPipelineTests {
     /// Shared, thread-safe call counters for the fakes.
     actor Counters {
         private(set) var captureStarts = 0
+        private(set) var captureStops = 0
         private(set) var transcribeCalls = 0
         private(set) var pauseCalls = 0
         private(set) var resumeCalls = 0
         func captureStarted() { captureStarts += 1 }
+        func captureStopped() { captureStops += 1 }
         func transcribeCalled() { transcribeCalls += 1 }
         func pauseCalled() { pauseCalls += 1 }
         func resumeCalled() { resumeCalls += 1 }
@@ -102,6 +104,7 @@ struct MeetingPipelineTests {
         func pause() async { await counters.pauseCalled() }
         func resume() async { await counters.resumeCalled() }
         func stop() async {
+            await counters.captureStopped()
             continuation?.finish()
             continuation = nil
         }
