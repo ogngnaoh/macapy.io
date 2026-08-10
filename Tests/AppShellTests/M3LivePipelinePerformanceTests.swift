@@ -30,6 +30,12 @@ private enum M3LivePipelineError: Error {
 @Suite(.serialized, .enabled(if: LiveCredentials.hasDeepSeek))
 struct M3LivePipelinePerformanceTests {
     @Test func triggerToFirstVisibleTokenP95IsUnderThreeSeconds() async throws {
+        try await LiveProviderTestGate.shared.withExclusiveAccess {
+            try await self.runTriggerToFirstVisibleTokenP95IsUnderThreeSeconds()
+        }
+    }
+
+    private func runTriggerToFirstVisibleTokenP95IsUnderThreeSeconds() async throws {
         let key = try #require(LiveCredentials.deepSeekKey)
         let profile = EndpointProfile.deepSeek
         let model = LiveCopilotModel()

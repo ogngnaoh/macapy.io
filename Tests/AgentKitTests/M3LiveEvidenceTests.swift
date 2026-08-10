@@ -42,8 +42,14 @@ private struct TimedClassifierResult: Sendable {
 /// transient latency incident can be rerun without paying for 130 unrelated
 /// quality calls, while neither gate is weakened or averaged across attempts.
 @Suite(.serialized, .enabled(if: LiveCredentials.hasDeepSeek))
-struct M3LiveEvidenceTests {
+struct M3LiveEvidenceTests: Sendable {
     @Test func realDeepSeekFrozenCorpusMeetsQuietGuarantee() async throws {
+        try await LiveProviderTestGate.shared.withExclusiveAccess {
+            try await self.runRealDeepSeekFrozenCorpusMeetsQuietGuarantee()
+        }
+    }
+
+    private func runRealDeepSeekFrozenCorpusMeetsQuietGuarantee() async throws {
         let key = try #require(LiveCredentials.deepSeekKey)
         let corpus = try M3Corpus.load()
         let profile = EndpointProfile.deepSeek
@@ -117,6 +123,12 @@ struct M3LiveEvidenceTests {
     }
 
     @Test func realDeepSeekStageFirstTokenBudgets() async throws {
+        try await LiveProviderTestGate.shared.withExclusiveAccess {
+            try await self.runRealDeepSeekStageFirstTokenBudgets()
+        }
+    }
+
+    private func runRealDeepSeekStageFirstTokenBudgets() async throws {
         let key = try #require(LiveCredentials.deepSeekKey)
         let profile = EndpointProfile.deepSeek
         let client = OpenAICompatibleClient(profile: profile, apiKey: key)
