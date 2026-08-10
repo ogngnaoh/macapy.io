@@ -1,3 +1,4 @@
+import AgentKit
 import CaptureKit
 import Foundation
 import PersistKit
@@ -10,6 +11,31 @@ import TranscribeKit
 
 @MainActor
 struct LiveCopilotCoordinatorTests {
+    private final class DelayFirstCompletionProvider: LLMProvider, @unchecked Sendable {
+        private let upstream: any LLMProvider
+        private let lock = NSLock()
+        private var shouldDelay = true
+
+        init(upstream: any LLMProvider) { self.upstream = upstream }
+
+        func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
+            upstream.stream(request)
+        }
+
+        func completeReportingUsage<T: Decodable>(
+            _ request: CompletionRequest,
+            as type: T.Type
+        ) async throws -> CompletedCall<T> {
+            let completed = try await upstream.completeReportingUsage(request, as: type)
+            let delay = lock.withLock {
+                defer { shouldDelay = false }
+                return shouldDelay
+            }
+            if delay { try await Task.sleep(for: .seconds(30)) }
+            return completed
+        }
+    }
+
     private struct Shell {
         let coordinator: AppShellCoordinator
         let database: MacapyDatabase
@@ -20,7 +46,8 @@ struct LiveCopilotCoordinatorTests {
         ephemeral: Bool = false,
         aiEnabled: Bool = true,
         capUSD: Double? = nil,
-        turnEnded: Bool = true
+        turnEnded: Bool = true,
+        postMeetingProvider: (any LLMProvider)? = nil
     ) async throws -> Shell {
         let database = try MacapyDatabase.inMemory()
         let counters = MeetingPipelineTests.Counters()
@@ -36,6 +63,14 @@ struct LiveCopilotCoordinatorTests {
             counters: counters
         )
         let source = MeetingPipelineTests.FakeCaptureSource(source: .system, counters: counters)
+        let contextOverride: (@Sendable (UUID) async throws -> PostMeetingProviderContext?)?
+        if let postMeetingProvider {
+            contextOverride = { @Sendable _ in
+                PostMeetingProviderContext(provider: postMeetingProvider, model: "fake-model")
+            }
+        } else {
+            contextOverride = nil
+        }
         let coordinator = AppShellCoordinator(
             panel: MeetingPipelineTests.FakePanel(),
             installHotKey: false,
@@ -44,7 +79,8 @@ struct LiveCopilotCoordinatorTests {
             },
             makeDatabase: { database },
             providerProfiles: [.fake(baseURL: server.baseURL)],
-            credentials: InMemoryCredentialStore(keys: ["fake": "sk-test"])
+            credentials: InMemoryCredentialStore(keys: ["fake": "sk-test"]),
+            postMeetingContextOverride: contextOverride
         )
         coordinator.ephemeralNextMeeting = ephemeral
         let settings = try #require(coordinator.settingsStore())
@@ -79,6 +115,18 @@ struct LiveCopilotCoordinatorTests {
         }
         Issue.record("timed out waiting for \(label)")
         return false
+    }
+
+    private func fileSizes(in directory: URL) throws -> [String: Int] {
+        let urls = try FileManager.default.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey, .isRegularFileKey]
+        )
+        return try Dictionary(uniqueKeysWithValues: urls.compactMap { url in
+            let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            guard values.isRegularFile == true else { return nil }
+            return (url.lastPathComponent, values.fileSize ?? 0)
+        })
     }
 
     private static var classifier: FakeOpenAIServer.Response {
@@ -147,6 +195,77 @@ struct LiveCopilotCoordinatorTests {
         #expect(try await shell.coordinator.historyStore()?.listMeetings().isEmpty == true)
     }
 
+    @Test func ephemeralLiveAILeavesOnDiskDatabaseRowsAndSensitiveBytesUntouched() async throws {
+        let canary = "M3_EPHEMERAL_CANARY_7EDB3E6B"
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macapy-ephemeral-live-\(UUID().uuidString)", isDirectory: true)
+        let databaseURL = directory.appendingPathComponent("macapy.sqlite")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try MacapyDatabase.onDisk(at: databaseURL)
+        let server = try FakeOpenAIServer.start(responses: [Self.classifier, Self.answer])
+        defer { server.stop() }
+        let counters = MeetingPipelineTests.Counters()
+        let engine = MeetingPipelineTests.FakeSTTEngine(
+            live: [.system: [
+                .final(Segment(
+                    id: UUID(), source: .system,
+                    text: "Hoang, can you explain \(canary)?",
+                    tStart: 61, tEnd: 62)),
+                .turnEnded,
+            ]],
+            counters: counters
+        )
+        let source = MeetingPipelineTests.FakeCaptureSource(source: .system, counters: counters)
+        let coordinator = AppShellCoordinator(
+            panel: MeetingPipelineTests.FakePanel(),
+            installHotKey: false,
+            makePipeline: { store in
+                MeetingPipeline(engine: engine, sources: [source], store: store)
+            },
+            makeDatabase: { database },
+            providerProfiles: [.fake(baseURL: server.baseURL)],
+            credentials: InMemoryCredentialStore(keys: ["fake": "sk-test"])
+        )
+        coordinator.ephemeralNextMeeting = true
+        let settings = try #require(coordinator.settingsStore())
+        try await settings.setProviderSettings(ProviderSettings(selectedProfileID: "fake"))
+        try await settings.setLiveAISettings(LiveAISettings(preferredName: "Hoang"))
+        try await settings.setPricing(PricingTable(rates: [
+            "fake-model": ModelPricing(
+                inputPerMillionUSD: 1,
+                cachedInputPerMillionUSD: 0.1,
+                outputPerMillionUSD: 2),
+        ]))
+        // Force every persistent store to initialize before the baseline; any
+        // later growth is attributable to the ephemeral meeting itself.
+        _ = try #require(coordinator.historyStore())
+        _ = try #require(coordinator.spendLedger())
+        _ = try #require(coordinator.artifactStore())
+        let before = try fileSizes(in: directory)
+
+        coordinator.toggleSession()
+        await coordinator.settle()
+        await waitUntil("ephemeral on-disk suggestion") {
+            coordinator.copilot.card?.isStreaming == false
+        }
+        coordinator.toggleSession()
+        await coordinator.settle()
+
+        #expect(try await coordinator.historyStore()?.listMeetings().isEmpty == true)
+        #expect(try await coordinator.spendLedger()?.allEntries().isEmpty == true)
+        // Artifacts have a required FK to meetings; assert the direct lookup
+        // too so an accidental orphan/write-path regression is visible.
+        #expect(try await coordinator.artifactStore()?.artifacts(for: UUID()).isEmpty == true)
+        #expect(try fileSizes(in: directory) == before)
+        let needle = Data(canary.utf8)
+        for url in try FileManager.default.contentsOfDirectory(
+            at: directory, includingPropertiesForKeys: nil)
+        {
+            let bytes = try Data(contentsOf: url)
+            #expect(bytes.range(of: needle) == nil, "canary leaked to \(url.lastPathComponent)")
+        }
+    }
+
     @Test func liveSpendAndPostMeetingArtifactShareOneMeetingCap() async throws {
         let server = try FakeOpenAIServer.start(responses: [
             Self.classifier, Self.answer, Self.artifact,
@@ -192,6 +311,13 @@ struct LiveCopilotCoordinatorTests {
 
         #expect(server.recordedRequests.isEmpty)
         #expect(try await shell.coordinator.spendLedger()?.allEntries().isEmpty == true)
+        #expect(!shell.coordinator.copilot.canAsk)
+        let providerSettings = shell.coordinator.providerSettingsModel()
+        await providerSettings.load()
+        await providerSettings.setCap(0.000_000_5)
+        #expect(!shell.coordinator.copilot.canAsk, "lowering the cap must keep the hard pause latched")
+        await providerSettings.setCap(1)
+        #expect(shell.coordinator.copilot.canAsk, "raising the cap admits explicit work again")
         shell.coordinator.toggleSession()
         await shell.coordinator.settle()
     }
@@ -218,5 +344,70 @@ struct LiveCopilotCoordinatorTests {
         let manual = await shell.coordinator.postMeetingAgent()?.generateArtifacts(meetingID: meeting.id)
         #expect(manual == .skippedNoProvider)
         #expect(server.recordedRequests.isEmpty)
+    }
+
+    @Test func globalAIOffCancelsAutomaticArtifactGenerationBeforePersistence() async throws {
+        let server = try FakeOpenAIServer.start(responses: [Self.artifact])
+        defer { server.stop() }
+        let upstream = OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+        let delayed = DelayFirstCompletionProvider(upstream: upstream)
+        let shell = try await makeShell(
+            server: server,
+            turnEnded: false,
+            postMeetingProvider: delayed
+        )
+
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+        shell.coordinator.toggleSession()
+        await waitUntil("automatic artifact request") { server.recordedRequests.count == 1 }
+
+        let settings = shell.coordinator.liveAISettingsModel()
+        await settings.load()
+        await settings.setEnabled(false)
+        await shell.coordinator.settle()
+
+        let meeting = try #require(try await shell.coordinator.historyStore()?.listMeetings().first)
+        #expect(try await shell.coordinator.artifactStore()?.artifacts(for: meeting.id).isEmpty == true)
+        #expect(try await shell.coordinator.historyStore()?.segments(for: meeting.id).count == 1)
+    }
+
+    @Test func globalAIOffCancelsManualArtifactsQuietlyAndManualRetryStillWorks() async throws {
+        let server = try FakeOpenAIServer.start(responses: [Self.artifact, Self.artifact])
+        defer { server.stop() }
+        let upstream = OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+        let delayed = DelayFirstCompletionProvider(upstream: upstream)
+        let shell = try await makeShell(
+            server: server,
+            turnEnded: false,
+            postMeetingProvider: delayed
+        )
+        let meetings = try #require(shell.coordinator.historyStore())
+        let meeting = try await meetings.beginMeeting(startedAt: Date(), ephemeral: false)
+        try await meetings.append(
+            [Segment(
+                id: UUID(), source: .mic, text: "I will send notes.",
+                tStart: 0, tEnd: 1)],
+            to: meeting.id
+        )
+        try await meetings.endMeeting(id: meeting.id, endedAt: Date())
+        let ended = try #require(try await meetings.meeting(id: meeting.id))
+        let detail = shell.coordinator.meetingDetailModel(for: ended)
+        await detail.load()
+
+        let generation = Task { await detail.generate() }
+        await waitUntil("manual artifact request") { server.recordedRequests.count == 1 }
+        let settings = shell.coordinator.liveAISettingsModel()
+        await settings.load()
+        await settings.setEnabled(false)
+        await generation.value
+
+        #expect(detail.state == .pending)
+        #expect(try await shell.coordinator.artifactStore()?.artifacts(for: meeting.id).isEmpty == true)
+
+        await settings.setEnabled(true)
+        await detail.generate()
+        #expect(detail.state == .review)
+        #expect(server.recordedRequests.count == 2)
     }
 }

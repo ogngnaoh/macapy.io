@@ -35,6 +35,10 @@ final class AppShellCoordinator {
     @ObservationIgnored private let makeDatabase: @MainActor () throws -> MacapyDatabase
     @ObservationIgnored private let providerProfiles: [EndpointProfile]
     @ObservationIgnored private let credentials: any CredentialStore
+    /// Test seam for lifecycle tests that must hold a real provider response
+    /// between extraction and persistence. Production always leaves this nil.
+    @ObservationIgnored private let postMeetingContextOverride:
+        (@Sendable (UUID) async throws -> PostMeetingProviderContext?)?
     @ObservationIgnored private var cachedDatabase: MacapyDatabase?
     @ObservationIgnored private var cachedPersistentStore: MeetingStore?
     @ObservationIgnored private var cachedSettingsStore: SettingsStore?
@@ -50,6 +54,7 @@ final class AppShellCoordinator {
     @ObservationIgnored private var pauseHotKey: HotKey?
     @ObservationIgnored private var catchUpHotKey: HotKey?
     @ObservationIgnored private var askHotKey: HotKey?
+    @ObservationIgnored private var dismissCopilotHotKey: HotKey?
     @ObservationIgnored private var pipeline: MeetingPipeline?
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var stopTask: Task<Void, Never>?
@@ -83,13 +88,16 @@ final class AppShellCoordinator {
         makePipeline: @escaping @MainActor (TranscriptStore) -> MeetingPipeline = AppShellCoordinator.productionPipeline,
         makeDatabase: @escaping @MainActor () throws -> MacapyDatabase,
         providerProfiles: [EndpointProfile] = EndpointProfile.wired,
-        credentials: any CredentialStore = KeychainCredentialStore()
+        credentials: any CredentialStore = KeychainCredentialStore(),
+        postMeetingContextOverride:
+            (@Sendable (UUID) async throws -> PostMeetingProviderContext?)? = nil
     ) {
         self.panel = panel
         self.makePipeline = makePipeline
         self.makeDatabase = makeDatabase
         self.providerProfiles = providerProfiles
         self.credentials = credentials
+        self.postMeetingContextOverride = postMeetingContextOverride
         if installHotKey {
             hotKey = HotKey.startStopMeeting { [weak self] in
                 self?.toggleSession()
@@ -102,6 +110,9 @@ final class AppShellCoordinator {
             }
             askHotKey = HotKey.askCopilot { [weak self] in
                 self?.requestAsk()
+            }
+            dismissCopilotHotKey = HotKey.dismissCopilot { [weak self] in
+                self?.requestDismissCopilot()
             }
         }
     }
@@ -168,6 +179,7 @@ final class AppShellCoordinator {
 
     func requestCatchUp() { copilot.requestCatchUp() }
     func requestAsk() { copilot.requestAsk() }
+    func requestDismissCopilot() { copilot.dismissCard() }
 
     private func syncPanel() {
         if session.isCapturing {
@@ -322,7 +334,9 @@ final class AppShellCoordinator {
             ledger: spendLedger(),
             onSettingsChange: { [weak self] settings in
                 guard let self else { return }
-                Task { await self.meetingSpendRegistry.updateCaps(settings.perMeetingCapUSD) }
+                self.copilot.releaseAuthenticationPauseAfterConfigurationChange()
+                let capRaised = await self.meetingSpendRegistry.updateCaps(settings.perMeetingCapUSD)
+                if capRaised { self.copilot.releaseCapPauseAfterCapIncrease() }
             }
         )
         cachedProviderSettingsModel = model
@@ -332,7 +346,7 @@ final class AppShellCoordinator {
     func liveAISettingsModel() -> LiveAISettingsModel {
         if let cachedLiveAISettingsModel { return cachedLiveAISettingsModel }
         let model = LiveAISettingsModel(store: settingsStore()) { [weak self] settings in
-            self?.copilot.applyLiveSettings(settings)
+            await self?.applyLiveAISettings(settings)
         }
         cachedLiveAISettingsModel = model
         return model
@@ -429,9 +443,13 @@ final class AppShellCoordinator {
         else { return nil }
         let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials)
         let meterRegistry = meetingSpendRegistry
+        let contextOverride = postMeetingContextOverride
         let agent = PostMeetingAgent(meetings: meetings, artifacts: artifacts) { meetingID in
             let settings = try await settingsStore.providerSettings()
             guard (try await settingsStore.liveAISettings()).aiFeaturesEnabled else { return nil }
+            if let contextOverride {
+                return try await contextOverride(meetingID)
+            }
             guard let client = try registry.client(for: settings),
                   let profileID = settings.selectedProfileID,
                   let profile = registry.profile(id: profileID)
@@ -499,7 +517,7 @@ final class AppShellCoordinator {
             await previousStop?.value
             // Cancellation and reservation release complete before the
             // post-meeting agent can reuse this meeting's meter.
-            await self?.copilot.stopMeetingAndWait()
+            await self?.drainLiveCopilotBeforePostMeetingGeneration()
             self?.copilotTurnsTask?.cancel()
             self?.copilotTurnsTask = nil
             let liveMeetingID = self?.activeCopilotMeetingID
@@ -543,6 +561,26 @@ final class AppShellCoordinator {
         await stopTask?.value
         await artifactGenerationTask?.value
         await pauseResumeTask?.value
+    }
+
+    /// Teardown's single drain seam. Live work is cancelled and awaited here
+    /// before the post-meeting extractor can reuse the meeting meter.
+    ///
+    /// Integration hook: after ProviderKit's reservation-drain API lands,
+    /// resolve `activeCopilotMeetingID`'s meter and await that drain here,
+    /// immediately after `stopMeetingAndWait()` and before `stopping.stop()`
+    /// returns an id to artifact generation.
+    private func drainLiveCopilotBeforePostMeetingGeneration() async {
+        await copilot.stopMeetingAndWait()
+    }
+
+    private func applyLiveAISettings(_ settings: LiveAISettings) async {
+        copilot.applyLiveSettings(settings)
+        guard let agent = cachedPostMeetingAgent else { return }
+        if !settings.aiFeaturesEnabled {
+            artifactGenerationTask?.cancel()
+        }
+        await agent.setGenerationEnabled(settings.aiFeaturesEnabled)
     }
 
     private func configureCopilot(

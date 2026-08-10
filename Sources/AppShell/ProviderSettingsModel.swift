@@ -34,7 +34,7 @@ final class ProviderSettingsModel {
     @ObservationIgnored private let settingsStore: SettingsStore?
     @ObservationIgnored private let ledger: (any SpendLedger)?
     @ObservationIgnored private let session: URLSession
-    @ObservationIgnored private let onSettingsChange: @MainActor (ProviderSettings) -> Void
+    @ObservationIgnored private let onSettingsChange: @MainActor (ProviderSettings) async -> Void
     @ObservationIgnored private var keyedProfileIDs: Set<String> = []
     @ObservationIgnored private let log = Logger(subsystem: "io.macapy.app", category: "AppShell")
 
@@ -44,7 +44,7 @@ final class ProviderSettingsModel {
         settingsStore: SettingsStore?,
         ledger: (any SpendLedger)?,
         session: URLSession = .shared,
-        onSettingsChange: @escaping @MainActor (ProviderSettings) -> Void = { _ in }
+        onSettingsChange: @escaping @MainActor (ProviderSettings) async -> Void = { _ in }
     ) {
         self.profiles = profiles
         self.credentials = credentials
@@ -143,6 +143,11 @@ final class ProviderSettingsModel {
         refreshKeyedProfiles()
         if settings.selectedProfileID == nil {
             await select(profileID: profileID)
+        } else {
+            // Credential replacement is a material configuration change even
+            // though the settings value itself is unchanged. Notify the live
+            // copilot so an authentication hard-pause can admit a retry.
+            await onSettingsChange(settings)
         }
     }
 
@@ -150,6 +155,7 @@ final class ProviderSettingsModel {
         try? credentials.delete(for: profileID)
         refreshKeyedProfiles()
         connectionTest = .idle
+        await onSettingsChange(settings)
     }
 
     func setModelOverride(_ model: String, tier: ModelTier, for profileID: String) async {
@@ -175,7 +181,7 @@ final class ProviderSettingsModel {
         } catch {
             log.error("failed to persist provider settings: \(error.localizedDescription)")
         }
-        onSettingsChange(settings)
+        await onSettingsChange(settings)
     }
 
     // MARK: - Test connection

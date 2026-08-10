@@ -45,6 +45,9 @@ public actor PostMeetingAgent {
         /// racing the detail pane's Generate button would pass the
         /// existing-artifacts guard twice and insert two sets of rows.
         case skippedGenerationInFlight
+        /// Generation was intentionally cancelled (AI-off or teardown). This
+        /// is a quiet, retryable outcome: no artifact rows were persisted.
+        case cancelled
         /// The per-meeting cap is spent: no request was issued (FR-015).
         case halted(spentUSD: Double, capUSD: Double)
         /// Extraction failed; the typed cause when it was a provider failure.
@@ -63,6 +66,15 @@ public actor PostMeetingAgent {
     public private(set) var lastDraftedInSeconds: Double?
     /// Meetings with a generation currently in flight (reentrancy guard).
     private var generatingMeetingIDs: Set<UUID> = []
+    /// Extraction runs in tracked child tasks so a global AI-off transition
+    /// can cancel both automatic and detail-pane/manual callers. The caller's
+    /// task alone is not sufficient: actor calls are reentrant and may be
+    /// awaited by an unrelated presentation task.
+    private var extractionTasks: [UUID: Task<MeetingExtraction, Error>] = [:]
+    /// False while the global AI kill switch is off. This is checked both at
+    /// admission and immediately before persistence so an already-completed
+    /// provider reply cannot race rows onto disk after cancellation.
+    private var generationEnabled = true
     private let log = Logger(subsystem: "io.macapy.app", category: "AgentKit")
 
     public init(
@@ -79,10 +91,15 @@ public actor PostMeetingAgent {
 
     @discardableResult
     public func generateArtifacts(meetingID: UUID) async -> Outcome {
+        guard generationEnabled, !Task.isCancelled else { return .cancelled }
         guard !generatingMeetingIDs.contains(meetingID) else { return .skippedGenerationInFlight }
         generatingMeetingIDs.insert(meetingID)
-        defer { generatingMeetingIDs.remove(meetingID) }
+        defer {
+            generatingMeetingIDs.remove(meetingID)
+            extractionTasks[meetingID] = nil
+        }
         do {
+            try Task.checkCancellation()
             guard let meeting = try await meetings.meeting(id: meetingID) else {
                 log.error("generate for unknown meeting \(meetingID)")
                 return .failed(nil)
@@ -109,12 +126,20 @@ public actor PostMeetingAgent {
                 model: context.model,
                 chunkBudgetCharacters: chunkBudgetCharacters
             )
-            let extraction = try await extractor.extract(transcript)
+            let extractionTask = Task { try await extractor.extract(transcript) }
+            extractionTasks[meetingID] = extractionTask
+            let extraction = try await extractionTask.value
+            // The kill switch can interleave at every await above. Keep this
+            // checkpoint adjacent to the one transactional persistence call.
+            try Task.checkCancellation()
+            guard generationEnabled else { return .cancelled }
             let rows = try await artifacts.insertDrafts(try extraction.drafts(), meetingID: meetingID)
             let elapsed = Date().timeIntervalSince(startedAt)
             lastDraftedInSeconds = elapsed
             log.info("drafted \(rows.count) artifacts in \(String(format: "%.1f", elapsed))s")
             return .drafted(rows)
+        } catch is CancellationError {
+            return .cancelled
         } catch let error as ProviderError {
             if case .capReached(let spent, let cap) = error {
                 log.info("extraction halted at cap: \(spent, format: .fixed(precision: 4)) of \(cap, format: .fixed(precision: 4)) USD")
@@ -130,5 +155,23 @@ public actor PostMeetingAgent {
             log.error("extraction failed: \(String(describing: type(of: error)), privacy: .public)")
             return .failed(nil)
         }
+    }
+
+    /// Applies the global AI kill switch and, when disabling, drains every
+    /// tracked extraction before returning. A later enable makes generation
+    /// retryable; it never resumes a cancelled call automatically.
+    public func setGenerationEnabled(_ enabled: Bool) async {
+        generationEnabled = enabled
+        guard !enabled else { return }
+        let tasks = Array(extractionTasks.values)
+        for task in tasks { task.cancel() }
+        for task in tasks { _ = await task.result }
+    }
+
+    /// Teardown-only cancellation that does not latch the global switch.
+    public func cancelInFlightGeneration() async {
+        let tasks = Array(extractionTasks.values)
+        for task in tasks { task.cancel() }
+        for task in tasks { _ = await task.result }
     }
 }

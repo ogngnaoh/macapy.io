@@ -8,6 +8,8 @@ import TranscribeKit
 /// timer, bottom-anchored caption-style transcript with attribution gutters.
 /// Volatile lines carry slate + dotted baseline and settle to ink.
 struct PanelView: View {
+    static let dismissShortcutAccessibilityHint = "Keyboard shortcut Option Command D"
+
     @Environment(SessionController.self) private var session
     @Environment(TranscriptStore.self) private var store
     @Environment(LiveCopilotModel.self) private var copilot
@@ -111,8 +113,8 @@ struct PanelView: View {
             Button("Ask") { copilot.requestAsk() }
                 .buttonStyle(.plain)
                 .font(UIType.small)
-                .foregroundStyle(DesignTokens.text)
-                .disabled(copilot.availability == .disabled || copilot.availability == .setupRequired)
+                .foregroundStyle(copilot.canAsk ? DesignTokens.text : DesignTokens.textTertiary)
+                .disabled(!copilot.canAsk)
                 .accessibilityLabel("Ask about this meeting")
                 .accessibilityHint("Keyboard shortcut Option Command K")
             Spacer()
@@ -141,6 +143,7 @@ struct PanelView: View {
                         .buttonStyle(.plain)
                         .font(UIType.small)
                         .accessibilityLabel("Dismiss copilot card")
+                        .accessibilityHint(Self.dismissShortcutAccessibilityHint)
                 }
                 Text(card.text.isEmpty && card.isStreaming ? "Thinking…" : card.text)
                     .font(UIType.body)
@@ -153,10 +156,11 @@ struct PanelView: View {
             .overlay(alignment: .top) { Divider().overlay(DesignTokens.hairline) }
             .focusable()
             .focused($copilotCardFocused)
-            .onHover { copilot.setCardInteractionActive($0) }
+            .onHover { copilot.setCardHovered($0) }
             .onChange(of: copilotCardFocused) { _, focused in
-                copilot.setCardInteractionActive(focused)
+                copilot.setCardFocused(focused)
             }
+            .onExitCommand { copilot.dismissCard() }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Copilot \(cardTitle(card.action))")
         } else if copilot.askPlaceholderVisible {
@@ -168,9 +172,11 @@ struct PanelView: View {
                 Button("Dismiss") { copilot.dismissCard() }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Dismiss Ask placeholder")
+                    .accessibilityHint(Self.dismissShortcutAccessibilityHint)
             }
             .padding(DesignTokens.Space.s3)
             .overlay(alignment: .top) { Divider().overlay(DesignTokens.hairline) }
+            .onExitCommand { copilot.dismissCard() }
         } else if let message = availabilityMessage {
             Text(message)
                 .font(UIType.small)
