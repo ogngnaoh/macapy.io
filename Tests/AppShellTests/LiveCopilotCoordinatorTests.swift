@@ -11,6 +11,58 @@ import TranscribeKit
 
 @MainActor
 struct LiveCopilotCoordinatorTests {
+    private actor BlockingGenerationLedger: SpendLedger {
+        private var entries: [SpendEntry] = []
+        private var generationRelease: CheckedContinuation<Void, Never>?
+        private var shouldBlockGeneration = true
+        private(set) var generationSettlementStarted = false
+
+        func record(_ entry: SpendEntry) async throws {
+            if entry.purpose == .generation, shouldBlockGeneration {
+                generationSettlementStarted = true
+                await withCheckedContinuation { generationRelease = $0 }
+            }
+            entries.append(entry)
+        }
+
+        func totalCostUSD(meetingID: UUID) async throws -> Double {
+            entries
+                .filter { $0.meetingID == meetingID }
+                .compactMap(\.estCostUSD)
+                .reduce(0, +)
+        }
+
+        func releaseGenerationSettlement() {
+            shouldBlockGeneration = false
+            generationRelease?.resume()
+            generationRelease = nil
+        }
+    }
+
+    private struct DeterministicLiveProvider: LLMProvider {
+        func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
+            AsyncThrowingStream { continuation in
+                continuation.yield(.token("Explain the rollback plan."))
+                continuation.yield(.completed(Completion(
+                    finishReason: "stop",
+                    usage: TokenUsage(promptTokens: 30, completionTokens: 6)
+                )))
+                continuation.finish()
+            }
+        }
+
+        func completeReportingUsage<T: Decodable>(
+            _ request: CompletionRequest,
+            as type: T.Type
+        ) async throws -> CompletedCall<T> {
+            let json = #"{"action":"suggest_answer","confidence":0.97,"target":"migration risk"}"#
+            return CompletedCall(
+                value: try JSONDecoder().decode(type, from: Data(json.utf8)),
+                usage: TokenUsage(promptTokens: 20, completionTokens: 5)
+            )
+        }
+    }
+
     private final class DelayFirstCompletionProvider: LLMProvider, @unchecked Sendable {
         private let upstream: any LLMProvider
         private let lock = NSLock()
@@ -47,7 +99,9 @@ struct LiveCopilotCoordinatorTests {
         aiEnabled: Bool = true,
         capUSD: Double? = nil,
         turnEnded: Bool = true,
-        postMeetingProvider: (any LLMProvider)? = nil
+        postMeetingProvider: (any LLMProvider)? = nil,
+        liveProvider: (any LLMProvider)? = nil,
+        liveSpendLedger: (any SpendLedger)? = nil
     ) async throws -> Shell {
         let database = try MacapyDatabase.inMemory()
         let counters = MeetingPipelineTests.Counters()
@@ -80,7 +134,9 @@ struct LiveCopilotCoordinatorTests {
             makeDatabase: { database },
             providerProfiles: [.fake(baseURL: server.baseURL)],
             credentials: InMemoryCredentialStore(keys: ["fake": "sk-test"]),
-            postMeetingContextOverride: contextOverride
+            postMeetingContextOverride: contextOverride,
+            liveProviderOverride: liveProvider,
+            liveSpendLedgerOverride: liveSpendLedger
         )
         coordinator.ephemeralNextMeeting = ephemeral
         let settings = try #require(coordinator.settingsStore())
@@ -291,6 +347,51 @@ struct LiveCopilotCoordinatorTests {
         #expect(try await shell.coordinator.artifactStore()?.artifacts(for: meeting.id).isEmpty == true)
         let purposes = try await shell.coordinator.spendLedger()?.entries(meetingID: meeting.id).map(\.purpose)
         #expect(purposes == [.classifier, .generation])
+    }
+
+    @Test func teardownWaitsForCancelledLiveReservationBeforePostMeetingGeneration() async throws {
+        let server = try FakeOpenAIServer.start(responses: [Self.artifact])
+        defer { server.stop() }
+        let ledger = BlockingGenerationLedger()
+        let postMeeting = OpenAICompatibleClient(
+            profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+        let shell = try await makeShell(
+            server: server,
+            postMeetingProvider: postMeeting,
+            liveProvider: DeterministicLiveProvider(),
+            liveSpendLedger: ledger
+        )
+
+        shell.coordinator.toggleSession()
+        await shell.coordinator.settle()
+        for _ in 0..<300 {
+            if await ledger.generationSettlementStarted { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await ledger.generationSettlementStarted)
+        #expect(server.recordedRequests.isEmpty)
+
+        // Exercise the kill-switch cancellation path while the metered live
+        // stream's detached ledger settlement is deliberately held open, then
+        // re-enable AI so the meeting-end extractor should run once safe.
+        let settings = shell.coordinator.liveAISettingsModel()
+        await settings.load()
+        await settings.setEnabled(false)
+        #expect(shell.coordinator.copilot.availability == .disabled)
+        await settings.setEnabled(true)
+
+        shell.coordinator.toggleSession()
+        let settling = Task { await shell.coordinator.settle() }
+        try? await Task.sleep(for: .milliseconds(100))
+        #expect(server.recordedRequests.isEmpty,
+                "artifact request crossed an unsettled live reservation")
+
+        await ledger.releaseGenerationSettlement()
+        await settling.value
+
+        #expect(server.recordedRequests.count == 1)
+        let meeting = try #require(try await shell.coordinator.historyStore()?.listMeetings().first)
+        #expect(try await shell.coordinator.artifactStore()?.artifacts(for: meeting.id).isEmpty == false)
     }
 
     @Test func ephemeralCapStillStopsAIWithZeroDiskResidue() async throws {
