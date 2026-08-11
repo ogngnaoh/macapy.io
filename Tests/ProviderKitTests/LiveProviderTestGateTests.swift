@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 
 @testable import ProviderTestSupport
@@ -53,6 +54,61 @@ private enum GateProbeError: Error {
 }
 
 struct LiveProviderTestGateTests {
+    @Test func everyCredentialedRealDeepSeekTestUsesTheProcessWideGateExactlyOnce() throws {
+        let testsRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let expectedFiles: Set<String> = [
+            "DeepSeekLiveTests.swift",
+            "M3LiveEvidenceTests.swift",
+            "M3LivePipelinePerformanceTests.swift",
+            "PostMeetingLiveTests.swift",
+            "ProviderLiveFlowTests.swift",
+        ]
+
+        let enumerator = try #require(
+            FileManager.default.enumerator(
+                at: testsRoot,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+        )
+        var credentialedSources: [String: String] = [:]
+
+        for case let sourceURL as URL in enumerator where sourceURL.pathExtension == "swift" {
+            let source = try String(contentsOf: sourceURL, encoding: .utf8)
+            let hasCredentialedSuite = source.split(separator: "\n").contains { line in
+                let declaration = line.trimmingCharacters(in: .whitespaces)
+                return declaration.hasPrefix("@Suite(")
+                    && declaration.contains("LiveCredentials.hasDeepSeek")
+            }
+            if hasCredentialedSuite {
+                credentialedSources[sourceURL.lastPathComponent] = source
+            }
+        }
+
+        #expect(
+            Set(credentialedSources.keys) == expectedFiles,
+            "Every DeepSeek-credentialed suite must be reviewed and listed in the shared-gate contract"
+        )
+
+        for fileName in expectedFiles.sorted() {
+            let source = try #require(credentialedSources[fileName])
+            let testBodies = testSourceSegments(in: source)
+            #expect(!testBodies.isEmpty, "\(fileName) must contain at least one live provider test")
+
+            for body in testBodies {
+                #expect(
+                    occurrenceCount(
+                        of: "LiveProviderTestGate.shared.withExclusiveAccess",
+                        in: body
+                    ) == 1,
+                    "Every credentialed test in \(fileName) must enter the process-wide gate exactly once"
+                )
+            }
+        }
+    }
+
     @Test func concurrentOperationsNeverOverlap() async throws {
         let gate = LiveProviderTestGate()
         let probe = GateProbe()
@@ -180,5 +236,27 @@ struct LiveProviderTestGateTests {
             await Task.yield()
         }
         Issue.record("gate did not reach expected queue depth \(expected)")
+    }
+
+    private func testSourceSegments(in source: String) -> [String] {
+        let lines = source.components(separatedBy: "\n")
+        let starts = lines.indices.filter { index in
+            lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("@Test")
+        }
+
+        return starts.enumerated().map { index, start in
+            let end = index + 1 < starts.count ? starts[index + 1] : lines.endIndex
+            return lines[start..<end].joined(separator: "\n")
+        }
+    }
+
+    private func occurrenceCount(of needle: String, in source: String) -> Int {
+        var count = 0
+        var searchStart = source.startIndex
+        while let range = source.range(of: needle, range: searchStart..<source.endIndex) {
+            count += 1
+            searchStart = range.upperBound
+        }
+        return count
     }
 }
