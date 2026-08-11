@@ -66,6 +66,24 @@ private actor FailedCardClearProjectionGate {
     }
 }
 
+private actor PresentationClearCommitGate {
+    private var waiters: [CheckedContinuation<Void, Never>?] = []
+    private(set) var startedCount = 0
+
+    func wait() async {
+        startedCount += 1
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release(_ index: Int) {
+        guard waiters.indices.contains(index), let waiter = waiters[index] else { return }
+        waiters[index] = nil
+        waiter.resume()
+    }
+}
+
 private final class RecoveryQueueProvider: LLMProvider, @unchecked Sendable {
     enum StructuredOutcome {
         case decision(String)
@@ -169,6 +187,61 @@ struct LiveCopilotRecoveryTests {
             settings: LiveAISettings(sensitivity: .active)
         )
         return model
+    }
+
+    private func exerciseLateOldMeetingClear(
+        model: LiveCopilotModel,
+        gate: PresentationClearCommitGate,
+        iteration: Int
+    ) async {
+        let oldProvider = RecoveryQueueProvider(
+            structured: [],
+            streams: [.failure(partial: "old partial", .transport("late disconnect"))]
+        )
+        model.beginMeeting(
+            provider: oldProvider,
+            fastModel: "old-fast",
+            deepModel: "old-deep",
+            settings: LiveAISettings(sensitivity: .off)
+        )
+        let oldFence = model.presentationClearFenceForTesting
+        await model.setAutomaticSuppressed(true)
+        model.requestAsk()
+        model.queryText = "What did the old meeting decide?"
+        #expect(await model.submitAsk())
+        await waitUntil("old presentation clear checkpoint \(iteration)") {
+            await gate.startedCount == iteration + 1
+        }
+        #expect(oldFence.clearGeneration == 0)
+
+        let expected = "New meeting answer \(iteration)."
+        let newProvider = RecoveryQueueProvider(
+            structured: [],
+            streams: [.completed(expected)]
+        )
+        model.beginMeeting(
+            provider: newProvider,
+            fastModel: "new-fast",
+            deepModel: "new-deep",
+            settings: LiveAISettings(sensitivity: .off)
+        )
+        let newFence = model.presentationClearFenceForTesting
+        #expect(oldFence !== newFence)
+        await model.setAutomaticSuppressed(true)
+        model.requestAsk()
+        model.queryText = "What did the new meeting decide?"
+        #expect(await model.submitAsk())
+        await waitUntil("new meeting visible card \(iteration)") {
+            model.card?.text == expected && model.card?.isStreaming == false
+        }
+
+        await gate.release(iteration)
+        await waitUntil("old fence committed clear \(iteration)") {
+            oldFence.clearGeneration == 1
+        }
+        #expect(newFence.clearGeneration == 0)
+        #expect(model.card?.text == expected)
+        #expect(model.card?.isStreaming == false)
     }
 
     private func turn(_ index: Int) -> TranscriptTurn {
@@ -322,6 +395,35 @@ struct LiveCopilotRecoveryTests {
         await scheduler.release(0)
         await waitUntil("recovery completion") { model.availability == .ready }
         model.stopMeeting()
+    }
+
+    @Test func lateOldMeetingClearCannotEraseVisibleNewMeetingCard() async {
+        let scheduler = ManualRecoveryScheduler()
+        let gate = PresentationClearCommitGate()
+        let model = LiveCopilotModel(
+            waitForRecovery: { delay in await scheduler.wait(delay) },
+            presentationClearCheckpoint: { await gate.wait() }
+        )
+
+        await exerciseLateOldMeetingClear(model: model, gate: gate, iteration: 0)
+        await model.stopMeetingAndWait()
+    }
+
+    @Test func repeatedStopStartKeepsLateClearFencesMeetingLocal() async {
+        let gate = PresentationClearCommitGate()
+        let model = LiveCopilotModel(
+            waitForRecovery: { _ in throw CancellationError() },
+            presentationClearCheckpoint: { await gate.wait() }
+        )
+
+        for iteration in 0..<20 {
+            await exerciseLateOldMeetingClear(
+                model: model,
+                gate: gate,
+                iteration: iteration
+            )
+        }
+        await model.stopMeetingAndWait()
     }
 
     @Test func explicitSuccessClearsDelayAndStaleWakeCannotChangeTheCard() async {
