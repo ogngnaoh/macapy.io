@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import ProviderKit
 import ProviderTestSupport
@@ -109,6 +110,127 @@ struct M3QualityOracleTests {
         #expect(score.commitmentRecallCount == 20)
         #expect(score.passesQuietGuarantee)
         #expect(server.recordedRequests.count == 130, "mic turns must stop before the network")
+
+        for request in server.recordedRequests {
+            let body = try #require(request.jsonBody)
+            #expect(body["model"] as? String == "deepseek-v4-flash")
+            #expect(body["temperature"] as? Double == 0)
+            #expect(body["max_tokens"] as? Int == CopilotClassifier.outputTokenCeiling)
+            #expect((body["thinking"] as? [String: String])?["type"] == "disabled")
+            #expect((body["response_format"] as? [String: String])?["type"] == "json_object")
+        }
+    }
+
+    @Test func blindHoldoutHasPinnedDigestAndAuditableShape() throws {
+        let data = try M3Holdout.data()
+        let digest = SHA256.hash(data: data)
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let manifest = try M3Holdout.digestManifest()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let holdout = try M3Holdout.load()
+        let categories = Dictionary(grouping: holdout, by: \.category).mapValues(\.count)
+
+        #expect(digest == M3Holdout.expectedSHA256)
+        #expect(manifest == "\(M3Holdout.expectedSHA256)  m3-english-proactive-holdout.jsonl")
+        #expect(holdout.count == 140)
+        #expect(Set(holdout.map(\.id)).count == 140)
+        #expect(Set(holdout.map(\.source)).count == 140)
+        #expect(holdout.count { $0.expected == .none } == 100)
+        #expect(holdout.count { $0.expected == .question } == 20)
+        #expect(holdout.count { $0.expected == .commitment } == 20)
+        #expect(categories == [
+            "negative.rhetorical_question": 15,
+            "negative.question_to_other_person": 15,
+            "negative.room_or_undirected_question": 14,
+            "negative.tentative_suggestion_unaccepted": 14,
+            "negative.commitment_other_owner": 14,
+            "negative.ownerless_group_or_passive_work": 14,
+            "negative.mic_or_user_speech": 14,
+            "positive.question_for_preferred_user": 20,
+            "positive.commitment_by_preferred_user": 20,
+        ])
+        #expect(holdout.count { $0.audioSource == .mic } == 14)
+        #expect(holdout.allSatisfy { !$0.source.trimmingCharacters(in: .whitespaces).isEmpty })
+    }
+
+    @Test func deterministicHoldoutWirePipelineMeetsLockedExitGate() async throws {
+        let holdout = try M3Holdout.load()
+        let classified = holdout.filter { $0.audioSource == .system }
+        let responses = try classified.map { entry -> FakeOpenAIServer.Response in
+            let action = entry.expected.evidenceAction.copilotAction
+            let decision = try ClassifierDecision(
+                action: action,
+                confidence: action == nil ? 0.05 : 0.97,
+                target: action == nil ? nil : entry.source
+            )
+            let data = try JSONEncoder().encode(decision)
+            return .json(
+                status: 200,
+                body: OpenAIFixtures.completionBody(
+                    content: String(decoding: data, as: UTF8.self),
+                    model: EndpointProfile.deepSeek.fastModel,
+                    promptTokens: 120,
+                    completionTokens: 24
+                )
+            )
+        }
+        let server = try FakeOpenAIServer.start(responses: responses)
+        defer { server.stop() }
+
+        var profile = EndpointProfile.deepSeek
+        profile.baseURL = server.baseURL
+        let classifier = CopilotClassifier(
+            provider: OpenAICompatibleClient(profile: profile, apiKey: "sk-m3-holdout"),
+            model: profile.fastModel
+        )
+        let configuration = CopilotConfiguration(
+            aiFeaturesEnabled: true,
+            proactiveEnabled: true,
+            confidenceThreshold: M3Evidence.quietThreshold,
+            preferredName: "Hoang",
+            cooldownSeconds: 45
+        )
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        var observations: [M3ObservedDecision] = []
+
+        for entry in holdout {
+            let gate = CopilotGate.evaluate(
+                turn: entry.turn,
+                configuration: configuration,
+                state: CopilotGateState(),
+                now: now
+            )
+            switch gate {
+            case .allowed:
+                let decision = try await classifier.classify(
+                    recentTurns: [entry.turn],
+                    preferredName: configuration.preferredName
+                )
+                observations.append(M3ObservedDecision(
+                    id: entry.id,
+                    expected: entry.expected.evidenceAction,
+                    observed: M3Evidence.admittedAction(decision)
+                ))
+            case .rejected(.userSource):
+                #expect(entry.audioSource == .mic)
+                observations.append(M3ObservedDecision(
+                    id: entry.id,
+                    expected: entry.expected.evidenceAction,
+                    observed: nil
+                ))
+            case .rejected(let reason):
+                Issue.record("Unexpected holdout gate rejection for \(entry.id): \(reason)")
+            }
+        }
+
+        let score = M3QualityScore.score(observations)
+        try M3Evidence.printJSON("fake_holdout_quality", score)
+        #expect(score.falsePositiveCount == 0)
+        #expect(score.questionRecallCount == 20)
+        #expect(score.commitmentRecallCount == 20)
+        #expect(score.passesQuietGuarantee)
+        #expect(server.recordedRequests.count == 126, "mic turns must stop before the network")
 
         for request in server.recordedRequests {
             let body = try #require(request.jsonBody)

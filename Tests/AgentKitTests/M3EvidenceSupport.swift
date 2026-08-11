@@ -84,6 +84,83 @@ enum M3Corpus {
     }
 }
 
+enum M3HoldoutExpectedAction: String, Codable, Sendable {
+    case none
+    case question
+    case commitment
+
+    var evidenceAction: M3ExpectedAction {
+        switch self {
+        case .none: .none
+        case .question: .suggestAnswer
+        case .commitment: .flagCommitment
+        }
+    }
+}
+
+struct M3HoldoutEntry: Codable, Sendable, Equatable {
+    let id: String
+    let category: String
+    let source: String
+    let expected: M3HoldoutExpectedAction
+
+    var audioSource: AudioSource {
+        category == "negative.mic_or_user_speech" ? .mic : .system
+    }
+
+    var turn: CopilotTurn {
+        CopilotTurn(
+            source: audioSource,
+            text: source,
+            tStart: 0,
+            tEnd: 1
+        )
+    }
+}
+
+/// Independent, blind-authored exit authority. The development corpus above
+/// remains useful regression coverage, but it is not the release verdict.
+enum M3Holdout {
+    static let expectedSHA256 =
+        "eb91d91c3989e919f2c988a8093d5f858afce2760a32532fb8c32a526d530a84"
+
+    static func load() throws -> [M3HoldoutEntry] {
+        try String(decoding: data(), as: UTF8.self)
+            .split(whereSeparator: \.isNewline)
+            .map { line in
+                try JSONDecoder().decode(M3HoldoutEntry.self, from: Data(line.utf8))
+            }
+    }
+
+    static func data() throws -> Data {
+        try Data(contentsOf: requiredFixtureURL(
+            resource: "m3-english-proactive-holdout",
+            extension: "jsonl"
+        ))
+    }
+
+    static func digestManifest() throws -> String {
+        try String(contentsOf: requiredFixtureURL(
+            resource: "m3-english-proactive-holdout",
+            extension: "sha256"
+        ), encoding: .utf8)
+    }
+
+    private static func requiredFixtureURL(resource: String, extension: String) throws -> URL {
+        guard let url = Bundle.module.url(
+            forResource: resource,
+            withExtension: `extension`,
+            subdirectory: "Fixtures"
+        ) ?? Bundle.module.url(
+            forResource: resource,
+            withExtension: `extension`
+        ) else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        return url
+    }
+}
+
 struct M3ObservedDecision: Sendable {
     let id: String
     let expected: M3ExpectedAction
