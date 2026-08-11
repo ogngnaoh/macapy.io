@@ -9,10 +9,20 @@ private struct M3LiveQualityReport: Codable, Sendable, Equatable {
     let provider: String
     let classifierModel: String
     let temperature: Double
+    let holdoutSHA256: String
+    let holdoutRows: Int
+    let localGateRejections: Int
     let transientRetries: Int
-    let estimatedCalls: Int
+    let networkCalls: Int
     let estimatedCostUSD: Double
     let quality: M3QualityScore
+    let observations: [M3LiveQualityObservation]
+}
+
+private struct M3LiveQualityObservation: Codable, Sendable, Equatable {
+    let id: String
+    let expected: String
+    let observed: String
 }
 
 private struct M3LiveLatencyEvidenceReport: Codable, Sendable, Equatable {
@@ -37,21 +47,21 @@ private struct TimedClassifierResult: Sendable {
     let retries: Int
 }
 
-/// Credential-gated and serialized so the corpus and timing authorities never
+/// Credential-gated and serialized so the holdout and timing authorities never
 /// become a request storm. Quality and service timing are separate tests: a
 /// transient latency incident can be rerun without paying for 130 unrelated
 /// quality calls, while neither gate is weakened or averaged across attempts.
 @Suite(.serialized, .enabled(if: LiveCredentials.hasDeepSeek))
 struct M3LiveEvidenceTests: Sendable {
-    @Test func realDeepSeekFrozenCorpusMeetsQuietGuarantee() async throws {
+    @Test func realDeepSeekFrozenHoldoutMeetsQuietGuarantee() async throws {
         try await LiveProviderTestGate.shared.withExclusiveAccess {
-            try await self.runRealDeepSeekFrozenCorpusMeetsQuietGuarantee()
+            try await self.runRealDeepSeekFrozenHoldoutMeetsQuietGuarantee()
         }
     }
 
-    private func runRealDeepSeekFrozenCorpusMeetsQuietGuarantee() async throws {
+    private func runRealDeepSeekFrozenHoldoutMeetsQuietGuarantee() async throws {
         let key = try #require(LiveCredentials.deepSeekKey)
-        let corpus = try M3Corpus.load()
+        let holdout = try M3Holdout.load()
         let profile = EndpointProfile.deepSeek
         let classifier = CopilotClassifier(
             provider: OpenAICompatibleClient(profile: profile, apiKey: key),
@@ -66,9 +76,12 @@ struct M3LiveEvidenceTests: Sendable {
         )
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         var observations: [M3ObservedDecision] = []
+        var reportedObservations: [M3LiveQualityObservation] = []
         var transientRetries = 0
+        var classifiedRows = 0
+        var localGateRejections = 0
 
-        for entry in corpus {
+        for entry in holdout {
             let gate = CopilotGate.evaluate(
                 turn: entry.turn,
                 configuration: configuration,
@@ -77,22 +90,35 @@ struct M3LiveEvidenceTests: Sendable {
             )
             switch gate {
             case .allowed:
+                classifiedRows += 1
                 let timed = try await classifyWithRetry(
                     classifier,
                     turn: entry.turn,
                     preferredName: configuration.preferredName
                 )
                 transientRetries += timed.retries
+                let observed = M3Evidence.admittedAction(timed.decision)
                 observations.append(M3ObservedDecision(
                     id: entry.id,
-                    expected: entry.expected,
-                    observed: M3Evidence.admittedAction(timed.decision)
+                    expected: entry.expected.evidenceAction,
+                    observed: observed
+                ))
+                reportedObservations.append(M3LiveQualityObservation(
+                    id: entry.id,
+                    expected: entry.expected.evidenceAction.rawValue,
+                    observed: observed?.rawValue ?? "none"
                 ))
             case .rejected(.userSource):
+                localGateRejections += 1
                 observations.append(M3ObservedDecision(
                     id: entry.id,
-                    expected: entry.expected,
+                    expected: entry.expected.evidenceAction,
                     observed: nil
+                ))
+                reportedObservations.append(M3LiveQualityObservation(
+                    id: entry.id,
+                    expected: entry.expected.evidenceAction.rawValue,
+                    observed: "none"
                 ))
             case .rejected(let reason):
                 Issue.record("Unexpected live gate rejection for \(entry.id): \(reason)")
@@ -100,23 +126,31 @@ struct M3LiveEvidenceTests: Sendable {
         }
 
         let quality = M3QualityScore.score(observations)
+        let networkCalls = classifiedRows + transientRetries
         let report = M3LiveQualityReport(
             provider: profile.id,
             classifierModel: profile.fastModel,
             temperature: 0,
+            holdoutSHA256: M3Holdout.expectedSHA256,
+            holdoutRows: holdout.count,
+            localGateRejections: localGateRejections,
             transientRetries: transientRetries,
-            estimatedCalls: 130,
+            networkCalls: networkCalls,
             estimatedCostUSD: M3Evidence.estimatedCostUSD(
                 model: profile.fastModel,
                 promptTokens: 900,
                 completionTokens: CopilotClassifier.outputTokenCeiling,
-                calls: 130
+                calls: networkCalls
             ),
-            quality: quality
+            quality: quality,
+            observations: reportedObservations
         )
-        try M3Evidence.printJSON("live_quality", report)
+        try M3Evidence.printJSON("live_holdout_quality", report)
 
-        #expect(report.estimatedCalls == 130)
+        #expect(report.holdoutRows == 140)
+        #expect(report.observations.count == 140)
+        #expect(report.localGateRejections == 14)
+        #expect(report.networkCalls >= 126)
         #expect(report.estimatedCostUSD < 0.25)
         #expect(quality.passesQuietGuarantee)
         #expect(transientRetries <= 5, "more than five transient retries is an upstream service incident")
