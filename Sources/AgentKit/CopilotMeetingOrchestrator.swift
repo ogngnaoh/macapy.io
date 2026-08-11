@@ -231,8 +231,15 @@ public actor CopilotMeetingOrchestrator {
         await startRollingSummaryIfEligible()
     }
 
-    public func updateConfiguration(_ updated: CopilotConfiguration) async {
-        guard active else { return }
+    /// Applies one configuration revision and returns the authoritative domain
+    /// availability after the revision commits. Event delivery remains useful
+    /// for observation, but callers do not need to race that delivery before
+    /// admitting a command enabled by this configuration.
+    @discardableResult
+    public func updateConfiguration(
+        _ updated: CopilotConfiguration
+    ) async -> CopilotMeetingAvailability {
+        guard active else { return .disabled }
         configuration.aiFeaturesEnabled = updated.aiFeaturesEnabled
         configuration.proactiveEnabled = updated.proactiveEnabled
         configuration.confidenceThreshold = updated.confidenceThreshold
@@ -246,10 +253,11 @@ public actor CopilotMeetingOrchestrator {
             await arbiter.cancelAll()
             await contextManager.clearGeneratedSummary()
             emit(.rollingSummary(nil))
-            return
+            return availability
         }
         if !updated.proactiveEnabled { await cancelProactiveWorkAndPresentation() }
         if card == nil { restoreAvailability() }
+        return availability
     }
 
     public func setAutomaticSuppressed(_ suppressed: Bool) async {

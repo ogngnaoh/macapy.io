@@ -135,6 +135,7 @@ final class LiveCopilotModel {
     @ObservationIgnored private let providerReplacementCheckpoint: (@Sendable (UUID) async -> Void)?
     @ObservationIgnored private let explicitAdmissionCheckpoint: (@Sendable () async -> Void)?
     @ObservationIgnored private let workAttachCheckpoint: (@Sendable () async -> Void)?
+    @ObservationIgnored private let eventProjectionCheckpoint: (@Sendable (CopilotMeetingEvent) async -> Void)?
     @ObservationIgnored private let diagnosticsNow: @Sendable () -> Date
 
     /// Stable object retained by diagnostics after a meeting ends. AgentKit
@@ -153,6 +154,7 @@ final class LiveCopilotModel {
         providerReplacementCheckpoint: (@Sendable (UUID) async -> Void)? = nil,
         explicitAdmissionCheckpoint: (@Sendable () async -> Void)? = nil,
         workAttachCheckpoint: (@Sendable () async -> Void)? = nil,
+        eventProjectionCheckpoint: (@Sendable (CopilotMeetingEvent) async -> Void)? = nil,
         suggestionLatencyRecorder: SuggestionLatencyRecorder = SuggestionLatencyRecorder(),
         diagnosticsNow: @escaping @Sendable () -> Date = Date.init
     ) {
@@ -162,6 +164,7 @@ final class LiveCopilotModel {
         self.providerReplacementCheckpoint = providerReplacementCheckpoint
         self.explicitAdmissionCheckpoint = explicitAdmissionCheckpoint
         self.workAttachCheckpoint = workAttachCheckpoint
+        self.eventProjectionCheckpoint = eventProjectionCheckpoint
         self.suggestionLatencyRecorder = suggestionLatencyRecorder
         self.diagnosticsNow = diagnosticsNow
     }
@@ -216,6 +219,7 @@ final class LiveCopilotModel {
             : (provider == nil ? .setupRequired : .ready)
         eventTask = Task { @MainActor [weak self, domain] in
             for await event in await domain.eventsStream() {
+                await self?.eventProjectionCheckpoint?(event)
                 guard !Task.isCancelled, self?.orchestrator === domain else { return }
                 self?.project(event)
             }
@@ -237,7 +241,13 @@ final class LiveCopilotModel {
             card = nil
             resetCardInteraction()
         }
-        await orchestrator.updateConfiguration(configuration)
+        let committedAvailability = await orchestrator.updateConfiguration(configuration)
+        guard self.orchestrator === orchestrator else { return }
+        // Configuration is a command boundary, not an eventually-consistent
+        // presentation update. Commit its authoritative admission state before
+        // returning so an immediately following Catch Up/Ask cannot lose a
+        // race with the AsyncStream projection task.
+        project(.availability(committedAvailability))
     }
 
     func replaceProviderAndWait(
@@ -459,6 +469,7 @@ private extension LiveCopilotModel {
         switch event {
         case .availability(let value):
             if !configuration.aiFeaturesEnabled, value != .disabled { return }
+            if configuration.aiFeaturesEnabled, value == .disabled { return }
             if awaitingRecoveryProjectionCount != nil {
                 switch value {
                 case .ready, .working: return

@@ -81,6 +81,25 @@ private actor ProviderReplacementGate {
     }
 }
 
+private actor DisabledAvailabilityProjectionGate {
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var released = false
+    private(set) var started = false
+
+    func checkpoint(_ event: CopilotMeetingEvent) async {
+        guard case .availability(.disabled) = event, !started else { return }
+        started = true
+        guard !released else { return }
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func release() {
+        released = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
 private struct ImmediateTextProvider: LLMProvider {
     let text: String
 
@@ -305,6 +324,50 @@ struct LiveCopilotModelTests {
         #expect(model.card == nil)
         #expect(model.availability == .disabled)
         #expect(!model.canCatchUp)
+    }
+
+    @Test func reenableCommitsAvailabilityBeforeQueuedDisabledProjection() async {
+        let projectionGate = DisabledAvailabilityProjectionGate()
+        let meetingID = UUID()
+        let model = LiveCopilotModel(
+            eventProjectionCheckpoint: { await projectionGate.checkpoint($0) }
+        )
+        model.beginMeeting(
+            meetingID: meetingID,
+            provider: ImmediateTextProvider(text: "old provider"),
+            fastModel: "old-fast",
+            deepModel: "old-deep",
+            settings: LiveAISettings(sensitivity: .off)
+        )
+        await model.receive(
+            turn(source: .mic, text: "retained context", start: 0, end: 61),
+            userSpeaking: false
+        )
+
+        await model.applyLiveSettings(LiveAISettings(aiFeaturesEnabled: false))
+        for _ in 0..<300 where !(await projectionGate.started) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await projectionGate.started)
+        await model.replaceProviderAndWait(
+            ImmediateTextProvider(text: "replacement catch-up"),
+            fastModel: "new-fast",
+            deepModel: "new-deep",
+            expectedMeetingID: meetingID,
+            replacementID: UUID()
+        )
+        await model.applyLiveSettings(
+            LiveAISettings(aiFeaturesEnabled: true, sensitivity: .off)
+        )
+
+        #expect(model.canCatchUp)
+        #expect(await model.contextSnapshotForTesting().allTurns.count == 1)
+        model.requestCatchUp()
+        await projectionGate.release()
+        await waitUntil("replacement catch-up") {
+            model.card?.text == "replacement catch-up" && model.card?.isStreaming == false
+        }
+        await waitUntil("replacement availability") { model.availability == .ready }
     }
 
     @Test func overlappingHoverAndFocusDoNotResumeExpiryUntilBothEnd() async throws {

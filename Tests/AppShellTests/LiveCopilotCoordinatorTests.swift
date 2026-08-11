@@ -925,7 +925,9 @@ struct LiveCopilotCoordinatorTests {
             shell.coordinator.copilot.card?.isStreaming == false
         }
         #expect(server.recordedRequests.count == 3)
-        #expect(server.recordedRequests[2].headers["authorization"] == "Bearer sk-after-off")
+        if server.recordedRequests.indices.contains(2) {
+            #expect(server.recordedRequests[2].headers["authorization"] == "Bearer sk-after-off")
+        }
         shell.coordinator.toggleSession()
         await shell.coordinator.settle()
     }
