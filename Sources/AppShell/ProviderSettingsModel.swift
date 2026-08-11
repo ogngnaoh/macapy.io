@@ -45,6 +45,9 @@ final class ProviderSettingsModel {
     @ObservationIgnored private let settingsStore: SettingsStore?
     @ObservationIgnored private let ledger: (any SpendLedger)?
     @ObservationIgnored private let session: URLSession
+    /// Test-only transport seam. Production always leaves this `nil` and
+    /// constructs the selected profile through `ProviderRegistry`.
+    @ObservationIgnored private let connectionTestProviderOverride: (any LLMProvider)?
     @ObservationIgnored private let onSettingsChange:
         @MainActor (ProviderSettings, ProviderSettingsChange) async -> Void
     @ObservationIgnored private var keyedProfileIDs: Set<String> = []
@@ -56,6 +59,7 @@ final class ProviderSettingsModel {
         settingsStore: SettingsStore?,
         ledger: (any SpendLedger)?,
         session: URLSession = .shared,
+        connectionTestProvider: (any LLMProvider)? = nil,
         onSettingsChange: @escaping @MainActor (ProviderSettings, ProviderSettingsChange) async -> Void = { _, _ in }
     ) {
         self.profiles = profiles
@@ -63,6 +67,7 @@ final class ProviderSettingsModel {
         self.settingsStore = settingsStore
         self.ledger = ledger
         self.session = session
+        self.connectionTestProviderOverride = connectionTestProvider
         self.onSettingsChange = onSettingsChange
     }
 
@@ -206,11 +211,19 @@ final class ProviderSettingsModel {
     /// in the ledger like any other call — it spends the user's money, so it
     /// belongs in the Spend tab (`meetingID` is nil: there's no meeting yet).
     func testConnection() async {
-        guard let profile = selectedProfile, let client = try? registry.client(for: settings) else {
+        guard let profile = selectedProfile else {
+            connectionTest = .failed("Choose a provider first.")
+            return
+        }
+
+        let client: any LLMProvider
+        if let connectionTestProviderOverride {
+            client = connectionTestProviderOverride
+        } else if let configuredClient = try? registry.client(for: settings) {
+            client = configuredClient
+        } else {
             connectionTest = .failed(
-                selectedProfile == nil
-                    ? "Choose a provider first."
-                    : "Add an API key for this provider first."
+                "Add an API key for this provider first."
             )
             return
         }
@@ -236,11 +249,48 @@ final class ProviderSettingsModel {
 
         do {
             var reply = ""
+            var terminalCount = 0
+            var terminalReason: String?
+            var eventAfterTerminal = false
+
+            // Drain the stream before deciding its disposition. In particular,
+            // MeteredProvider settles reported usage immediately before it
+            // releases `.completed`; stopping early would race spend booking.
             for try await event in provider.stream(request) {
-                if case .token(let token) = event { reply += token }
+                switch event {
+                case .token(let token):
+                    guard terminalCount == 0 else {
+                        eventAfterTerminal = true
+                        continue
+                    }
+                    reply += token
+                case .reasoning:
+                    if terminalCount > 0 { eventAfterTerminal = true }
+                case .completed(let completion):
+                    terminalCount += 1
+                    if terminalCount == 1 {
+                        terminalReason = ProviderError.safeTerminalReason(completion.finishReason)
+                    }
+                }
             }
+            try Task.checkCancellation()
+
+            guard terminalCount == 1, !eventAfterTerminal else {
+                throw ProviderError.malformedResponse("stream did not contain exactly one final completion")
+            }
+            guard terminalReason == "stop" else {
+                throw ProviderError.truncated(
+                    finishReason: ProviderError.safeTerminalReason(terminalReason)
+                )
+            }
+
             let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-            connectionTest = .succeeded(text.isEmpty ? "Connected." : text)
+            guard !text.isEmpty else {
+                throw ProviderError.malformedResponse("natural completion contained no answer text")
+            }
+            connectionTest = .succeeded(text)
+        } catch is CancellationError {
+            connectionTest = .idle
         } catch {
             connectionTest = .failed((error as? ProviderError)?.userMessage ?? "The call failed.")
         }
