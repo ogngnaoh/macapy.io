@@ -21,6 +21,19 @@ final class AppShellCoordinator {
         case startupBeforeCommit(UUID)
         case providerRefreshBeforeReplacement(UUID)
     }
+
+    private enum CaptureActivity: Sendable, Equatable {
+        case capturing
+        case paused
+
+        @MainActor
+        func matches(_ session: SessionController) -> Bool {
+            switch self {
+            case .capturing: session.isCapturing
+            case .paused: session.isPaused
+            }
+        }
+    }
     let session = SessionController()
     /// App-lifetime, stable identity (the panel's hosting view is cached, so the
     /// observed object must not be swapped out).
@@ -80,6 +93,15 @@ final class AppShellCoordinator {
     @ObservationIgnored private var startTask: Task<Void, Never>?
     @ObservationIgnored private var stopTask: Task<Void, Never>?
     @ObservationIgnored private var pauseResumeTask: Task<Void, Never>?
+    /// Pause/resume transitions form one transitive tail. The revision is the
+    /// synchronously updated desired-state authority; the applied state tracks
+    /// what the current pipeline's capture sources have actually completed.
+    /// Keeping both prevents a skipped stale pause from being followed by an
+    /// unnecessary resume, while a pause that was already in flight is always
+    /// compensated by the serialized successor.
+    @ObservationIgnored private var pauseResumeRevision: UInt64 = 0
+    @ObservationIgnored private var pauseResumePipeline: MeetingPipeline?
+    @ObservationIgnored private var appliedCaptureActivity: CaptureActivity?
     /// Every post-capture tail remains tracked until it finishes. A single
     /// "latest" task is insufficient: cancelling an overwritten successor
     /// does not cancel the predecessor it is awaiting.
@@ -213,21 +235,96 @@ final class AppShellCoordinator {
         switch session.state {
         case .capturing:
             session.pause()
-            let pausing = pipeline
-            pauseResumeTask = Task { [weak self] in
-                await self?.copilot.setAutomaticSuppressed(true)
-                await pausing?.pause()
-            }
+            enqueueCaptureActivity(.paused)
         case .paused:
             session.resume()
-            let resuming = pipeline
-            pauseResumeTask = Task { [weak self] in
-                await self?.copilot.setAutomaticSuppressed(false)
-                await resuming?.resume()
-            }
+            enqueueCaptureActivity(.capturing)
         case .idle:
             break
         }
+    }
+
+    /// Serializes capture-layer pause/resume operations and fences every
+    /// admission against the latest synchronous SessionController state.
+    /// `previous` is deliberately awaited even when it has become stale: an
+    /// AudioCaptureSource operation may already be suspended inside system
+    /// capture and cannot be assumed cancellation-cooperative. The successor
+    /// therefore observes the actual completed state and restores the newest
+    /// desired state in order.
+    private func enqueueCaptureActivity(_ target: CaptureActivity) {
+        guard let transitioning = pipeline else { return }
+        pauseResumeRevision &+= 1
+        let revision = pauseResumeRevision
+        let previous = pauseResumeTask
+        let startup = startTask
+        pauseResumeTask = Task { @MainActor [weak self] in
+            await previous?.value
+            // A pause can be requested immediately after the synchronous
+            // session start. Do not call a source before pipeline.start() has
+            // installed it; teardown cancels this startup and awaits this tail.
+            await startup?.value
+            guard let self,
+                  self.isCurrentCaptureActivity(
+                    target,
+                    revision: revision,
+                    pipeline: transitioning
+                  )
+            else { return }
+
+            switch target {
+            case .paused:
+                // Suppress automatic work before halting capture. A newer
+                // desired state still chains behind this whole transition.
+                await self.copilot.setAutomaticSuppressed(true)
+                guard self.isCurrentCaptureActivity(
+                    target,
+                    revision: revision,
+                    pipeline: transitioning
+                ) else { return }
+                if self.appliedCaptureActivity != .paused {
+                    await transitioning.pause()
+                    self.recordAppliedCaptureActivity(.paused, pipeline: transitioning)
+                }
+
+            case .capturing:
+                if self.appliedCaptureActivity != .capturing {
+                    await transitioning.resume()
+                    self.recordAppliedCaptureActivity(.capturing, pipeline: transitioning)
+                }
+                guard self.isCurrentCaptureActivity(
+                    target,
+                    revision: revision,
+                    pipeline: transitioning
+                ) else { return }
+                // Resume capture first, then permit automatic work. If this
+                // transition became stale while the source was suspended, the
+                // guard leaves suppression intact for the queued pause.
+                await self.copilot.setAutomaticSuppressed(false)
+            }
+        }
+    }
+
+    private func isCurrentCaptureActivity(
+        _ target: CaptureActivity,
+        revision: UInt64,
+        pipeline expectedPipeline: MeetingPipeline
+    ) -> Bool {
+        pauseResumeRevision == revision
+            && pipeline === expectedPipeline
+            && pauseResumePipeline === expectedPipeline
+            && target.matches(session)
+    }
+
+    /// Physical capture completion is recorded even when the request became
+    /// stale during its source await. The next serialized transition needs
+    /// that fact to decide whether compensation is required. Never let an old
+    /// pipeline write through a newer meeting's ownership boundary.
+    private func recordAppliedCaptureActivity(
+        _ activity: CaptureActivity,
+        pipeline completedPipeline: MeetingPipeline
+    ) {
+        guard pauseResumePipeline === completedPipeline else { return }
+        appliedCaptureActivity = activity
     }
 
     func requestCatchUp() { copilot.requestCatchUp() }
@@ -259,6 +356,8 @@ final class AppShellCoordinator {
         let previousStop = stopTask
         let newPipeline = makePipeline(store)
         pipeline = newPipeline
+        pauseResumePipeline = newPipeline
+        appliedCaptureActivity = .capturing
         latestLatencyRecorder = newPipeline.recorder
         latestSTTErrorCounter = newPipeline.sttErrorCounter
         latestDroppedChunks = 0
@@ -667,6 +766,15 @@ final class AppShellCoordinator {
         guard let stopping = pipeline else { return }
         latestDroppedChunks = stopping.droppedChunks
         pipeline = nil
+        // Idle is authoritative immediately. Invalidate pending admissions and
+        // detach the applied-state owner so an old source completion cannot
+        // write into a subsequently created meeting's state.
+        pauseResumeRevision &+= 1
+        let inFlightPauseResume = pauseResumeTask
+        if pauseResumePipeline === stopping {
+            pauseResumePipeline = nil
+            appliedCaptureActivity = nil
+        }
         lifecycleEpoch &+= 1
         stopping.markStopped()  // synchronous: a suspended start() bails at its checkpoint
         let inFlightStart = startTask
@@ -697,6 +805,13 @@ final class AppShellCoordinator {
             }
             self?.activeCopilotMeetingID = nil
             self?.activeCopilotLifecycleEpoch = nil
+            // A source pause/resume may ignore task cancellation while inside
+            // platform capture. Live AI is already stopped above; now drain
+            // the source transition before stop(), and therefore before a
+            // later meeting (whose start awaits this stop tail) can touch
+            // capture. The revision fence prevents stale presentation changes
+            // after SessionController moved to idle.
+            await inFlightPauseResume?.value
             let endedMeetingID = await stopping.stop()
             guard let self else { return }
             // A newer pipeline may already own the retained diagnostics by the
@@ -839,7 +954,13 @@ final class AppShellCoordinator {
         while let task = artifactGenerationTasks.values.first {
             await task.value
         }
-        await pauseResumeTask?.value
+        // The tail is transitive, and the revision loop also catches a newer
+        // transition enqueued while an earlier await yielded.
+        while true {
+            let revision = pauseResumeRevision
+            await pauseResumeTask?.value
+            if revision == pauseResumeRevision { break }
+        }
     }
 
     /// Focused lifecycle-test seam: waits until capture teardown has handed
