@@ -6,6 +6,47 @@ import Testing
 
 @testable import AppShell
 
+private struct ScriptedConnectionProvider: LLMProvider {
+    let events: [LLMEvent]
+
+    func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
+        AsyncThrowingStream { continuation in
+            for event in events { continuation.yield(event) }
+            continuation.finish()
+        }
+    }
+
+    func completeReportingUsage<T: Decodable>(
+        _ request: CompletionRequest,
+        as type: T.Type
+    ) async throws -> CompletedCall<T> {
+        throw ProviderError.malformedResponse("unused scripted structured call")
+    }
+}
+
+private struct WaitingConnectionProvider: LLMProvider {
+    func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
+        AsyncThrowingStream { continuation in
+            let task = Task {
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+            continuation.onTermination = { _ in task.cancel() }
+        }
+    }
+
+    func completeReportingUsage<T: Decodable>(
+        _ request: CompletionRequest,
+        as type: T.Type
+    ) async throws -> CompletedCall<T> {
+        throw ProviderError.malformedResponse("unused waiting structured call")
+    }
+}
+
 /// The Providers/Spend screens' logic, minus SwiftUI: which profiles read as
 /// configured, what "test connection" reports, and that selecting a provider
 /// survives a relaunch. The visual side is author-walked (live checks 9–10).
@@ -15,8 +56,9 @@ struct ProviderSettingsModelTests {
     private func model(
         server: FakeOpenAIServer? = nil,
         keys: [String: String] = [:],
-        ledger: InMemorySpendLedger = InMemorySpendLedger(),
-        settingsStore: SettingsStore? = nil
+        ledger: (any SpendLedger)? = InMemorySpendLedger(),
+        settingsStore: SettingsStore? = nil,
+        connectionTestProvider: (any LLMProvider)? = nil
     ) throws -> ProviderSettingsModel {
         let profiles: [EndpointProfile] = [
             server.map { .fake(baseURL: $0.baseURL) } ?? .deepSeek,
@@ -26,7 +68,8 @@ struct ProviderSettingsModelTests {
             profiles: profiles,
             credentials: InMemoryCredentialStore(keys: keys),
             settingsStore: try settingsStore ?? SettingsStore(database: MacapyDatabase.inMemory()),
-            ledger: ledger
+            ledger: ledger,
+            connectionTestProvider: connectionTestProvider
         )
     }
 
@@ -168,6 +211,127 @@ struct ProviderSettingsModelTests {
             return
         }
         #expect(text.contains("OK"))
+    }
+
+    @Test func testConnectionRejectsAnEmptyNaturalStopInsteadOfClaimingConnected() async throws {
+        let server = try FakeOpenAIServer.start(responses: [
+            .sse(frames: [
+                OpenAIFixtures.finish(reason: "stop", promptTokens: 8, completionTokens: 0),
+                OpenAIFixtures.done,
+            ])
+        ])
+        defer { server.stop() }
+        let model = try model(server: server, keys: ["fake": "sk-test"])
+        await model.load()
+        await model.select(profileID: "fake")
+
+        await model.testConnection()
+
+        guard case .failed(let message) = model.connectionTest else {
+            Issue.record("an empty reply must not be reported as connected: \(model.connectionTest)")
+            return
+        }
+        #expect(message == ProviderError.malformedResponse("ignored").userMessage)
+    }
+
+    @Test(arguments: ["length", "content_filter", "provider-secret-terminal"])
+    func testConnectionRejectsEveryNonStopTerminalAndClearsPartialReply(reason: String) async throws {
+        let partial = "SECRET_PARTIAL_REPLY"
+        let server = try FakeOpenAIServer.start(responses: [
+            .sse(frames: [
+                OpenAIFixtures.contentDelta(partial),
+                OpenAIFixtures.finish(
+                    reason: reason,
+                    promptTokens: 8,
+                    completionTokens: 3
+                ),
+                OpenAIFixtures.done,
+            ])
+        ])
+        defer { server.stop() }
+        let ledger = InMemorySpendLedger()
+        let model = try model(
+            server: server,
+            keys: ["fake": "sk-test"],
+            ledger: ledger
+        )
+        await model.load()
+        await model.select(profileID: "fake")
+
+        await model.testConnection()
+
+        guard case .failed(let message) = model.connectionTest else {
+            Issue.record("non-stop terminal must fail: \(model.connectionTest)")
+            return
+        }
+        #expect(message == ProviderError.truncated(finishReason: "unknown").userMessage)
+        #expect(!message.contains(partial))
+        #expect(!message.contains(reason))
+        #expect(await ledger.entries.count == 1,
+                "the stream must be drained through metering before its terminal disposition is rejected")
+    }
+
+    @Test func testConnectionRejectsAStreamWithoutATerminalAndClearsPartialReply() async throws {
+        let partial = "SECRET_PARTIAL_REPLY"
+        let provider = ScriptedConnectionProvider(events: [.token(partial)])
+        let model = try model(
+            keys: ["deepseek": "sk-test"],
+            ledger: nil,
+            connectionTestProvider: provider
+        )
+        await model.load()
+        await model.select(profileID: "deepseek")
+
+        await model.testConnection()
+
+        guard case .failed(let message) = model.connectionTest else {
+            Issue.record("missing terminal must fail: \(model.connectionTest)")
+            return
+        }
+        #expect(message == ProviderError.malformedResponse("ignored").userMessage)
+        #expect(!message.contains(partial))
+    }
+
+    @Test func testConnectionRejectsDuplicateTerminalsAndNeverPublishesPartialReply() async throws {
+        let partial = "SECRET_PARTIAL_REPLY"
+        let provider = ScriptedConnectionProvider(events: [
+            .token(partial),
+            .completed(.init(finishReason: "stop", usage: nil)),
+            .completed(.init(finishReason: "stop", usage: nil)),
+        ])
+        let model = try model(
+            keys: ["deepseek": "sk-test"],
+            ledger: nil,
+            connectionTestProvider: provider
+        )
+        await model.load()
+        await model.select(profileID: "deepseek")
+
+        await model.testConnection()
+
+        guard case .failed(let message) = model.connectionTest else {
+            Issue.record("duplicate terminal must fail: \(model.connectionTest)")
+            return
+        }
+        #expect(message == ProviderError.malformedResponse("ignored").userMessage)
+        #expect(!message.contains(partial))
+    }
+
+    @Test func cancellingTestConnectionReturnsQuietlyToIdle() async throws {
+        let model = try model(
+            keys: ["deepseek": "sk-test"],
+            ledger: nil,
+            connectionTestProvider: WaitingConnectionProvider()
+        )
+        await model.load()
+        await model.select(profileID: "deepseek")
+
+        let call = Task { await model.testConnection() }
+        await Task.yield()
+        call.cancel()
+        await call.value
+
+        #expect(model.connectionTest == .idle)
     }
 
     @Test func testConnectionReportsAPlainMessageWhenTheKeyIsRejected() async throws {
