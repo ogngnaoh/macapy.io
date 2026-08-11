@@ -31,6 +31,12 @@ struct ProviderLiveFlowTests {
     private static let account = "deepseek"
 
     @Test func keyLifecycleSpendBookingAndNoDiskResidue() async throws {
+        try await LiveProviderTestGate.shared.withExclusiveAccess {
+            try await self.runKeyLifecycleSpendBookingAndNoDiskResidue()
+        }
+    }
+
+    private func runKeyLifecycleSpendBookingAndNoDiskResidue() async throws {
         let key = try #require(LiveCredentials.deepSeekKey)
 
         let dbDir = FileManager.default.temporaryDirectory

@@ -39,6 +39,12 @@ struct DeepSeekLiveTests {
     /// reports no usage would silently produce a ledger of zero-cost rows and
     /// a cap that never trips (FR-015).
     @Test func streamsTokensAndReportsUsageFromTheRealEndpoint() async throws {
+        try await LiveProviderTestGate.shared.withExclusiveAccess {
+            try await self.runStreamsTokensAndReportsUsageFromTheRealEndpoint()
+        }
+    }
+
+    private func runStreamsTokensAndReportsUsageFromTheRealEndpoint() async throws {
         let key = try #require(LiveCredentials.deepSeekKey)
 
         var tokens = ""
@@ -68,6 +74,12 @@ struct DeepSeekLiveTests {
     /// copy is written off that case, so a mismatch here would show a user the
     /// wrong explanation for the most common setup mistake there is.
     @Test func aRejectedKeyMapsToATypedHTTPErrorNotAParseFailure() async throws {
+        try await LiveProviderTestGate.shared.withExclusiveAccess {
+            try await self.runARejectedKeyMapsToATypedHTTPErrorNotAParseFailure()
+        }
+    }
+
+    private func runARejectedKeyMapsToATypedHTTPErrorNotAParseFailure() async throws {
         var caught: (any Error)?
         do {
             for try await _ in client(key: "sk-000000000000000000000000000000").stream(tinyRequest(maxTokens: 1)) {}
