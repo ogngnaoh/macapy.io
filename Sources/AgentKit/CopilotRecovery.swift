@@ -1,6 +1,20 @@
 import Foundation
 import ProviderKit
 
+/// Text-free synchronous diagnostics mirror for recovery polling. The
+/// per-meeting orchestrator is its only writer; presentation uses typed events.
+public final class CopilotRecoveryDiagnostics: @unchecked Sendable {
+    private let lock = NSLock()
+    private var count = 0
+
+    public init() {}
+    public var transientFailureCount: Int { lock.withLock { count } }
+
+    func setTransientFailureCount(_ value: Int) {
+        lock.withLock { count = value }
+    }
+}
+
 /// Deterministic recovery timing for live, automatic copilot work. The first
 /// four failures use exponential backoff; every later failure remains capped
 /// at five minutes.
