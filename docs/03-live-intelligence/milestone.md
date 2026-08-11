@@ -1,6 +1,6 @@
 # Milestone 03 — Live Intelligence
 
-**Status:** ACTIVE 2026-08-10 (plan and automated acceptance model approved before implementation)
+**Status:** ACTIVE — implementation clear at `04e4870`; final live DeepSeek holdout and post-refactor G2 evidence pending
 **References:** ../../PRD.md FR-004–FR-007, FR-015; ../../SPEC.md §6.4, G2, G5, G6
 
 ## Goal
@@ -40,7 +40,7 @@ During a meeting, macapy quietly recognizes a direct question or an explicit com
 |---|---|---|---|
 | 1 | Copilot actions and safety | [plan/record](./slice-01-copilot-actions.md) | closed 2026-08-11 |
 | 2 | Rolling context and Ask | [plan/record](./slice-02-context-and-query.md) | closed 2026-08-11 |
-| 3 | Trust, diagnostics, and close-out | [plan/record](./slice-03-trust-and-closeout.md) | active |
+| 3 | Trust, diagnostics, and close-out | [plan/record](./slice-03-trust-and-closeout.md) | ready for final live evidence |
 
 ## Exit criteria
 
