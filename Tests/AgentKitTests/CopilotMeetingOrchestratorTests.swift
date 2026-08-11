@@ -22,6 +22,27 @@ private actor OrchestratorGate {
     }
 }
 
+private actor FirstOrchestratorReplacementGate {
+    private var callCount = 0
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var released = false
+    private(set) var firstStarted = false
+
+    func wait() async {
+        callCount += 1
+        guard callCount == 1 else { return }
+        firstStarted = true
+        guard !released else { return }
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        released = true
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
 private actor OrchestratorRecoveryScheduler {
     private(set) var delays: [TimeInterval] = []
     private var continuations: [CheckedContinuation<Void, Never>?] = []
@@ -149,6 +170,7 @@ struct CopilotMeetingOrchestratorTests {
         proactive: Bool = true,
         recorder: SuggestionLatencyRecorder = SuggestionLatencyRecorder(),
         scheduler: OrchestratorRecoveryScheduler? = nil,
+        providerReplacementCheckpoint: (@Sendable (UUID) async -> Void)? = nil,
         explicitCheckpoint: (@Sendable () async -> Void)? = nil,
         diagnosticsNow: @escaping @Sendable () -> Date = Date.init
     ) -> CopilotMeetingOrchestrator {
@@ -165,6 +187,7 @@ struct CopilotMeetingOrchestratorTests {
             waitForRecovery: { delay in
                 if let scheduler { await scheduler.wait(delay) }
             },
+            providerReplacementCheckpoint: providerReplacementCheckpoint,
             explicitAdmissionCheckpoint: explicitCheckpoint,
             diagnosticsNow: diagnosticsNow
         )
@@ -305,6 +328,39 @@ struct CopilotMeetingOrchestratorTests {
         await waitUntil("new provider request") { newProvider.requests.count == 1 }
         #expect(newProvider.requests.first?.model == "new-deep")
         #expect(await orchestrator.contextSnapshot().allTurns.count == 1)
+        await orchestrator.stop()
+    }
+
+    @Test func providerReplacementReturnsOnlyTheWinningAuthoritativeState() async {
+        let gate = FirstOrchestratorReplacementGate()
+        let orchestrator = make(
+            provider: OrchestratorProvider(),
+            proactive: false,
+            providerReplacementCheckpoint: { _ in await gate.wait() }
+        )
+        let staleProvider = OrchestratorProvider(streamed: [.completed("stale")])
+        let stale = Task {
+            await orchestrator.replaceProvider(
+                staleProvider,
+                models: CopilotMeetingModels(fast: "stale-fast", deep: "stale-deep"),
+                replacementID: UUID()
+            )
+        }
+        await waitUntil("first provider replacement") { await gate.firstStarted }
+
+        let winner = await orchestrator.replaceProvider(
+            nil,
+            models: CopilotMeetingModels(fast: "winning-fast", deep: "winning-deep"),
+            replacementID: UUID()
+        )
+        await gate.release()
+
+        #expect(winner == .committed(CopilotMeetingProviderState(
+            providerAvailable: false,
+            models: CopilotMeetingModels(fast: "winning-fast", deep: "winning-deep"),
+            availability: .setupRequired
+        )))
+        #expect(await stale.value == .superseded)
         await orchestrator.stop()
     }
 

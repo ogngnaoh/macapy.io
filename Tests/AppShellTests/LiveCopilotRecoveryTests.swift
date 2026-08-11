@@ -42,6 +42,30 @@ private actor TerminalStreamGate {
     }
 }
 
+private actor FailedCardClearProjectionGate {
+    private var sawPartial = false
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var released = false
+    private(set) var started = false
+
+    func checkpoint(_ event: CopilotMeetingEvent) async {
+        if case .card(let card?) = event, card.text == "unsafe query" {
+            sawPartial = true
+            return
+        }
+        guard sawPartial, case .card(nil) = event, !started else { return }
+        started = true
+        guard !released else { return }
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func release() {
+        released = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
 private final class RecoveryQueueProvider: LLMProvider, @unchecked Sendable {
     enum StructuredOutcome {
         case decision(String)
@@ -131,11 +155,12 @@ struct LiveCopilotRecoveryTests {
     private func model(
         provider: any LLMProvider,
         scheduler: ManualRecoveryScheduler,
-        meetingID: UUID = UUID()
+        meetingID: UUID = UUID(),
+        eventProjectionCheckpoint: (@Sendable (CopilotMeetingEvent) async -> Void)? = nil
     ) -> LiveCopilotModel {
         let model = LiveCopilotModel(waitForRecovery: { delay in
             await scheduler.wait(delay)
-        })
+        }, eventProjectionCheckpoint: eventProjectionCheckpoint)
         model.beginMeeting(
             meetingID: meetingID,
             provider: provider,
@@ -266,6 +291,36 @@ struct LiveCopilotRecoveryTests {
         await scheduler.release(1)
         await waitUntil("current recovery") { model.availability == .ready }
         #expect(provider.calls == (structured: 1, stream: 1))
+        model.stopMeeting()
+    }
+
+    @Test func recoveryFenceClearsPartialBeforeBlockedRollbackProjection() async {
+        let scheduler = ManualRecoveryScheduler()
+        let projectionGate = FailedCardClearProjectionGate()
+        let provider = RecoveryQueueProvider(
+            structured: [],
+            streams: [.terminal(partial: "unsafe query", reason: "length")]
+        )
+        let model = model(
+            provider: provider,
+            scheduler: scheduler,
+            eventProjectionCheckpoint: { await projectionGate.checkpoint($0) }
+        )
+        await model.setAutomaticSuppressed(true)
+        model.requestAsk()
+        model.queryText = "What decision did we make?"
+        #expect(await model.submitAsk())
+
+        await waitUntil("blocked rollback with observable recovery") {
+            let blocked = await projectionGate.started
+            let delays = await scheduler.delays
+            return blocked && delays == [30]
+        }
+        #expect(model.card == nil, "the authoritative fence must hide partial text")
+
+        await projectionGate.release()
+        await scheduler.release(0)
+        await waitUntil("recovery completion") { model.availability == .ready }
         model.stopMeeting()
     }
 

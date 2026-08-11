@@ -55,8 +55,52 @@ public enum CopilotMeetingEvent: Sendable, Equatable {
     case availability(CopilotMeetingAvailability)
     case latestTranscriptTime(TimeInterval)
     case card(CopilotMeetingCard?)
+    case presentationCleared(UInt64)
     case rollingSummary(String?)
     case recoveryFailureCount(Int)
+}
+
+public struct CopilotMeetingProviderState: Sendable, Equatable {
+    public let providerAvailable: Bool
+    public let models: CopilotMeetingModels
+    public let availability: CopilotMeetingAvailability
+
+    public init(
+        providerAvailable: Bool,
+        models: CopilotMeetingModels,
+        availability: CopilotMeetingAvailability
+    ) {
+        self.providerAvailable = providerAvailable
+        self.models = models
+        self.availability = availability
+    }
+}
+
+/// Ownership result for a same-meeting transport replacement. Only a
+/// committed result may change a projection adapter; superseded arguments are
+/// deliberately not echoed back as state.
+public enum CopilotProviderReplacementOutcome: Sendable, Equatable {
+    case committed(CopilotMeetingProviderState)
+    case superseded
+    case inactive
+}
+
+/// Text-free ownership fence for a domain-authoritative presentation clear.
+/// A projection adapter uses the generation only to reject stale card events;
+/// no meeting or provider content crosses this synchronous boundary.
+public final class CopilotPresentationClearFence: @unchecked Sendable {
+    private let lock = NSLock()
+    private var generation: UInt64 = 0
+
+    public init() {}
+    public var clearGeneration: UInt64 { lock.withLock { generation } }
+
+    func markCleared() -> UInt64 {
+        lock.withLock {
+            generation &+= 1
+            return generation
+        }
+    }
 }
 
 private actor CopilotProviderTaskStartGate {
@@ -92,6 +136,7 @@ public actor CopilotMeetingOrchestrator {
     public nonisolated let preferredNameSnapshot: String?
     public nonisolated let suggestionLatencyRecorder: SuggestionLatencyRecorder
     public nonisolated let recoveryDiagnostics: CopilotRecoveryDiagnostics
+    public nonisolated let presentationClearFence: CopilotPresentationClearFence
 
     private var provider: (any LLMProvider)?
     private var models: CopilotMeetingModels
@@ -134,6 +179,7 @@ public actor CopilotMeetingOrchestrator {
         models: CopilotMeetingModels,
         suggestionLatencyRecorder: SuggestionLatencyRecorder = SuggestionLatencyRecorder(),
         recoveryDiagnostics: CopilotRecoveryDiagnostics = CopilotRecoveryDiagnostics(),
+        presentationClearFence: CopilotPresentationClearFence = CopilotPresentationClearFence(),
         recoveryPolicy: CopilotRecoveryPolicy = .default,
         waitForRecovery: @escaping @Sendable (TimeInterval) async throws -> Void = { delay in
             try await Task.sleep(for: .seconds(delay))
@@ -150,6 +196,7 @@ public actor CopilotMeetingOrchestrator {
         self.models = models
         self.suggestionLatencyRecorder = suggestionLatencyRecorder
         self.recoveryDiagnostics = recoveryDiagnostics
+        self.presentationClearFence = presentationClearFence
         self.recoveryController = CopilotRecoveryController(policy: recoveryPolicy)
         self.waitForRecovery = waitForRecovery
         self.providerReplacementCheckpoint = providerReplacementCheckpoint
@@ -379,12 +426,13 @@ public actor CopilotMeetingOrchestrator {
         if active { restoreAvailability() }
     }
 
+    @discardableResult
     public func replaceProvider(
         _ replacement: (any LLMProvider)?,
         models newModels: CopilotMeetingModels,
         replacementID: UUID
-    ) async {
-        guard active else { return }
+    ) async -> CopilotProviderReplacementOutcome {
+        guard active else { return .inactive }
         desiredProviderReplacementID = replacementID
         cancelRecovery()
         // Invalidates a command suspended before lease admission even though
@@ -399,7 +447,8 @@ public actor CopilotMeetingOrchestrator {
         if let activeLease { await arbiter.cancel(activeLease) }
         await providerReplacementCheckpoint?(meetingID)
         await inFlight?.value
-        guard active, desiredProviderReplacementID == replacementID else { return }
+        guard active else { return .inactive }
+        guard desiredProviderReplacementID == replacementID else { return .superseded }
 
         provider = replacement
         models = newModels
@@ -413,6 +462,11 @@ public actor CopilotMeetingOrchestrator {
             hardPause = .authenticationOrConfiguration
         }
         if !completedRequested { restoreAvailability() }
+        return .committed(CopilotMeetingProviderState(
+            providerAvailable: replacement != nil,
+            models: models,
+            availability: resolvedAvailability()
+        ))
     }
 
     public func releaseAuthenticationPause() {
@@ -993,9 +1047,11 @@ private extension CopilotMeetingOrchestrator {
 
     func latch(_ error: any Error, clearPresentation: Bool) {
         if clearPresentation {
+            let clearGeneration = presentationClearFence.markCleared()
             card = nil
             presentationLease = nil
             emit(.card(nil))
+            emit(.presentationCleared(clearGeneration))
         }
         switch recoveryController.policy.disposition(for: error) {
         case .cap:
@@ -1079,22 +1135,22 @@ private extension CopilotMeetingOrchestrator {
     }
 
     func restoreAvailability() {
-        guard active, configuration.aiFeaturesEnabled else {
-            availability = .disabled
-            emit(.availability(.disabled))
-            return
-        }
+        availability = resolvedAvailability()
+        emit(.availability(availability))
+    }
+
+    func resolvedAvailability() -> CopilotMeetingAvailability {
+        guard active, configuration.aiFeaturesEnabled else { return .disabled }
         switch hardPause {
         case .authenticationOrConfiguration:
-            availability = .setupRequired
+            return .setupRequired
         case .cap:
-            availability = .paused("AI paused — meeting cap reached.")
+            return .paused("AI paused — meeting cap reached.")
         case .transient(let message):
-            availability = .paused(message)
+            return .paused(message)
         case nil:
-            availability = provider == nil ? .setupRequired : .ready
+            return provider == nil ? .setupRequired : .ready
         }
-        emit(.availability(availability))
     }
 
     func setCard(_ newCard: CopilotMeetingCard, lease: CopilotWorkLease) {

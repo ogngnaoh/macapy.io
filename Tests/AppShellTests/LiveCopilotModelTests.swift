@@ -81,6 +81,27 @@ private actor ProviderReplacementGate {
     }
 }
 
+private actor FirstProviderReplacementGate {
+    private var callCount = 0
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var released = false
+    private(set) var firstStarted = false
+
+    func wait(meetingID _: UUID) async {
+        callCount += 1
+        guard callCount == 1 else { return }
+        firstStarted = true
+        guard !released else { return }
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func release() {
+        released = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
 private actor DisabledAvailabilityProjectionGate {
     private var releaseContinuation: CheckedContinuation<Void, Never>?
     private var released = false
@@ -172,6 +193,56 @@ struct LiveCopilotModelTests {
                 reason: "stop", promptTokens: 30, completionTokens: 6),
             OpenAIFixtures.done,
         ])
+    }
+
+    private func assertLatestProviderReplacementWins(
+        staleHasProvider: Bool,
+        winningHasProvider: Bool
+    ) async {
+        let gate = FirstProviderReplacementGate()
+        let meetingID = UUID()
+        let model = LiveCopilotModel(
+            providerReplacementCheckpoint: { await gate.wait(meetingID: $0) }
+        )
+        model.beginMeeting(
+            meetingID: meetingID,
+            provider: ImmediateTextProvider(text: "initial"),
+            fastModel: "initial-fast",
+            deepModel: "initial-deep",
+            settings: LiveAISettings(sensitivity: .off)
+        )
+        let staleProvider: (any LLMProvider)? = staleHasProvider
+            ? ImmediateTextProvider(text: "stale") : nil
+        let winningProvider: (any LLMProvider)? = winningHasProvider
+            ? ImmediateTextProvider(text: "winner") : nil
+
+        let stale = Task { @MainActor in
+            await model.replaceProviderAndWait(
+                staleProvider,
+                fastModel: "stale-fast",
+                deepModel: "stale-deep",
+                expectedMeetingID: meetingID,
+                replacementID: UUID()
+            )
+        }
+        for _ in 0..<300 where !(await gate.firstStarted) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await gate.firstStarted)
+
+        await model.replaceProviderAndWait(
+            winningProvider,
+            fastModel: "winning-fast",
+            deepModel: "winning-deep",
+            expectedMeetingID: meetingID,
+            replacementID: UUID()
+        )
+        await gate.release()
+        await stale.value
+
+        #expect(model.canAsk == winningHasProvider)
+        #expect(model.availability == (winningHasProvider ? .ready : .setupRequired))
+        model.stopMeeting()
     }
 
     @Test func quietSystemTurnClassifiesThenStreamsOneProactiveCard() async throws {
@@ -491,6 +562,20 @@ struct LiveCopilotModelTests {
         await waitUntil("meeting B catch-up") { model.card?.isStreaming == false }
         #expect(model.card?.text == "Meeting B provider",
                 "the drained replacement for A must not become reachable from B")
+    }
+
+    @Test func newerNilProviderWinsOverSuspendedValidReplacement() async {
+        await assertLatestProviderReplacementWins(
+            staleHasProvider: true,
+            winningHasProvider: false
+        )
+    }
+
+    @Test func newerValidProviderWinsOverSuspendedNilReplacement() async {
+        await assertLatestProviderReplacementWins(
+            staleHasProvider: false,
+            winningHasProvider: true
+        )
     }
 
     @Test func cancelledExpiryCannotDismissAReplacementRequestedCard() async throws {

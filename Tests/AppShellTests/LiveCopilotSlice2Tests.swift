@@ -486,10 +486,14 @@ struct LiveCopilotSlice2Tests {
 
     @Test func providerReplacementCancelsPendingCatchUpBeforeItCapturesOldGenerator() async {
         let gate = Slice2OneShotGate()
+        let replacementGate = Slice2OneShotGate()
         let oldProvider = Slice2QueuedProvider(streams: [.init(text: "old provider")])
         let newProvider = Slice2QueuedProvider(streams: [.init(text: "new provider")])
         let meetingID = UUID()
-        let model = LiveCopilotModel(explicitAdmissionCheckpoint: { await gate.wait() })
+        let model = LiveCopilotModel(
+            providerReplacementCheckpoint: { _ in await replacementGate.wait() },
+            explicitAdmissionCheckpoint: { await gate.wait() }
+        )
         model.beginMeeting(
             meetingID: meetingID,
             provider: oldProvider,
@@ -511,7 +515,9 @@ struct LiveCopilotSlice2Tests {
             )
         }
         #expect(oldProvider.requests.isEmpty)
+        await waitForGate(replacementGate, "provider replacement did not take ownership")
         await gate.release()
+        await replacementGate.release()
         await replacement.value
         #expect(oldProvider.requests.isEmpty)
 
