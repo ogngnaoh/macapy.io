@@ -143,6 +143,7 @@ final class LiveCopilotModel {
     @ObservationIgnored private let providerReplacementCheckpoint: (@Sendable (UUID) async -> Void)?
     @ObservationIgnored private let explicitAdmissionCheckpoint: (@Sendable () async -> Void)?
     @ObservationIgnored private let workAttachCheckpoint: (@Sendable () async -> Void)?
+    @ObservationIgnored private let presentationClearCheckpoint: (@Sendable () async -> Void)?
     @ObservationIgnored private let eventProjectionCheckpoint: (@Sendable (CopilotMeetingEvent) async -> Void)?
     @ObservationIgnored private let diagnosticsNow: @Sendable () -> Date
 
@@ -150,7 +151,7 @@ final class LiveCopilotModel {
     /// writes only opaque lease ids and timestamps into it.
     @ObservationIgnored let suggestionLatencyRecorder: SuggestionLatencyRecorder
     @ObservationIgnored private let recoveryDiagnostics = CopilotRecoveryDiagnostics()
-    @ObservationIgnored private let presentationClearFence = CopilotPresentationClearFence()
+    @ObservationIgnored private var presentationClearFence = CopilotPresentationClearFence()
 
     init(
         proactiveLifetime: TimeInterval = 25,
@@ -163,6 +164,7 @@ final class LiveCopilotModel {
         providerReplacementCheckpoint: (@Sendable (UUID) async -> Void)? = nil,
         explicitAdmissionCheckpoint: (@Sendable () async -> Void)? = nil,
         workAttachCheckpoint: (@Sendable () async -> Void)? = nil,
+        presentationClearCheckpoint: (@Sendable () async -> Void)? = nil,
         eventProjectionCheckpoint: (@Sendable (CopilotMeetingEvent) async -> Void)? = nil,
         suggestionLatencyRecorder: SuggestionLatencyRecorder = SuggestionLatencyRecorder(),
         diagnosticsNow: @escaping @Sendable () -> Date = Date.init
@@ -173,6 +175,7 @@ final class LiveCopilotModel {
         self.providerReplacementCheckpoint = providerReplacementCheckpoint
         self.explicitAdmissionCheckpoint = explicitAdmissionCheckpoint
         self.workAttachCheckpoint = workAttachCheckpoint
+        self.presentationClearCheckpoint = presentationClearCheckpoint
         self.eventProjectionCheckpoint = eventProjectionCheckpoint
         self.suggestionLatencyRecorder = suggestionLatencyRecorder
         self.diagnosticsNow = diagnosticsNow
@@ -199,7 +202,9 @@ final class LiveCopilotModel {
     ) {
         stopMeeting()
         suggestionLatencyRecorder.reset()
-        observedPresentationClearGeneration = presentationClearFence.clearGeneration
+        let meetingPresentationClearFence = CopilotPresentationClearFence()
+        presentationClearFence = meetingPresentationClearFence
+        observedPresentationClearGeneration = meetingPresentationClearFence.clearGeneration
         let preferredName = Self.normalizedName(settings.preferredName)
         configuration = CopilotConfiguration(
             aiFeaturesEnabled: settings.aiFeaturesEnabled,
@@ -215,11 +220,12 @@ final class LiveCopilotModel {
             models: CopilotMeetingModels(fast: fastModel, deep: deepModel),
             suggestionLatencyRecorder: suggestionLatencyRecorder,
             recoveryDiagnostics: recoveryDiagnostics,
-            presentationClearFence: presentationClearFence,
+            presentationClearFence: meetingPresentationClearFence,
             waitForRecovery: waitForRecovery,
             providerReplacementCheckpoint: providerReplacementCheckpoint,
             explicitAdmissionCheckpoint: explicitAdmissionCheckpoint,
             workAttachCheckpoint: workAttachCheckpoint,
+            presentationClearCheckpoint: presentationClearCheckpoint,
             diagnosticsNow: diagnosticsNow
         )
         orchestrator = domain
@@ -472,6 +478,10 @@ final class LiveCopilotModel {
             availability = .paused("AI paused — the provider call failed.")
         }
         return transientRecoveryCount
+    }
+
+    var presentationClearFenceForTesting: CopilotPresentationClearFence {
+        presentationClearFence
     }
 }
 

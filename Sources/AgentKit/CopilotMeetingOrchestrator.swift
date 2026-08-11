@@ -170,6 +170,7 @@ public actor CopilotMeetingOrchestrator {
     private let providerReplacementCheckpoint: (@Sendable (UUID) async -> Void)?
     private let explicitAdmissionCheckpoint: (@Sendable () async -> Void)?
     private let workAttachCheckpoint: (@Sendable () async -> Void)?
+    private let presentationClearCheckpoint: (@Sendable () async -> Void)?
     private let diagnosticsNow: @Sendable () -> Date
 
     public init(
@@ -187,6 +188,7 @@ public actor CopilotMeetingOrchestrator {
         providerReplacementCheckpoint: (@Sendable (UUID) async -> Void)? = nil,
         explicitAdmissionCheckpoint: (@Sendable () async -> Void)? = nil,
         workAttachCheckpoint: (@Sendable () async -> Void)? = nil,
+        presentationClearCheckpoint: (@Sendable () async -> Void)? = nil,
         diagnosticsNow: @escaping @Sendable () -> Date = Date.init
     ) throws {
         self.meetingID = meetingID
@@ -202,6 +204,7 @@ public actor CopilotMeetingOrchestrator {
         self.providerReplacementCheckpoint = providerReplacementCheckpoint
         self.explicitAdmissionCheckpoint = explicitAdmissionCheckpoint
         self.workAttachCheckpoint = workAttachCheckpoint
+        self.presentationClearCheckpoint = presentationClearCheckpoint
         self.diagnosticsNow = diagnosticsNow
         self.contextManager = try CopilotContextManager(
             stablePrefix: Self.stablePrefix(preferredName: configuration.preferredName)
@@ -865,7 +868,7 @@ private extension CopilotMeetingOrchestrator {
         cancelSuggestionTrigger(for: lease)
         guard await owns(lease, revision: revision) else { return }
         guard await finish(lease, revision: revision, retainCard: false) else { return }
-        latch(error, clearPresentation: true)
+        await latch(error, clearPresentation: true)
     }
 
     func finishBackgroundAfterFailure(
@@ -875,7 +878,7 @@ private extension CopilotMeetingOrchestrator {
     ) async {
         guard await owns(lease, revision: revision) else { return }
         guard await finish(lease, revision: revision, retainCard: false) else { return }
-        latch(error, clearPresentation: false)
+        await latch(error, clearPresentation: false)
     }
 
     func beginAutomaticLease(_ lease: CopilotWorkLease) -> UInt64 {
@@ -1045,8 +1048,9 @@ private extension CopilotMeetingOrchestrator {
         return best.renderedText
     }
 
-    func latch(_ error: any Error, clearPresentation: Bool) {
+    func latch(_ error: any Error, clearPresentation: Bool) async {
         if clearPresentation {
+            await presentationClearCheckpoint?()
             let clearGeneration = presentationClearFence.markCleared()
             card = nil
             presentationLease = nil
