@@ -97,7 +97,14 @@ final class LiveCopilotModel {
     static let maximumQueryCharacters = 800
 
     private(set) var availability: CopilotAvailability = .idle
-    private(set) var card: LiveCopilotCard?
+    private var projectedCard: LiveCopilotCard?
+    private(set) var card: LiveCopilotCard? {
+        get {
+            reconcileAuthoritativePresentationClear()
+            return projectedCard
+        }
+        set { projectedCard = newValue }
+    }
     private(set) var rollingSummaryText: String?
     private(set) var askFieldVisible = false
     private(set) var askFocusRevision = 0
@@ -122,6 +129,7 @@ final class LiveCopilotModel {
     @ObservationIgnored private var presentationRevision: UInt64 = 0
     @ObservationIgnored private var transientRecoveryCount = 0
     @ObservationIgnored private var awaitingRecoveryProjectionCount: Int?
+    @ObservationIgnored private var observedPresentationClearGeneration: UInt64 = 0
 
     @ObservationIgnored private var expiryTask: Task<Void, Never>?
     @ObservationIgnored private var expiryRemaining: TimeInterval = 25
@@ -142,6 +150,7 @@ final class LiveCopilotModel {
     /// writes only opaque lease ids and timestamps into it.
     @ObservationIgnored let suggestionLatencyRecorder: SuggestionLatencyRecorder
     @ObservationIgnored private let recoveryDiagnostics = CopilotRecoveryDiagnostics()
+    @ObservationIgnored private let presentationClearFence = CopilotPresentationClearFence()
 
     init(
         proactiveLifetime: TimeInterval = 25,
@@ -190,6 +199,7 @@ final class LiveCopilotModel {
     ) {
         stopMeeting()
         suggestionLatencyRecorder.reset()
+        observedPresentationClearGeneration = presentationClearFence.clearGeneration
         let preferredName = Self.normalizedName(settings.preferredName)
         configuration = CopilotConfiguration(
             aiFeaturesEnabled: settings.aiFeaturesEnabled,
@@ -205,6 +215,7 @@ final class LiveCopilotModel {
             models: CopilotMeetingModels(fast: fastModel, deep: deepModel),
             suggestionLatencyRecorder: suggestionLatencyRecorder,
             recoveryDiagnostics: recoveryDiagnostics,
+            presentationClearFence: presentationClearFence,
             waitForRecovery: waitForRecovery,
             providerReplacementCheckpoint: providerReplacementCheckpoint,
             explicitAdmissionCheckpoint: explicitAdmissionCheckpoint,
@@ -260,19 +271,18 @@ final class LiveCopilotModel {
         guard activeMeetingID == expectedMeetingID, let orchestrator else { return }
         pendingDomainCommand?.cancel()
         pendingDomainCommand = nil
-        await orchestrator.replaceProvider(
+        let outcome = await orchestrator.replaceProvider(
             provider,
             models: CopilotMeetingModels(fast: fastModel, deep: deepModel),
             replacementID: replacementID
         )
         guard self.orchestrator === orchestrator, activeMeetingID == expectedMeetingID else { return }
-        providerAvailable = provider != nil
-        if !configuration.aiFeaturesEnabled {
-            availability = .disabled
-        } else if provider != nil {
-            availability = .ready
+        guard case .committed(let state) = outcome else { return }
+        providerAvailable = state.providerAvailable
+        if configuration.aiFeaturesEnabled {
+            project(.availability(state.availability))
         } else {
-            availability = .setupRequired
+            availability = .disabled
         }
     }
 
@@ -414,6 +424,7 @@ final class LiveCopilotModel {
         latestTranscriptTime = 0
         transientRecoveryCount = 0
         awaitingRecoveryProjectionCount = nil
+        observedPresentationClearGeneration = presentationClearFence.clearGeneration
         clearPresentation(clearSummary: true)
         availability = .idle
         if let old { Task { await old.stop() } }
@@ -488,12 +499,22 @@ private extension LiveCopilotModel {
         case .card(let domainCard):
             if !configuration.aiFeaturesEnabled, domainCard != nil { return }
             if let domainCard {
+                guard presentationClearFence.clearGeneration
+                    == observedPresentationClearGeneration
+                else { return }
                 if awaitingRecoveryProjectionCount != nil, !domainCard.requested { return }
                 projectCard(domainCard)
             } else {
                 card = nil
                 resetCardInteraction()
             }
+        case .presentationCleared(let generation):
+            guard generation > observedPresentationClearGeneration else { return }
+            observedPresentationClearGeneration = generation
+            expiryTask?.cancel()
+            expiryTask = nil
+            projectedCard = nil
+            resetCardInteraction()
         case .rollingSummary(let text):
             rollingSummaryText = text
         case .recoveryFailureCount(let count):
@@ -505,13 +526,15 @@ private extension LiveCopilotModel {
     }
 
     func projectCard(_ domain: CopilotMeetingCard) {
+        let clearGeneration = observedPresentationClearGeneration
+        guard presentationClearFence.clearGeneration == clearGeneration else { return }
         let kind: LiveCopilotCardKind
         switch domain.kind {
         case .action(let action): kind = .action(action)
         case .query(let question): kind = .query(question)
         }
-        let replacing = card?.id != domain.id
-        card = LiveCopilotCard(
+        let replacing = projectedCard?.id != domain.id
+        projectedCard = LiveCopilotCard(
             id: domain.id,
             kind: kind,
             target: domain.target,
@@ -519,6 +542,10 @@ private extension LiveCopilotModel {
             text: domain.text,
             isStreaming: domain.isStreaming
         )
+        guard presentationClearFence.clearGeneration == clearGeneration else {
+            reconcileAuthoritativePresentationClear()
+            return
+        }
         if !domain.requested, !domain.text.isEmpty {
             suggestionLatencyRecorder.recordFirstVisible(domain.id, at: diagnosticsNow())
         }
@@ -535,6 +562,16 @@ private extension LiveCopilotModel {
         askFieldVisible = false
         queryText = ""
         if clearSummary { rollingSummaryText = nil }
+        resetCardInteraction()
+    }
+
+    func reconcileAuthoritativePresentationClear() {
+        let generation = presentationClearFence.clearGeneration
+        guard generation != observedPresentationClearGeneration else { return }
+        observedPresentationClearGeneration = generation
+        expiryTask?.cancel()
+        expiryTask = nil
+        projectedCard = nil
         resetCardInteraction()
     }
 
