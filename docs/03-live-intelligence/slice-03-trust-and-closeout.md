@@ -1,6 +1,6 @@
 # M3 Slice 03 — Trust, Diagnostics, and Close-out
 
-**Status:** READY FOR FINAL LIVE EVIDENCE 2026-08-11 — implementation and credential-free close-out are clear at source SHA `04e4870`
+**Status:** CLOSED 2026-08-12 — all automated, live-provider, and independent close-out gates passed
 
 ## Outcome
 
@@ -37,12 +37,22 @@ The live copilot has measured quality, latency, cost, recovery, and production i
 - Diagnostics, fed clock, STT error counting, G3, and text-free Suggestion p95 recording are wired and covered.
 - Independent frozen holdout provenance is clear: 140 unique rows with digest `eb91d91c3989e919f2c988a8093d5f858afce2760a32532fb8c32a526d530a84`; fake pipeline scored 0/100 false positives with 20/20 question and 20/20 commitment recall.
 
-## Remaining close-out gates
+## Live closure evidence
 
-- Retain one temperature-zero DeepSeek run of the frozen independent holdout. The first attempted run completed after its console transcript was lost, so it is not admissible evidence and is not claimed green.
-- Retain one post-orchestrator-refactor AppShell G2 live run. Earlier authorities were green, but they predate the final AgentKit boundary: classifier p95 987.115 ms, generation first-token p95 978.820 ms, stage G2 p95 1,909.863 ms, catch-up 878.221 ms, and AppShell G2 p95 2,171.632 ms.
-- After both live gates are green, record the seven criterion verdicts, close this slice and milestone, and update `docs/milestones.md`.
+- Frozen holdout command exited zero: 1/100 false positives, 20/20 question recall, 19/20 commitment recall, zero retries, 126 network calls, estimated `$0.01926288`. Fixture digest: `eb91d91c3989e919f2c988a8093d5f858afce2760a32532fb8c32a526d530a84`; retained log digest: `a2c9b10b8285146af85394a0882cd2e9e592ce27753ce57dcafae1092a4045ef`.
+- Final post-refactor AppShell G2 command exited zero: p95 1,953.035667 ms, max 2,095.517459 ms, 20 samples/40 calls, estimated `$0.0188916`. Retained log digest: `6d161d0995a0895dafd13339cfcec071f101e44dc327f89bb5daed506f22af1e`.
+- Independent stage authority remains green: classifier p95 987.115 ms, generation first-token p95 978.820 ms, summed stage G2 p95 1,909.863 ms, and catch-up 878.221 ms.
+- Three fresh final auditors independently cleared the seven criteria, evidence integrity, and release boundary. The earlier performance auditor's only two open gates were the frozen live holdout and post-refactor AppShell G2; both are now resolved by the retained passing runs.
+
+## Findings resolved during close-out
+
+- The per-meeting domain orchestrator now lives in AgentKit; AppShell is a thin observable presentation projection.
+- Every credentialed DeepSeek suite shares one process-wide FIFO gate, including legacy provider, artifact, and AppShell flows.
+- Test Connection now requires exactly one nonempty natural `stop` and discards partial output for all other terminal states.
+- Recovery success, partial clearing, provider replacement, AI re-enable projection, rapid pause/resume, teardown, and cross-meeting presentation ownership are revision- and identity-fenced with deterministic race tests.
+- The independent quality holdout was frozen before its loader/oracle inspection and is separate from the development corpus used to tune the production prompt.
 
 ## Deferred manual evidence
 
 - The final app-complete walk still owns rendered native NSPanel key dispatch and real VoiceOver traversal. Static accessibility contracts, focus ownership, layout bounds, model behavior, native compilation, and Carbon registration are automated and green.
+- The measured proactive classification guarantee is English-only; other languages remain best-effort for on-demand features.

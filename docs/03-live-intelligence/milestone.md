@@ -1,6 +1,6 @@
 # Milestone 03 — Live Intelligence
 
-**Status:** ACTIVE — implementation clear at `04e4870`; final live DeepSeek holdout and post-refactor G2 evidence pending
+**Status:** CLOSED 2026-08-12 — all seven exit criteria and final independent audits passed
 **References:** ../../PRD.md FR-004–FR-007, FR-015; ../../SPEC.md §6.4, G2, G5, G6
 
 ## Goal
@@ -40,7 +40,7 @@ During a meeting, macapy quietly recognizes a direct question or an explicit com
 |---|---|---|---|
 | 1 | Copilot actions and safety | [plan/record](./slice-01-copilot-actions.md) | closed 2026-08-11 |
 | 2 | Rolling context and Ask | [plan/record](./slice-02-context-and-query.md) | closed 2026-08-11 |
-| 3 | Trust, diagnostics, and close-out | [plan/record](./slice-03-trust-and-closeout.md) | ready for final live evidence |
+| 3 | Trust, diagnostics, and close-out | [plan/record](./slice-03-trust-and-closeout.md) | closed 2026-08-12 |
 
 ## Exit criteria
 
@@ -52,10 +52,31 @@ During a meeting, macapy quietly recognizes a direct question or an explicit com
 6. Provider outage, rate limit, authentication failure, cap raise, AI-toggle cancellation, and non-`stop` terminal states degrade quietly while capture/transcription remain unaffected and recover according to policy.
 7. Suggestion p95, Artifacts G3, STT errors, and the fed-clock-corrected transcript metrics render in Diagnostics; full `swift test` and `xcodebuild` are clean and independent verifier reports have no material findings.
 
+## Exit verdicts
+
+| # | Verdict | Closure evidence |
+|---|---|---|
+| 1 | PASS | Frozen temperature-zero DeepSeek holdout: 1/100 false positives, 20/20 directed-question recall, 19/20 commitment recall, zero retries. Fake oracle: 0/100, 20/20, 20/20. |
+| 2 | PASS | Final AppShell G2 p95 1,953.036 ms (max 2,095.517 ms). Independent stage authority: classifier p95 987.115 ms, generation first-token p95 978.820 ms, stage G2 p95 1,909.863 ms, catch-up 878.221 ms. |
+| 3 | PASS | Proactive actions, requested work, preemption, expiry/interaction, sensitivity/name/mic-only/AI-off behavior, shortcuts, focus, labels, and keyboard contracts are test-pinned. Static accessibility and Carbon registration are green. |
+| 4 | PASS | Stable prefix, meeting-only grounding, deterministic compaction, 60,000-character ceiling, latest-ten retention, summary cadence, and 90-second catch-up are pinned. Three-hour fixture: 600 turns, 585 checks, max 43,171 characters, zero hard failures. |
+| 5 | PASS | Concurrent reservations, cancellation booking, shared live/artifact meter, cap raise, and ephemeral zero-disk behavior passed. One-hour workload: 170 calls and `$0.17462964`. |
+| 6 | PASS | Disconnect, 429/5xx, 401/403, malformed/non-`stop`, cap, AI-off, stale wake, provider replacement, pause/resume, teardown, and capture-independence paths passed. Backoff is 30/60/120/240/300 seconds, capped at five minutes. |
+| 7 | PASS | Suggestion p95, G3, STT error, drop, memory, and fed-clock diagnostics are wired. Final credential-free matrix: 526 tests across 87 suites; Xcode Debug build passed; final architecture, reliability/privacy/spend, evidence, criteria, and release audits are clear. |
+
+## Closure evidence
+
+- Verified production source SHA: `04e4870a2391758519cbcd0a15dd95efad620276` on `codex/m3-live-intelligence`.
+- Frozen holdout fixture SHA-256: `eb91d91c3989e919f2c988a8093d5f858afce2760a32532fb8c32a526d530a84`. It was frozen in `e413b24` before its oracle was added in `2247bd2`; no production prompt, fixture, manifest, or oracle changed afterward.
+- Live holdout command exited zero and ran exactly `realDeepSeekFrozenHoldoutMeetsQuietGuarantee`: 140 rows, 14 local mic rejections, 126 network calls, 1/100 false positives, 20/20 question recall, 19/20 commitment recall, zero retries, estimated cost `$0.01926288`. Retained log SHA-256: `a2c9b10b8285146af85394a0882cd2e9e592ce27753ce57dcafae1092a4045ef`.
+- Live AppShell command exited zero and ran exactly `triggerToFirstVisibleTokenP95IsUnderThreeSeconds`: 20 samples, 40 calls, p95 1,953.035667 ms, max 2,095.517459 ms, estimated cost `$0.0188916`. Retained log SHA-256: `6d161d0995a0895dafd13339cfcec071f101e44dc327f89bb5daed506f22af1e`.
+- Combined final live-evidence estimate: `$0.03815448`. Logs contained no API key, authorization header, private transcript, raw prompt, or real-meeting content.
+- The integration branch is local and unpushed. Nothing was merged to `main`, deployed, or published as part of M3.
+
 ## Verification model
 
 - Deterministic automated oracles only during development; no real-meeting halves.
-- Live model tests are automated and skip-not-fail without credentials elsewhere, but M3 close-out requires the DeepSeek corpus and live latency suites green on the author's machine.
+- Live model tests are automated and skip-not-fail without credentials elsewhere. The frozen DeepSeek holdout and final AppShell G2 suite passed on the author's machine for close-out.
 - Pixels remain deferred to the single app-complete walk. Add M3 panel states, footer controls, AI settings, paused indicator, and G2 tile to that list.
 
 ## Integration discipline
