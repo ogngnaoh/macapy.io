@@ -71,7 +71,7 @@ During a meeting, macapy quietly recognizes a direct question or an explicit com
 - Live holdout command exited zero and ran exactly `realDeepSeekFrozenHoldoutMeetsQuietGuarantee`: 140 rows, 14 local mic rejections, 126 network calls, 1/100 false positives, 20/20 question recall, 19/20 commitment recall, zero retries, estimated cost `$0.01926288`. Retained log SHA-256: `a2c9b10b8285146af85394a0882cd2e9e592ce27753ce57dcafae1092a4045ef`.
 - Live AppShell command exited zero and ran exactly `triggerToFirstVisibleTokenP95IsUnderThreeSeconds`: 20 samples, 40 calls, p95 1,953.035667 ms, max 2,095.517459 ms, estimated cost `$0.0188916`. Retained log SHA-256: `6d161d0995a0895dafd13339cfcec071f101e44dc327f89bb5daed506f22af1e`.
 - Combined final live-evidence estimate: `$0.03815448`. Logs contained no API key, authorization header, private transcript, raw prompt, or real-meeting content.
-- The integration branch is local and unpushed. Nothing was merged to `main`, deployed, or published as part of M3.
+- M3 was merged to `main` through [PR #2](https://github.com/ogngnaoh/macapy.io/pull/2) on 2026-08-12. Merge commit: `95f1490626fbe3efb46d9df9e5d26bda8739b382`. No app deployment or release was performed.
 
 ## Verification model
 
@@ -81,6 +81,6 @@ During a meeting, macapy quietly recognizes a direct question or an explicit com
 
 ## Integration discipline
 
-- Work occurs on `codex/m3-live-intelligence`; `main` stays untouched until separately authorized.
+- Work was integrated on `codex/m3-live-intelligence` and merged only after explicit authorization and PR review.
 - Each slice uses fresh builder and non-editing verifier agent sets. Parallel builders use scoped worktrees/branches; root integrates in dependency order and owns the full verification result.
 - Slices are sequential. The next slice starts only from the verified integration head of the previous slice.
