@@ -36,8 +36,8 @@ A system-audio turn can produce a private suggested answer or user-commitment fl
 - Panel/keyboard/accessibility verifier: clean; 71 focused tests across 5 suites passed and Carbon registered `⌥⌘C`, `⌥⌘K`, and `⌥⌘D` successfully.
 - Integration worktree was clean and `git diff --check` passed after merge.
 
-## Deferred manual evidence
+## Accepted verification boundary
 
-- The final app-complete walk still owns rendered VoiceOver traversal and real key dispatch in the nonactivating panel. Static accessibility contracts, model behavior, and Carbon registration are automated and green.
+- The user accepted the automated accessibility contracts, model behavior, native compilation, and Carbon shortcut registration as sufficient for milestone closure; no separate manual panel walk is required.
 - Thread Sanitizer and live-provider/real-database fault injection were not part of this slice's deterministic verification matrix.
 - Conservative uncertain spend is deliberately retained in memory for retry safety; surviving a full process restart was not a locked M3 requirement.

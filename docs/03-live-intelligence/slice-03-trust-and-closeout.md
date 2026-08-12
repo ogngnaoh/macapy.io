@@ -52,7 +52,7 @@ The live copilot has measured quality, latency, cost, recovery, and production i
 - Recovery success, partial clearing, provider replacement, AI re-enable projection, rapid pause/resume, teardown, and cross-meeting presentation ownership are revision- and identity-fenced with deterministic race tests.
 - The independent quality holdout was frozen before its loader/oracle inspection and is separate from the development corpus used to tune the production prompt.
 
-## Deferred manual evidence
+## Accepted verification boundary
 
-- The final app-complete walk still owns rendered native NSPanel key dispatch and real VoiceOver traversal. Static accessibility contracts, focus ownership, layout bounds, model behavior, native compilation, and Carbon registration are automated and green.
+- The user accepted the automated accessibility contracts, focus ownership, layout bounds, model behavior, native compilation, and Carbon shortcut registration as sufficient for milestone closure; no separate manual panel walk is required.
 - The measured proactive classification guarantee is English-only; other languages remain best-effort for on-demand features.

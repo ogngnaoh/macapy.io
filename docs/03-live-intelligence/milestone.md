@@ -77,7 +77,7 @@ During a meeting, macapy quietly recognizes a direct question or an explicit com
 
 - Deterministic automated oracles only during development; no real-meeting halves.
 - Live model tests are automated and skip-not-fail without credentials elsewhere. The frozen DeepSeek holdout and final AppShell G2 suite passed on the author's machine for close-out.
-- Pixels remain deferred to the single app-complete walk. Add M3 panel states, footer controls, AI settings, paused indicator, and G2 tile to that list.
+- The user accepted the automated accessibility, focus, layout, shortcut-registration, and native-build evidence for M3; no separate manual app walk is required for milestone closure.
 
 ## Integration discipline
 

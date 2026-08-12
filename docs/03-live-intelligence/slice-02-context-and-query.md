@@ -43,7 +43,7 @@ The panel maintains a glanceable meeting summary, catch-up is grounded in the la
 - Streaming answer tails use the approved volatile treatment and settle to normal ink; Escape dismisses from the common panel container, including Submit focus.
 - Requested cards and the query field now follow `design/03-panel-copilot.html`; the rolling-summary accessibility group announces once.
 
-## Deferred manual evidence
+## Accepted verification boundary
 
-- The final app-complete walk still owns rendered native NSPanel key dispatch and real VoiceOver traversal. Static accessibility contracts, focus ownership, layout bounds, model behavior, native compilation, and Carbon registration are automated and green.
+- The user accepted the automated accessibility contracts, focus ownership, layout bounds, model behavior, native compilation, and Carbon shortcut registration as sufficient for milestone closure; no separate manual panel walk is required.
 - Slice 3 owns automatic 30/60/120-second transient recovery/backoff, diagnostics, corpus quality, and live latency/cost evidence.
