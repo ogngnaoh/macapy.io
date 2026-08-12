@@ -4,6 +4,17 @@ import PersistKit
 import ProviderKit
 import os
 
+enum ProviderSettingsChange: Sendable, Equatable {
+    /// Profile selection or credential material changed, so the live client
+    /// must be rebuilt and any work owned by the old transport drained.
+    case transport
+    /// Spend admission changed without changing the provider transport.
+    case cap
+    /// Historical MVP-ignored overrides remain persisted, but must not disturb
+    /// live presentation state or rebuild the fixed-model provider.
+    case modelOverride
+}
+
 /// State behind the Providers and Spend settings tabs: what's configured, what
 /// a test call reported, and what this meeting has cost.
 ///
@@ -34,6 +45,11 @@ final class ProviderSettingsModel {
     @ObservationIgnored private let settingsStore: SettingsStore?
     @ObservationIgnored private let ledger: (any SpendLedger)?
     @ObservationIgnored private let session: URLSession
+    /// Test-only transport seam. Production always leaves this `nil` and
+    /// constructs the selected profile through `ProviderRegistry`.
+    @ObservationIgnored private let connectionTestProviderOverride: (any LLMProvider)?
+    @ObservationIgnored private let onSettingsChange:
+        @MainActor (ProviderSettings, ProviderSettingsChange) async -> Void
     @ObservationIgnored private var keyedProfileIDs: Set<String> = []
     @ObservationIgnored private let log = Logger(subsystem: "io.macapy.app", category: "AppShell")
 
@@ -42,13 +58,17 @@ final class ProviderSettingsModel {
         credentials: any CredentialStore,
         settingsStore: SettingsStore?,
         ledger: (any SpendLedger)?,
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        connectionTestProvider: (any LLMProvider)? = nil,
+        onSettingsChange: @escaping @MainActor (ProviderSettings, ProviderSettingsChange) async -> Void = { _, _ in }
     ) {
         self.profiles = profiles
         self.credentials = credentials
         self.settingsStore = settingsStore
         self.ledger = ledger
         self.session = session
+        self.connectionTestProviderOverride = connectionTestProvider
+        self.onSettingsChange = onSettingsChange
     }
 
     // MARK: - Loading
@@ -125,7 +145,7 @@ final class ProviderSettingsModel {
 
     func select(profileID: String?) async {
         settings.selectedProfileID = profileID
-        await persistSettings()
+        await persistSettings(change: .transport)
     }
 
     func saveKey(_ key: String, for profileID: String) async {
@@ -140,6 +160,11 @@ final class ProviderSettingsModel {
         refreshKeyedProfiles()
         if settings.selectedProfileID == nil {
             await select(profileID: profileID)
+        } else {
+            // Credential replacement is a material configuration change even
+            // though the settings value itself is unchanged. Notify the live
+            // copilot so an authentication hard-pause can admit a retry.
+            await onSettingsChange(settings, .transport)
         }
     }
 
@@ -147,6 +172,7 @@ final class ProviderSettingsModel {
         try? credentials.delete(for: profileID)
         refreshKeyedProfiles()
         connectionTest = .idle
+        await onSettingsChange(settings, .transport)
     }
 
     func setModelOverride(_ model: String, tier: ModelTier, for profileID: String) async {
@@ -155,23 +181,24 @@ final class ProviderSettingsModel {
         case .fast: settings.fastModelOverrides[profileID] = trimmed.isEmpty ? nil : trimmed
         case .deep: settings.deepModelOverrides[profileID] = trimmed.isEmpty ? nil : trimmed
         }
-        await persistSettings()
+        await persistSettings(change: .modelOverride)
     }
 
     func setCap(_ capUSD: Double?) async {
         settings.perMeetingCapUSD = capUSD
-        await persistSettings()
+        await persistSettings(change: .cap)
     }
 
     enum ModelTier { case fast, deep }
 
-    private func persistSettings() async {
+    private func persistSettings(change: ProviderSettingsChange) async {
         guard let settingsStore else { return }
         do {
             try await settingsStore.setProviderSettings(settings)
         } catch {
             log.error("failed to persist provider settings: \(error.localizedDescription)")
         }
+        await onSettingsChange(settings, change)
     }
 
     // MARK: - Test connection
@@ -184,11 +211,19 @@ final class ProviderSettingsModel {
     /// in the ledger like any other call — it spends the user's money, so it
     /// belongs in the Spend tab (`meetingID` is nil: there's no meeting yet).
     func testConnection() async {
-        guard let profile = selectedProfile, let client = try? registry.client(for: settings) else {
+        guard let profile = selectedProfile else {
+            connectionTest = .failed("Choose a provider first.")
+            return
+        }
+
+        let client: any LLMProvider
+        if let connectionTestProviderOverride {
+            client = connectionTestProviderOverride
+        } else if let configuredClient = try? registry.client(for: settings) {
+            client = configuredClient
+        } else {
             connectionTest = .failed(
-                selectedProfile == nil
-                    ? "Choose a provider first."
-                    : "Add an API key for this provider first."
+                "Add an API key for this provider first."
             )
             return
         }
@@ -203,7 +238,10 @@ final class ProviderSettingsModel {
         } ?? client
 
         let request = CompletionRequest(
-            model: settings.fastModelOverrides[profile.id] ?? profile.fastModel,
+            // M3 MVP uses the live-verified profile default. Historical
+            // overrides stay stored for the multi-provider fast-follow but are
+            // intentionally ignored by every production call path.
+            model: profile.fastModel,
             messages: [.user("Reply with the single word: OK")],
             purpose: .classifier,
             maxTokens: 16
@@ -211,11 +249,48 @@ final class ProviderSettingsModel {
 
         do {
             var reply = ""
+            var terminalCount = 0
+            var terminalReason: String?
+            var eventAfterTerminal = false
+
+            // Drain the stream before deciding its disposition. In particular,
+            // MeteredProvider settles reported usage immediately before it
+            // releases `.completed`; stopping early would race spend booking.
             for try await event in provider.stream(request) {
-                if case .token(let token) = event { reply += token }
+                switch event {
+                case .token(let token):
+                    guard terminalCount == 0 else {
+                        eventAfterTerminal = true
+                        continue
+                    }
+                    reply += token
+                case .reasoning:
+                    if terminalCount > 0 { eventAfterTerminal = true }
+                case .completed(let completion):
+                    terminalCount += 1
+                    if terminalCount == 1 {
+                        terminalReason = ProviderError.safeTerminalReason(completion.finishReason)
+                    }
+                }
             }
+            try Task.checkCancellation()
+
+            guard terminalCount == 1, !eventAfterTerminal else {
+                throw ProviderError.malformedResponse("stream did not contain exactly one final completion")
+            }
+            guard terminalReason == "stop" else {
+                throw ProviderError.truncated(
+                    finishReason: ProviderError.safeTerminalReason(terminalReason)
+                )
+            }
+
             let text = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-            connectionTest = .succeeded(text.isEmpty ? "Connected." : text)
+            guard !text.isEmpty else {
+                throw ProviderError.malformedResponse("natural completion contained no answer text")
+            }
+            connectionTest = .succeeded(text)
+        } catch is CancellationError {
+            connectionTest = .idle
         } catch {
             connectionTest = .failed((error as? ProviderError)?.userMessage ?? "The call failed.")
         }

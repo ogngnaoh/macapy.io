@@ -20,9 +20,40 @@ public struct Segment: Sendable, Equatable, Identifiable, Codable {
     }
 }
 
+/// A completed speaker turn assembled from one or more finalized segments.
+///
+/// Turn boundaries are supplied by the source engine through `.turnEnded`.
+/// Segment ids keep the turn traceable to the durable transcript while the
+/// joined text and time bounds make it cheap for live-intelligence consumers
+/// to build context without rescanning `TranscriptStore.segments`.
+public struct TranscriptTurn: Sendable, Equatable, Identifiable, Codable {
+    public let id: UUID
+    public let source: AudioSource
+    public let text: String
+    public let segmentIDs: [Segment.ID]
+    public let tStart: TimeInterval
+    public let tEnd: TimeInterval
+
+    public init(
+        id: UUID = UUID(),
+        source: AudioSource,
+        text: String,
+        segmentIDs: [Segment.ID],
+        tStart: TimeInterval,
+        tEnd: TimeInterval
+    ) {
+        self.id = id
+        self.source = source
+        self.text = text
+        self.segmentIDs = segmentIDs
+        self.tStart = tStart
+        self.tEnd = tEnd
+    }
+}
+
 /// An event from an `STTEngine`. Attributes are stripped at the engine boundary
-/// (the M1 panel doesn't use them). `.turnEnded` is reserved for M3's
-/// silence-gap heuristics and is **never emitted in M1**.
+/// (the M1 panel doesn't use them). `.turnEnded` marks the end of a speaker
+/// turn for the event's source.
 public enum TranscriptEvent: Sendable, Equatable {
     case volatile(text: String, tStart: TimeInterval, tEnd: TimeInterval)
     case final(Segment)

@@ -42,7 +42,9 @@ struct DiagnosticsTests {
         #expect(DiagnosticsFormat.mb(212 * 1_048_576) == "212")
         #expect(DiagnosticsFormat.mb(212 * 1_048_576 + 524_288) == "212")
         #expect(DiagnosticsFormat.mb(0) == "0")
+        #expect(DiagnosticsFormat.seconds(22.24) == "22.2")
         #expect(DiagnosticsFormat.reserved == "—")
+        #expect(DiagnosticsFormat.suggestionP95Label == "Suggestion p95")
     }
 
     // MARK: - Check 12: stalled engine → exact drop count at the seam

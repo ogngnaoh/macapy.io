@@ -36,4 +36,11 @@ struct LogSanitizationTests {
         #expect(ProviderError.truncated(finishReason: "length").logDescription == "truncated(length)")
         #expect(ProviderError.capReached(spentUSD: 1, capUSD: 0.5).logDescription == "capReached")
     }
+
+    @Test func hostileTerminalReasonIsReducedToUnknown() {
+        let hostile = "SECRET transcript excerpt\nllm call completed"
+        #expect(ProviderError.safeTerminalReason(hostile) == "unknown")
+        #expect(ProviderError.truncated(finishReason: hostile).logDescription == "truncated(unknown)")
+        #expect(Completion(finishReason: hostile, usage: nil).finishReason == "unknown")
+    }
 }

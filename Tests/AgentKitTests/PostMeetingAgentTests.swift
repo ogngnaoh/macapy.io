@@ -7,6 +7,59 @@ import Testing
 
 @testable import AgentKit
 
+private actor ProviderContextGate {
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var entered = false
+    private var released = false
+
+    func suspendUntilReleased() async {
+        entered = true
+        guard !released else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func release() {
+        released = true
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume() }
+    }
+}
+
+private actor AsyncFlag {
+    private(set) var isSet = false
+
+    func set() {
+        isSet = true
+    }
+}
+
+/// Holds the terminal callback while recording the provider-context admission
+/// count. This models AppShell's meter cleanup window without coupling
+/// AgentKit's ownership test to the composition root.
+private actor GenerationCleanupProbe {
+    private var releaseContinuation: CheckedContinuation<Void, Never>?
+    private var released = false
+    private(set) var cleanupStarted = false
+    private(set) var cleanupOutcomes: [PostMeetingAgent.Outcome] = []
+    private(set) var contextAdmissions = 0
+
+    func admittedContext() { contextAdmissions += 1 }
+
+    func finish(_ outcome: PostMeetingAgent.Outcome) async {
+        cleanupOutcomes.append(outcome)
+        cleanupStarted = true
+        guard !released else { return }
+        await withCheckedContinuation { releaseContinuation = $0 }
+    }
+
+    func release() {
+        released = true
+        releaseContinuation?.resume()
+        releaseContinuation = nil
+    }
+}
+
 /// The agent's paths beyond decode: chunked map-reduce (check 4), the
 /// retroactive/no-provider path (check 5), the cap gate (check 6), and the
 /// skip guards (check 7's unit half).
@@ -81,6 +134,9 @@ struct PostMeetingAgentTests {
             (request.jsonBody?["messages"] as? [[String: Any]])?.last?["content"] as? String
         }
         #expect(userMessages.count == expectedChunks + 1)
+        #expect(server.recordedRequests.allSatisfy {
+            $0.jsonBody?["max_tokens"] as? Int == PostMeetingExtractor.maxOutputTokens
+        }, "every map and reduce request must carry the explicit output ceiling")
         // Map calls run concurrently, so parts arrive in any order — but each
         // position 1...n must appear exactly once.
         let mapMessages = userMessages.dropLast()
@@ -102,10 +158,16 @@ struct PostMeetingAgentTests {
         }
         let harness = try await AgentHarness.start(transcript: turns)
         let partial = #"{"summary":"partial","decisions":[],"action_items":[]}"#
+        let rendered = turns.map { "Them: \($0.text)" }
+        let expectedChunks = TranscriptChunker.chunks(rendered, budgetCharacters: 160).count
+        // Map requests are concurrent. Script every possible map response so
+        // cancellation timing cannot turn the intended typed 500 into the fake
+        // server's unrelated "no response left" fallback.
         let server = try FakeOpenAIServer.start(responses: [
-            .json(status: 200, body: OpenAIFixtures.completionBody(content: partial)),
             .json(status: 500, body: OpenAIFixtures.errorBody(message: "boom")),
-        ])
+        ] + (1..<expectedChunks).map { _ in
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: partial))
+        })
         defer { server.stop() }
 
         let outcome = await harness
@@ -251,6 +313,57 @@ struct PostMeetingAgentTests {
             == ExtractionFixture.expectedKinds().count)
     }
 
+    @Test func terminalCleanupRetainsMeetingOwnershipUntilItFinishes() async throws {
+        let harness = try await AgentHarness.start()
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 500, body: OpenAIFixtures.errorBody(message: "temporary outage")),
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json))
+        ])
+        defer { server.stop() }
+        let probe = GenerationCleanupProbe()
+        let upstream = OpenAICompatibleClient(
+            profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+        let agent = PostMeetingAgent(
+            meetings: harness.meetings,
+            artifacts: harness.artifacts,
+            onGenerationFinished: { _, outcome in await probe.finish(outcome) },
+            makeContext: { _ in
+                await probe.admittedContext()
+                return PostMeetingProviderContext(provider: upstream, model: "fake-model")
+            }
+        )
+
+        let owner = Task { await agent.generateArtifacts(meetingID: harness.meetingID) }
+        for _ in 0..<300 where !(await probe.cleanupStarted) {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await probe.cleanupStarted)
+
+        let successor = await agent.generateArtifacts(meetingID: harness.meetingID)
+        #expect(successor == .skippedGenerationInFlight)
+        #expect(await probe.contextAdmissions == 1,
+                "a successor cannot look up or register a new meter during cleanup")
+        #expect(await probe.cleanupOutcomes.count == 1,
+                "the losing reentrancy caller does not own terminal cleanup")
+
+        await probe.release()
+        guard case .failed = await owner.value else {
+            Issue.record("the original failed generation should return after cleanup releases")
+            return
+        }
+
+        // Cleanup has finished and released ownership. A real successor can
+        // now resolve/register its own context and complete successfully.
+        guard case .drafted = await agent.generateArtifacts(meetingID: harness.meetingID) else {
+            Issue.record("a successor should be admitted after cleanup releases")
+            return
+        }
+        #expect(await probe.contextAdmissions == 2)
+        #expect(await probe.cleanupOutcomes.count == 2,
+                "the next owned terminal outcome receives its own cleanup callback")
+        #expect(server.recordedRequests.count == 2)
+    }
+
     @Test func successfulGenerationRecordsTheG3WallTime() async throws {
         let harness = try await AgentHarness.start()
         let server = try FakeOpenAIServer.start(responses: [
@@ -264,5 +377,253 @@ struct PostMeetingAgentTests {
         let recorded = await agent.lastDraftedInSeconds
         #expect(recorded != nil)
         #expect((recorded ?? -1) >= 0)
+    }
+
+    @Test func globalAIOffCancelsManualGenerationBeforePersistenceAndAllowsRetry() async throws {
+        let harness = try await AgentHarness.start()
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+        ])
+        defer { server.stop() }
+        let upstream = OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+        let delayed = DelayFirstCompletionProvider(upstream: upstream)
+        let agent = PostMeetingAgent(meetings: harness.meetings, artifacts: harness.artifacts) { _ in
+            PostMeetingProviderContext(provider: delayed, model: "fake-model")
+        }
+
+        let attempt = Task { await agent.generateArtifacts(meetingID: harness.meetingID) }
+        for _ in 0..<300 where server.recordedRequests.isEmpty {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(server.recordedRequests.count == 1)
+        await agent.setGenerationEnabled(false)
+
+        #expect(await attempt.value == .cancelled)
+        #expect(try await harness.artifacts.artifacts(for: harness.meetingID).isEmpty)
+
+        await agent.setGenerationEnabled(true)
+        let retry = await agent.generateArtifacts(meetingID: harness.meetingID)
+        guard case .drafted = retry else {
+            Issue.record("cancelled generation should stay retryable, got \(retry)")
+            return
+        }
+        #expect(server.recordedRequests.count == 2)
+    }
+
+    @Test func lazilyCreatedAgentCanStartWithGlobalGenerationDisabled() async throws {
+        let harness = try await AgentHarness.start()
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+        ])
+        defer { server.stop() }
+        let upstream = OpenAICompatibleClient(
+            profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+        let agent = PostMeetingAgent(
+            meetings: harness.meetings,
+            artifacts: harness.artifacts,
+            generationEnabled: false
+        ) { _ in
+            PostMeetingProviderContext(provider: upstream, model: "fake-model")
+        }
+
+        #expect(await agent.generateArtifacts(meetingID: harness.meetingID) == .cancelled)
+        #expect(server.recordedRequests.isEmpty)
+        #expect(try await harness.artifacts.artifacts(for: harness.meetingID).isEmpty)
+    }
+
+    @Test func globalAIOffDuringProviderAdmissionMakesZeroRequestsAndRemainsRetryable() async throws {
+        let harness = try await AgentHarness.start()
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+        ])
+        defer { server.stop() }
+        let gate = ProviderContextGate()
+        let agent = PostMeetingAgent(meetings: harness.meetings, artifacts: harness.artifacts) { _ in
+            await gate.suspendUntilReleased()
+            return PostMeetingProviderContext(
+                provider: OpenAICompatibleClient(
+                    profile: .fake(baseURL: server.baseURL), apiKey: "sk-test"),
+                model: "fake-model"
+            )
+        }
+
+        let attempt = Task { await agent.generateArtifacts(meetingID: harness.meetingID) }
+        for _ in 0..<300 {
+            if await gate.entered { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await gate.entered)
+        await agent.setGenerationEnabled(false)
+        await gate.release()
+
+        #expect(await attempt.value == .cancelled)
+        #expect(server.recordedRequests.isEmpty)
+        #expect(try await harness.artifacts.artifacts(for: harness.meetingID).isEmpty)
+
+        await agent.setGenerationEnabled(true)
+        guard case .drafted = await agent.generateArtifacts(meetingID: harness.meetingID) else {
+            Issue.record("AI-off admission cancellation must remain retryable")
+            return
+        }
+        #expect(server.recordedRequests.count == 1)
+    }
+
+    @Test func rapidAIOffThenOnCannotResurrectAnAdmittedOldAttempt() async throws {
+        let harness = try await AgentHarness.start()
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+        ])
+        defer { server.stop() }
+        let gate = ProviderContextGate()
+        let agent = PostMeetingAgent(meetings: harness.meetings, artifacts: harness.artifacts) { _ in
+            await gate.suspendUntilReleased()
+            return PostMeetingProviderContext(
+                provider: OpenAICompatibleClient(
+                    profile: .fake(baseURL: server.baseURL), apiKey: "sk-test"),
+                model: "fake-model"
+            )
+        }
+
+        let oldAttempt = Task { await agent.generateArtifacts(meetingID: harness.meetingID) }
+        for _ in 0..<300 {
+            if await gate.entered { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await gate.entered)
+        await agent.setGenerationEnabled(false)
+        await agent.setGenerationEnabled(true)
+        await gate.release()
+
+        #expect(await oldAttempt.value == .cancelled)
+        #expect(server.recordedRequests.isEmpty)
+        #expect(try await harness.artifacts.artifacts(for: harness.meetingID).isEmpty)
+
+        guard case .drafted = await agent.generateArtifacts(meetingID: harness.meetingID) else {
+            Issue.record("a fresh post-toggle attempt should draft")
+            return
+        }
+        #expect(server.recordedRequests.count == 1)
+    }
+
+    @Test func globalAIOffDrainsAnUninterruptiblePersistenceBoundaryBeforeReturning() async throws {
+        let harness = try await AgentHarness.start()
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+        ])
+        defer { server.stop() }
+        let upstream = OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+        let persistenceGate = ProviderContextGate()
+        let cancellationObserved = AsyncFlag()
+        let disableReturned = AsyncFlag()
+        let artifactStore = harness.artifacts
+        let agent = PostMeetingAgent(
+            meetings: harness.meetings,
+            artifacts: artifactStore,
+            makeContext: { _ in
+                PostMeetingProviderContext(provider: upstream, model: "fake-model")
+            },
+            persistDrafts: { drafts, meetingID in
+                // Model a transaction boundary which has been admitted and
+                // cannot be interrupted. Cancellation is observed, but the
+                // owned write still finishes atomically when the gate opens.
+                await withTaskCancellationHandler {
+                    await persistenceGate.suspendUntilReleased()
+                } onCancel: {
+                    Task { await cancellationObserved.set() }
+                }
+                return try await artifactStore.insertDrafts(drafts, meetingID: meetingID)
+            }
+        )
+
+        let attempt = Task { await agent.generateArtifacts(meetingID: harness.meetingID) }
+        for _ in 0..<300 {
+            if await persistenceGate.entered { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await persistenceGate.entered)
+
+        let disable = Task {
+            await agent.setGenerationEnabled(false)
+            await disableReturned.set()
+        }
+        for _ in 0..<300 {
+            if await cancellationObserved.isSet { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await cancellationObserved.isSet)
+        #expect(!(await disableReturned.isSet), "AI-off must still be draining persistence")
+        #expect(try await artifactStore.artifacts(for: harness.meetingID).isEmpty)
+
+        // Re-enable while the old off call is still draining. The epoch, not
+        // the mutable enabled bit, must keep the old attempt cancelled.
+        await agent.setGenerationEnabled(true)
+        await persistenceGate.release()
+        await disable.value
+
+        #expect(await disableReturned.isSet)
+        #expect(await attempt.value == .cancelled)
+        let rowsAtReturn = try await artifactStore.artifacts(for: harness.meetingID)
+        #expect(rowsAtReturn.count == ExtractionFixture.expectedKinds().count)
+        try await Task.sleep(for: .milliseconds(25))
+        #expect(try await artifactStore.artifacts(for: harness.meetingID) == rowsAtReturn,
+                "no owned transaction may commit after AI-off returns")
+
+        #expect(await agent.generateArtifacts(meetingID: harness.meetingID)
+            == .skippedExistingArtifacts)
+        #expect(try await artifactStore.artifacts(for: harness.meetingID) == rowsAtReturn)
+        #expect(server.recordedRequests.count == 1, "retry must not duplicate a committed set")
+    }
+
+    @Test func globalAIOffBeforePersistenceTransactionWritesNothingAndFreshRetrySucceeds() async throws {
+        let harness = try await AgentHarness.start()
+        let server = try FakeOpenAIServer.start(responses: [
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+            .json(status: 200, body: OpenAIFixtures.completionBody(content: ExtractionFixture.json)),
+        ])
+        defer { server.stop() }
+        let upstream = OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test")
+        let beforeTransaction = ProviderContextGate()
+        let artifactStore = harness.artifacts
+        let agent = PostMeetingAgent(
+            meetings: harness.meetings,
+            artifacts: artifactStore,
+            makeContext: { _ in
+                PostMeetingProviderContext(provider: upstream, model: "fake-model")
+            },
+            persistDrafts: { drafts, meetingID in
+                // This gate is still before the actual store transaction.
+                // Cancellation opens it, then the explicit check prevents
+                // the old attempt from ever crossing the write boundary.
+                await withTaskCancellationHandler {
+                    await beforeTransaction.suspendUntilReleased()
+                } onCancel: {
+                    Task { await beforeTransaction.release() }
+                }
+                try Task.checkCancellation()
+                return try await artifactStore.insertDrafts(drafts, meetingID: meetingID)
+            }
+        )
+
+        let oldAttempt = Task { await agent.generateArtifacts(meetingID: harness.meetingID) }
+        for _ in 0..<300 {
+            if await beforeTransaction.entered { break }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(await beforeTransaction.entered)
+
+        await agent.setGenerationEnabled(false)
+
+        #expect(await oldAttempt.value == .cancelled)
+        #expect(try await artifactStore.artifacts(for: harness.meetingID).isEmpty)
+
+        await agent.setGenerationEnabled(true)
+        guard case .drafted(let retryRows) = await agent.generateArtifacts(meetingID: harness.meetingID) else {
+            Issue.record("a fresh post-toggle attempt should persist one draft set")
+            return
+        }
+        #expect(retryRows.count == ExtractionFixture.expectedKinds().count)
+        #expect(try await artifactStore.artifacts(for: harness.meetingID).count == retryRows.count)
+        #expect(server.recordedRequests.count == 2)
     }
 }

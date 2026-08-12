@@ -75,6 +75,12 @@ struct PostMeetingLiveTests {
     /// draft rows, G3 wall time < 60s (the number is printed for the
     /// milestone record).
     @Test func liveExtractionDraftsTheUnambiguousCoreWithinSixtySeconds() async throws {
+        try await LiveProviderTestGate.shared.withExclusiveAccess {
+            try await self.runLiveExtractionDraftsTheUnambiguousCoreWithinSixtySeconds()
+        }
+    }
+
+    private func runLiveExtractionDraftsTheUnambiguousCoreWithinSixtySeconds() async throws {
         let key = try #require(LiveCredentials.deepSeekKey)
         let harness = try await makeHarness()
         let agent = harness.agent(key: key)
@@ -131,6 +137,12 @@ struct PostMeetingLiveTests {
     /// DeepSeek then drafts via the same path. Deterministic stand-in for
     /// "meeting ended with the network off".
     @Test func deadEndpointLeavesPendingThenLiveGenerateRecovers() async throws {
+        try await LiveProviderTestGate.shared.withExclusiveAccess {
+            try await self.runDeadEndpointLeavesPendingThenLiveGenerateRecovers()
+        }
+    }
+
+    private func runDeadEndpointLeavesPendingThenLiveGenerateRecovers() async throws {
         let key = try #require(LiveCredentials.deepSeekKey)
         let harness = try await makeHarness()
 

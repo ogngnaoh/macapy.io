@@ -83,7 +83,7 @@ struct DeleteEverythingTests {
     // MARK: - Coordinator guard
 
     private final class NoopPanel: PanelPresenting {
-        func show(session: SessionController, store: TranscriptStore) {}
+        func show(session: SessionController, store: TranscriptStore, copilot: LiveCopilotModel) {}
         func hide() {}
     }
 

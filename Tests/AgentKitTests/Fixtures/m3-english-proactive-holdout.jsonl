@@ -1,0 +1,140 @@
+{"id":"holdout-neg-rhetorical-001","category":"negative.rhetorical_question","source":"Are we really going to rename the launch project for the fourth time this quarter?","expected":"none"}
+{"id":"holdout-neg-rhetorical-002","category":"negative.rhetorical_question","source":"Who would have guessed that the tiny copy change needed three approvals?","expected":"none"}
+{"id":"holdout-neg-rhetorical-003","category":"negative.rhetorical_question","source":"Why does the printer always jam five minutes before the client arrives?","expected":"none"}
+{"id":"holdout-neg-rhetorical-004","category":"negative.rhetorical_question","source":"Could this conference room be any colder today?","expected":"none"}
+{"id":"holdout-neg-rhetorical-005","category":"negative.rhetorical_question","source":"What good is a dashboard if nobody trusts the numbers?","expected":"none"}
+{"id":"holdout-neg-rhetorical-006","category":"negative.rhetorical_question","source":"Isn't it funny how every supposedly quick review lands on Friday afternoon?","expected":"none"}
+{"id":"holdout-neg-rhetorical-007","category":"negative.rhetorical_question","source":"How many times have we heard that the migration is almost finished?","expected":"none"}
+{"id":"holdout-neg-rhetorical-008","category":"negative.rhetorical_question","source":"Do we need another meeting to decide whether we have too many meetings?","expected":"none"}
+{"id":"holdout-neg-rhetorical-009","category":"negative.rhetorical_question","source":"Wouldn't life be easier if vendors read the requirements before quoting?","expected":"none"}
+{"id":"holdout-neg-rhetorical-010","category":"negative.rhetorical_question","source":"When has adding an emergency spreadsheet ever made the data cleaner?","expected":"none"}
+{"id":"holdout-neg-rhetorical-011","category":"negative.rhetorical_question","source":"Can anyone honestly remember the last time this build passed on the first try?","expected":"none"}
+{"id":"holdout-neg-rhetorical-012","category":"negative.rhetorical_question","source":"Why bother calling it a final draft when we know three more versions are coming?","expected":"none"}
+{"id":"holdout-neg-rhetorical-013","category":"negative.rhetorical_question","source":"Is there anything more reliable than a demo failing only when leadership joins?","expected":"none"}
+{"id":"holdout-neg-rhetorical-014","category":"negative.rhetorical_question","source":"What could possibly go wrong with changing the database the night before release?","expected":"none"}
+{"id":"holdout-neg-rhetorical-015","category":"negative.rhetorical_question","source":"Does anyone actually enjoy untangling a twelve-person email thread?","expected":"none"}
+{"id":"holdout-neg-other-person-question-001","category":"negative.question_to_other_person","source":"Maya, can you send the revised pricing sheet to finance before lunch?","expected":"none"}
+{"id":"holdout-neg-other-person-question-002","category":"negative.question_to_other_person","source":"Did you get a response from legal yet, Arjun?","expected":"none"}
+{"id":"holdout-neg-other-person-question-003","category":"negative.question_to_other_person","source":"Sofia, which of the three packaging concepts does the retailer prefer?","expected":"none"}
+{"id":"holdout-neg-other-person-question-004","category":"negative.question_to_other_person","source":"Liam, would you walk Priya through the outage timeline after this call?","expected":"none"}
+{"id":"holdout-neg-other-person-question-005","category":"negative.question_to_other_person","source":"Nora, do the April invoices already include the service credit?","expected":"none"}
+{"id":"holdout-neg-other-person-question-006","category":"negative.question_to_other_person","source":"Could you confirm the warehouse count with Diego, Elena?","expected":"none"}
+{"id":"holdout-neg-other-person-question-007","category":"negative.question_to_other_person","source":"Marcus, when will your team finish the accessibility audit?","expected":"none"}
+{"id":"holdout-neg-other-person-question-008","category":"negative.question_to_other_person","source":"Jules, are you comfortable presenting the forecast while Sam is away?","expected":"none"}
+{"id":"holdout-neg-other-person-question-009","category":"negative.question_to_other_person","source":"Aisha, where did you save the signed supplier agreement?","expected":"none"}
+{"id":"holdout-neg-other-person-question-010","category":"negative.question_to_other_person","source":"Kenji, can your analyst rerun the cohort report without internal accounts?","expected":"none"}
+{"id":"holdout-neg-other-person-question-011","category":"negative.question_to_other_person","source":"Mei, have you decided whether the new role reports to product or operations?","expected":"none"}
+{"id":"holdout-neg-other-person-question-012","category":"negative.question_to_other_person","source":"Owen, what did the customer say about the proposed maintenance window?","expected":"none"}
+{"id":"holdout-neg-other-person-question-013","category":"negative.question_to_other_person","source":"Can you reserve the downstairs studio for Tuesday, Fatima?","expected":"none"}
+{"id":"holdout-neg-other-person-question-014","category":"negative.question_to_other_person","source":"Ravi, would your group own the security review if we move the deadline?","expected":"none"}
+{"id":"holdout-neg-other-person-question-015","category":"negative.question_to_other_person","source":"Tessa, why did the renewal total jump after procurement approved it?","expected":"none"}
+{"id":"holdout-neg-room-question-001","category":"negative.room_or_undirected_question","source":"Does anyone in the room know whether the freight estimate includes customs?","expected":"none"}
+{"id":"holdout-neg-room-question-002","category":"negative.room_or_undirected_question","source":"Who has the latest headcount plan?","expected":"none"}
+{"id":"holdout-neg-room-question-003","category":"negative.room_or_undirected_question","source":"Can somebody check if the webinar recording is public yet?","expected":"none"}
+{"id":"holdout-neg-room-question-004","category":"negative.room_or_undirected_question","source":"Are there any objections to moving the workshop into the morning?","expected":"none"}
+{"id":"holdout-neg-room-question-005","category":"negative.room_or_undirected_question","source":"Which team owns the old integration now?","expected":"none"}
+{"id":"holdout-neg-room-question-006","category":"negative.room_or_undirected_question","source":"Could someone near the screen read out the last two totals?","expected":"none"}
+{"id":"holdout-neg-room-question-007","category":"negative.room_or_undirected_question","source":"Has anybody spoken with the landlord about weekend access?","expected":"none"}
+{"id":"holdout-neg-room-question-008","category":"negative.room_or_undirected_question","source":"What time are we supposed to clear the venue?","expected":"none"}
+{"id":"holdout-neg-room-question-009","category":"negative.room_or_undirected_question","source":"Do we know why the northern region is missing from this chart?","expected":"none"}
+{"id":"holdout-neg-room-question-010","category":"negative.room_or_undirected_question","source":"Would anyone like to challenge the assumptions before we lock the model?","expected":"none"}
+{"id":"holdout-neg-room-question-011","category":"negative.room_or_undirected_question","source":"Is there a shared place where these research notes live?","expected":"none"}
+{"id":"holdout-neg-room-question-012","category":"negative.room_or_undirected_question","source":"Who can cover the support rotation during the public holiday?","expected":"none"}
+{"id":"holdout-neg-room-question-013","category":"negative.room_or_undirected_question","source":"Can we get a quick show of hands for option B?","expected":"none"}
+{"id":"holdout-neg-room-question-014","category":"negative.room_or_undirected_question","source":"Any idea whether the visitors have dietary restrictions?","expected":"none"}
+{"id":"holdout-neg-tentative-001","category":"negative.tentative_suggestion_unaccepted","source":"Maybe we could shorten the onboarding survey, though I haven't asked research yet.","expected":"none"}
+{"id":"holdout-neg-tentative-002","category":"negative.tentative_suggestion_unaccepted","source":"One possibility would be to pilot the policy in a single office first.","expected":"none"}
+{"id":"holdout-neg-tentative-003","category":"negative.tentative_suggestion_unaccepted","source":"I wonder if moving the banner lower might make the page less crowded.","expected":"none"}
+{"id":"holdout-neg-tentative-004","category":"negative.tentative_suggestion_unaccepted","source":"We could ask the agency for another concept, but let's not decide today.","expected":"none"}
+{"id":"holdout-neg-tentative-005","category":"negative.tentative_suggestion_unaccepted","source":"Perhaps the next release could use a smaller beta group.","expected":"none"}
+{"id":"holdout-neg-tentative-006","category":"negative.tentative_suggestion_unaccepted","source":"It might be worth exploring a monthly billing option someday.","expected":"none"}
+{"id":"holdout-neg-tentative-007","category":"negative.tentative_suggestion_unaccepted","source":"What if we held office hours instead of writing another guide? Just an idea.","expected":"none"}
+{"id":"holdout-neg-tentative-008","category":"negative.tentative_suggestion_unaccepted","source":"I'd be curious to see whether a darker header improves readability.","expected":"none"}
+{"id":"holdout-neg-tentative-009","category":"negative.tentative_suggestion_unaccepted","source":"We may want to revisit the partner tier names after the research comes in.","expected":"none"}
+{"id":"holdout-neg-tentative-010","category":"negative.tentative_suggestion_unaccepted","source":"Suppose we invited two customers to the planning session; that could be useful.","expected":"none"}
+{"id":"holdout-neg-tentative-011","category":"negative.tentative_suggestion_unaccepted","source":"There's a case for delaying the campaign, although no one has agreed to that.","expected":"none"}
+{"id":"holdout-neg-tentative-012","category":"negative.tentative_suggestion_unaccepted","source":"Maybe someone from analytics could join future vendor reviews.","expected":"none"}
+{"id":"holdout-neg-tentative-013","category":"negative.tentative_suggestion_unaccepted","source":"If the budget allows, we might test a second shipping provider.","expected":"none"}
+{"id":"holdout-neg-tentative-014","category":"negative.tentative_suggestion_unaccepted","source":"I was thinking we could archive the old channel, but I'm not proposing action yet.","expected":"none"}
+{"id":"holdout-neg-other-owner-001","category":"negative.commitment_other_owner","source":"Maya will consolidate the interview notes and circulate them tomorrow.","expected":"none"}
+{"id":"holdout-neg-other-owner-002","category":"negative.commitment_other_owner","source":"Arjun agreed to update the tax assumptions before the forecast review.","expected":"none"}
+{"id":"holdout-neg-other-owner-003","category":"negative.commitment_other_owner","source":"Sofia is taking the first pass at the new help-center outline.","expected":"none"}
+{"id":"holdout-neg-other-owner-004","category":"negative.commitment_other_owner","source":"Liam said he'll call the contractor once the revised drawings arrive.","expected":"none"}
+{"id":"holdout-neg-other-owner-005","category":"negative.commitment_other_owner","source":"Nora owns the follow-up with payroll and expects to close it by Thursday.","expected":"none"}
+{"id":"holdout-neg-other-owner-006","category":"negative.commitment_other_owner","source":"Diego volunteered to compare the insurance quotes this afternoon.","expected":"none"}
+{"id":"holdout-neg-other-owner-007","category":"negative.commitment_other_owner","source":"Elena has accepted the action to document the approval flow.","expected":"none"}
+{"id":"holdout-neg-other-owner-008","category":"negative.commitment_other_owner","source":"Marcus will host the partner briefing while the account lead is traveling.","expected":"none"}
+{"id":"holdout-neg-other-owner-009","category":"negative.commitment_other_owner","source":"Jules is going to reconcile the expense report after this meeting.","expected":"none"}
+{"id":"holdout-neg-other-owner-010","category":"negative.commitment_other_owner","source":"Aisha promised to share the localization gaps with engineering by noon.","expected":"none"}
+{"id":"holdout-neg-other-owner-011","category":"negative.commitment_other_owner","source":"Kenji took responsibility for arranging the interpreter and the dial-in details.","expected":"none"}
+{"id":"holdout-neg-other-owner-012","category":"negative.commitment_other_owner","source":"Mei confirmed that she will prepare the board appendix tonight.","expected":"none"}
+{"id":"holdout-neg-other-owner-013","category":"negative.commitment_other_owner","source":"Owen is handling the customer apology, including the credit request.","expected":"none"}
+{"id":"holdout-neg-other-owner-014","category":"negative.commitment_other_owner","source":"Fatima committed to checking every link before the newsletter goes out.","expected":"none"}
+{"id":"holdout-neg-ownerless-001","category":"negative.ownerless_group_or_passive_work","source":"The quarterly roadmap needs another review before it can be published.","expected":"none"}
+{"id":"holdout-neg-ownerless-002","category":"negative.ownerless_group_or_passive_work","source":"We should clean up the duplicate customer records sometime this week.","expected":"none"}
+{"id":"holdout-neg-ownerless-003","category":"negative.ownerless_group_or_passive_work","source":"A final decision on the venue will be made after the safety inspection.","expected":"none"}
+{"id":"holdout-neg-ownerless-004","category":"negative.ownerless_group_or_passive_work","source":"The team agreed that the dashboard labels must be simplified.","expected":"none"}
+{"id":"holdout-neg-ownerless-005","category":"negative.ownerless_group_or_passive_work","source":"Someone needs to remove former employees from the distribution list.","expected":"none"}
+{"id":"holdout-neg-ownerless-006","category":"negative.ownerless_group_or_passive_work","source":"We'll revisit the margin assumptions once the supplier data is complete.","expected":"none"}
+{"id":"holdout-neg-ownerless-007","category":"negative.ownerless_group_or_passive_work","source":"Follow-up notes are expected to be distributed within two business days.","expected":"none"}
+{"id":"holdout-neg-ownerless-008","category":"negative.ownerless_group_or_passive_work","source":"Marketing and sales will work together on a cleaner handoff process.","expected":"none"}
+{"id":"holdout-neg-ownerless-009","category":"negative.ownerless_group_or_passive_work","source":"The missing translations have to be added before regional review.","expected":"none"}
+{"id":"holdout-neg-ownerless-010","category":"negative.ownerless_group_or_passive_work","source":"We're all going to keep an eye on cancellation volume through Friday.","expected":"none"}
+{"id":"holdout-neg-ownerless-011","category":"negative.ownerless_group_or_passive_work","source":"It was decided that the old intake form would be retired next month.","expected":"none"}
+{"id":"holdout-neg-ownerless-012","category":"negative.ownerless_group_or_passive_work","source":"Product can coordinate with support on whatever launch messaging is required.","expected":"none"}
+{"id":"holdout-neg-ownerless-013","category":"negative.ownerless_group_or_passive_work","source":"The open audit findings still need owners and due dates.","expected":"none"}
+{"id":"holdout-neg-ownerless-014","category":"negative.ownerless_group_or_passive_work","source":"We committed as a group to improve response times this quarter.","expected":"none"}
+{"id":"holdout-neg-user-speech-001","category":"negative.mic_or_user_speech","source":"Hoang (microphone): Can you show me the monthly retention breakdown?","expected":"none"}
+{"id":"holdout-neg-user-speech-002","category":"negative.mic_or_user_speech","source":"Hoang (microphone): I'll send the corrected contract to legal this afternoon.","expected":"none"}
+{"id":"holdout-neg-user-speech-003","category":"negative.mic_or_user_speech","source":"User speaking: Where did we land on the new support hours?","expected":"none"}
+{"id":"holdout-neg-user-speech-004","category":"negative.mic_or_user_speech","source":"User speaking: I can draft the customer note before our next check-in.","expected":"none"}
+{"id":"holdout-neg-user-speech-005","category":"negative.mic_or_user_speech","source":"Hoang, on mic: Do we have enough evidence to delay the rollout?","expected":"none"}
+{"id":"holdout-neg-user-speech-006","category":"negative.mic_or_user_speech","source":"Hoang, on mic: Yes, I'll reconcile those two budget versions by Friday.","expected":"none"}
+{"id":"holdout-neg-user-speech-007","category":"negative.mic_or_user_speech","source":"Local microphone transcript — Could you explain why the alert fired twice?","expected":"none"}
+{"id":"holdout-neg-user-speech-008","category":"negative.mic_or_user_speech","source":"Local microphone transcript — I'll book a smaller room for the workshop.","expected":"none"}
+{"id":"holdout-neg-user-speech-009","category":"negative.mic_or_user_speech","source":"Hoang (self): What changed between the first proposal and this one?","expected":"none"}
+{"id":"holdout-neg-user-speech-010","category":"negative.mic_or_user_speech","source":"Hoang (self): I'll take the vendor comparison and share it tomorrow morning.","expected":"none"}
+{"id":"holdout-neg-user-speech-011","category":"negative.mic_or_user_speech","source":"Current user: Would you pull up the incident notes from January?","expected":"none"}
+{"id":"holdout-neg-user-speech-012","category":"negative.mic_or_user_speech","source":"Current user: I accept the action to check the renewal dates tonight.","expected":"none"}
+{"id":"holdout-neg-user-speech-013","category":"negative.mic_or_user_speech","source":"Mic input from Hoang: When can the regional team see the prototype?","expected":"none"}
+{"id":"holdout-neg-user-speech-014","category":"negative.mic_or_user_speech","source":"Mic input from Hoang: I'll summarize the open risks after lunch.","expected":"none"}
+{"id":"holdout-question-001","category":"positive.question_for_preferred_user","source":"Hoang, which of these onboarding flows should we test with new customers first?","expected":"question"}
+{"id":"holdout-question-002","category":"positive.question_for_preferred_user","source":"Can you confirm whether finance approved the revised travel cap, Hoang?","expected":"question"}
+{"id":"holdout-question-003","category":"positive.question_for_preferred_user","source":"Hoang, when would you like the Singapore workshop to begin?","expected":"question"}
+{"id":"holdout-question-004","category":"positive.question_for_preferred_user","source":"After you review the two proposals, Hoang, could you tell us which vendor has the stronger support plan?","expected":"question"}
+{"id":"holdout-question-005","category":"positive.question_for_preferred_user","source":"Do you know where the signed data-processing addendum is stored, Hoang?","expected":"question"}
+{"id":"holdout-question-006","category":"positive.question_for_preferred_user","source":"Hoang, are you available to join the retailer call at three tomorrow?","expected":"question"}
+{"id":"holdout-question-007","category":"positive.question_for_preferred_user","source":"Would you clarify for me, Hoang, whether the trial includes implementation support?","expected":"question"}
+{"id":"holdout-question-008","category":"positive.question_for_preferred_user","source":"Hoang, what trade-off concerns you most in the current hiring plan?","expected":"question"}
+{"id":"holdout-question-009","category":"positive.question_for_preferred_user","source":"Before we publish this, Hoang, can you verify the customer quote is cleared for external use?","expected":"question"}
+{"id":"holdout-question-010","category":"positive.question_for_preferred_user","source":"Which exchange rate should I use for the August forecast, Hoang?","expected":"question"}
+{"id":"holdout-question-011","category":"positive.question_for_preferred_user","source":"Hoang, have you already decided who needs access to the prototype workspace?","expected":"question"}
+{"id":"holdout-question-012","category":"positive.question_for_preferred_user","source":"Could you walk me through why the enterprise conversion assumption changed, Hoang?","expected":"question"}
+{"id":"holdout-question-013","category":"positive.question_for_preferred_user","source":"Hoang, should the status note mention the unresolved shipping delay explicitly?","expected":"question"}
+{"id":"holdout-question-014","category":"positive.question_for_preferred_user","source":"Now that legal has replied, what date do you want on the partner announcement, Hoang?","expected":"question"}
+{"id":"holdout-question-015","category":"positive.question_for_preferred_user","source":"Hoang, may I share this utilization chart with the broader operations group?","expected":"question"}
+{"id":"holdout-question-016","category":"positive.question_for_preferred_user","source":"Can you explain which security finding is blocking approval, Hoang?","expected":"question"}
+{"id":"holdout-question-017","category":"positive.question_for_preferred_user","source":"Hoang, would Tuesday or Thursday work better for your review of the launch checklist?","expected":"question"}
+{"id":"holdout-question-018","category":"positive.question_for_preferred_user","source":"Given the new budget ceiling, Hoang, how many contractors do you want us to retain?","expected":"question"}
+{"id":"holdout-question-019","category":"positive.question_for_preferred_user","source":"Hoang, did the customer approve using their logo in the case study?","expected":"question"}
+{"id":"holdout-question-020","category":"positive.question_for_preferred_user","source":"Who should receive the confidential appendix when I send the report, Hoang?","expected":"question"}
+{"id":"holdout-commitment-001","category":"positive.commitment_by_preferred_user","source":"Hoang will deliver the revised revenue bridge to finance before noon tomorrow.","expected":"commitment"}
+{"id":"holdout-commitment-002","category":"positive.commitment_by_preferred_user","source":"Hoang agreed to call the logistics partner and confirm the new pickup window.","expected":"commitment"}
+{"id":"holdout-commitment-003","category":"positive.commitment_by_preferred_user","source":"I can own the security questionnaire, said Hoang, and I'll return it by Thursday.","expected":"commitment"}
+{"id":"holdout-commitment-004","category":"positive.commitment_by_preferred_user","source":"After reviewing the notes, Hoang accepted the action to rewrite the executive summary.","expected":"commitment"}
+{"id":"holdout-commitment-005","category":"positive.commitment_by_preferred_user","source":"Hoang is taking responsibility for arranging the customer reference call next week.","expected":"commitment"}
+{"id":"holdout-commitment-006","category":"positive.commitment_by_preferred_user","source":"Yes, I'll update the launch checklist tonight, Hoang confirmed.","expected":"commitment"}
+{"id":"holdout-commitment-007","category":"positive.commitment_by_preferred_user","source":"The follow-up with procurement belongs to Hoang; he committed to closing it by Friday.","expected":"commitment"}
+{"id":"holdout-commitment-008","category":"positive.commitment_by_preferred_user","source":"Hoang volunteered to prepare two staffing scenarios for the planning session.","expected":"commitment"}
+{"id":"holdout-commitment-009","category":"positive.commitment_by_preferred_user","source":"Once the raw data arrives, Hoang will rerun the analysis without test accounts.","expected":"commitment"}
+{"id":"holdout-commitment-010","category":"positive.commitment_by_preferred_user","source":"Hoang said, I'll draft the partner update and send it for review this afternoon.","expected":"commitment"}
+{"id":"holdout-commitment-011","category":"positive.commitment_by_preferred_user","source":"The team assigned the renewal comparison to Hoang, and he accepted it.","expected":"commitment"}
+{"id":"holdout-commitment-012","category":"positive.commitment_by_preferred_user","source":"Hoang promised to verify the three disputed invoices with accounting by Wednesday.","expected":"commitment"}
+{"id":"holdout-commitment-013","category":"positive.commitment_by_preferred_user","source":"I'll take care of the access audit before the contractor starts, Hoang replied.","expected":"commitment"}
+{"id":"holdout-commitment-014","category":"positive.commitment_by_preferred_user","source":"Hoang has ownership of the workshop agenda and will share a draft on Monday.","expected":"commitment"}
+{"id":"holdout-commitment-015","category":"positive.commitment_by_preferred_user","source":"Even if the vendor is late, Hoang will compile the available test results for the review.","expected":"commitment"}
+{"id":"holdout-commitment-016","category":"positive.commitment_by_preferred_user","source":"Hoang confirmed that he would schedule individual follow-ups with both regional leads.","expected":"commitment"}
+{"id":"holdout-commitment-017","category":"positive.commitment_by_preferred_user","source":"I accept the action to resolve the duplicate records by end of day, Hoang said.","expected":"commitment"}
+{"id":"holdout-commitment-018","category":"positive.commitment_by_preferred_user","source":"Hoang is going to document the escalation path once support validates the contacts.","expected":"commitment"}
+{"id":"holdout-commitment-019","category":"positive.commitment_by_preferred_user","source":"Before the board packet is locked, Hoang will proofread the metrics appendix.","expected":"commitment"}
+{"id":"holdout-commitment-020","category":"positive.commitment_by_preferred_user","source":"Hoang took the task of sending a calendar hold to every pilot participant.","expected":"commitment"}

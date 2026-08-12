@@ -2,6 +2,61 @@ import Foundation
 import GRDB
 import ProviderKit
 
+/// User-selectable proactive copilot sensitivity. The confidence threshold is
+/// part of the persisted product contract rather than a provider preference.
+public enum LiveAISensitivity: String, Sendable, CaseIterable, Codable, Equatable {
+    case off
+    case quiet
+    case balanced
+    case active
+
+    public var confidenceThreshold: Double {
+        switch self {
+        case .off: 1.0
+        case .quiet: 0.90
+        case .balanced: 0.80
+        case .active: 0.70
+        }
+    }
+}
+
+/// Non-secret settings for M3 live intelligence. Decoding defaults each field
+/// independently so an old, partial, or partly malformed blob cannot disable
+/// transcription or disturb provider configuration.
+public struct LiveAISettings: Sendable, Codable, Equatable {
+    public var aiFeaturesEnabled: Bool
+    public var sensitivity: LiveAISensitivity
+    public var preferredName: String?
+
+    public init(
+        aiFeaturesEnabled: Bool = true,
+        sensitivity: LiveAISensitivity = .quiet,
+        preferredName: String? = nil
+    ) {
+        self.aiFeaturesEnabled = aiFeaturesEnabled
+        self.sensitivity = sensitivity
+        self.preferredName = preferredName
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case aiFeaturesEnabled
+        case sensitivity
+        case preferredName
+    }
+
+    public init(from decoder: any Decoder) throws {
+        guard let container = try? decoder.container(keyedBy: CodingKeys.self) else {
+            self.init()
+            return
+        }
+        self.init(
+            aiFeaturesEnabled: (try? container.decode(Bool.self, forKey: .aiFeaturesEnabled)) ?? true,
+            sensitivity: (try? container.decode(LiveAISensitivity.self, forKey: .sensitivity)) ?? .quiet,
+            preferredName: try? container.decode(String.self, forKey: .preferredName)
+        )
+    }
+}
+
 /// The `settings` key/value table (schema v1). Small, typed helpers on top for
 /// the values slice 2 needs to survive relaunch.
 ///
@@ -13,6 +68,9 @@ public actor SettingsStore {
     public static let providerSettingsKey = "provider.settings"
     /// Row key for the encoded `PricingTable`.
     public static let pricingKey = "provider.pricing"
+    /// Row key for the encoded `LiveAISettings` blob. Kept separate from the
+    /// provider row so neither setting family can erase the other.
+    public static let liveAISettingsKey = "live-ai.settings"
 
     private let database: MacapyDatabase
 
@@ -68,5 +126,19 @@ public actor SettingsStore {
     public func setPricing(_ pricing: PricingTable) async throws {
         let data = try JSONEncoder().encode(pricing)
         try await set(String(decoding: data, as: UTF8.self), forKey: Self.pricingKey)
+    }
+
+    /// Live-intelligence preferences. Missing or unreadable data returns safe
+    /// defaults and never prevents local transcription from starting.
+    public func liveAISettings() async throws -> LiveAISettings {
+        guard let raw = try await value(forKey: Self.liveAISettingsKey),
+              let decoded = try? JSONDecoder().decode(LiveAISettings.self, from: Data(raw.utf8))
+        else { return LiveAISettings() }
+        return decoded
+    }
+
+    public func setLiveAISettings(_ settings: LiveAISettings) async throws {
+        let data = try JSONEncoder().encode(settings)
+        try await set(String(decoding: data, as: UTF8.self), forKey: Self.liveAISettingsKey)
     }
 }

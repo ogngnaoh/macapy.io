@@ -10,7 +10,8 @@ import Observation
 /// Volatile model: **at most one volatile line per source** — SpeechTranscriber
 /// volatiles are successive refinements of the current utterance, so a final
 /// clears that source's volatile line and appends a `Segment`. Finals also flow
-/// out `finalsStream()` for slice 4's persistence writer.
+/// out `finalsStream()` for slice 4's persistence writer. Completed turns flow
+/// out a separate, non-replaying `turnsStream()` for live intelligence.
 @MainActor
 @Observable
 public final class TranscriptStore {
@@ -33,6 +34,11 @@ public final class TranscriptStore {
     public private(set) var speakerLabels: [Segment.ID: String] = [:]
 
     @ObservationIgnored private var finalsContinuations: [UUID: AsyncStream<Segment>.Continuation] = [:]
+    @ObservationIgnored private var turnsContinuations: [UUID: AsyncStream<TranscriptTurn>.Continuation] = [:]
+    @ObservationIgnored private var pendingTurnSegments: [AudioSource: [Segment]] = [:]
+
+    // Internal lifecycle probe used by focused stream-termination tests.
+    var activeTurnStreamCount: Int { turnsContinuations.count }
 
     public init() {}
 
@@ -43,11 +49,12 @@ public final class TranscriptStore {
         case let .final(segment):
             volatile[source] = nil
             insertOrdered(segment)
+            pendingTurnSegments[source, default: []].append(segment)
             for continuation in finalsContinuations.values {
                 continuation.yield(segment)
             }
         case .turnEnded:
-            break
+            emitTurn(for: source)
         }
     }
 
@@ -63,6 +70,7 @@ public final class TranscriptStore {
         segments.removeAll()
         volatile.removeAll()
         speakerLabels.removeAll()
+        pendingTurnSegments.removeAll()
         finishFinalsStreams()
     }
 
@@ -82,6 +90,7 @@ public final class TranscriptStore {
             continuation.finish()
         }
         finalsContinuations.removeAll()
+        finishTurnsStreams()
     }
 
     /// A side-channel of finalized segments, in the order they were applied.
@@ -95,6 +104,49 @@ public final class TranscriptStore {
             Task { @MainActor in self?.finalsContinuations.removeValue(forKey: id) }
         }
         return stream
+    }
+
+    /// A non-replaying side-channel of completed turns in the order their
+    /// `.turnEnded` events were applied. Finals are accumulated independently
+    /// per source, so interleaved mic/system events cannot contaminate one
+    /// another. Ends with the meeting's final streams on `reset()` or
+    /// `finishFinalsStreams()`.
+    public func turnsStream() -> AsyncStream<TranscriptTurn> {
+        let id = UUID()
+        let (stream, continuation) = AsyncStream<TranscriptTurn>.makeStream()
+        turnsContinuations[id] = continuation
+        continuation.onTermination = { [weak self] _ in
+            Task { @MainActor in self?.turnsContinuations.removeValue(forKey: id) }
+        }
+        return stream
+    }
+
+    private func emitTurn(for source: AudioSource) {
+        let pending = pendingTurnSegments.removeValue(forKey: source) ?? []
+        let nonEmpty = pending.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard let first = nonEmpty.first, let last = nonEmpty.last else { return }
+
+        let text = nonEmpty
+            .map { $0.text.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .joined(separator: " ")
+        let turn = TranscriptTurn(
+            source: source,
+            text: text,
+            segmentIDs: nonEmpty.map(\.id),
+            tStart: nonEmpty.map(\.tStart).min() ?? first.tStart,
+            tEnd: nonEmpty.map(\.tEnd).max() ?? last.tEnd
+        )
+        for continuation in turnsContinuations.values {
+            continuation.yield(turn)
+        }
+    }
+
+    private func finishTurnsStreams() {
+        for continuation in turnsContinuations.values {
+            continuation.finish()
+        }
+        turnsContinuations.removeAll()
+        pendingTurnSegments.removeAll()
     }
 
     /// Insert keeping `segments` ordered by `tStart`. Finals usually arrive in

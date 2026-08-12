@@ -180,6 +180,8 @@ struct MeetingDetailModelTests {
         #expect(model.actionItems.first?.payload(as: ActionItemPayload.self)
             == ActionItemPayload(title: "Send the notes", owner: "You", deadline: "Friday"))
         #expect(model.lastDraftedInSeconds != nil)
+        #expect(await world.coordinator.retainedSpendMeterCount() == 0,
+                "successful manual-only generation must release its fallback meter")
     }
 
     @Test func failedGenerationShowsTheTypedUserMessageAndStaysRetryable() async throws {

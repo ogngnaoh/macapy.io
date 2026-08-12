@@ -1,7 +1,8 @@
 import CaptureKit
 import Foundation
 import Testing
-import TranscribeKit
+
+@testable import TranscribeKit
 
 /// Check 3: `TranscriptStore` volatile/final semantics, ordering, reset, and the
 /// `finalsStream()` side-channel that slice 4's writer consumes.
@@ -114,5 +115,121 @@ struct TranscriptStoreTests {
             received.append(seg.text)
         }
         #expect(received == (0..<20).map { "s\($0)" })
+    }
+
+    @Test func turnsStreamJoinsFinalsAndPreservesSourceIsolationAndEventOrdering() async {
+        let store = TranscriptStore()
+        let turns = store.turnsStream()
+        let micOne = segment(" first ", .mic, 1, 2)
+        let system = segment("their turn", .system, 2, 4)
+        let micTwo = segment("second", .mic, 4, 5)
+
+        store.apply(.final(micOne), from: .mic)
+        store.apply(.final(system), from: .system)
+        store.apply(.final(micTwo), from: .mic)
+        store.apply(.turnEnded, from: .system)
+        store.apply(.turnEnded, from: .mic)
+        store.finishFinalsStreams()
+
+        var received: [TranscriptTurn] = []
+        for await turn in turns {
+            received.append(turn)
+        }
+
+        #expect(received.map(\.source) == [.system, .mic])
+        #expect(received.map(\.text) == ["their turn", "first second"])
+        #expect(received[0].segmentIDs == [system.id])
+        #expect(received[1].segmentIDs == [micOne.id, micTwo.id])
+        #expect(received[1].tStart == 1)
+        #expect(received[1].tEnd == 5)
+    }
+
+    @Test func turnsStreamIsNonReplaying() async {
+        let store = TranscriptStore()
+        store.apply(.final(segment("before", .system, 0, 1)), from: .system)
+        store.apply(.turnEnded, from: .system)
+
+        let turns = store.turnsStream()
+        store.apply(.final(segment("after", .system, 1, 2)), from: .system)
+        store.apply(.turnEnded, from: .system)
+        store.finishFinalsStreams()
+
+        var received: [String] = []
+        for await turn in turns {
+            received.append(turn.text)
+        }
+        #expect(received == ["after"])
+    }
+
+    @Test func turnEndedWithoutNonEmptyFinalsDoesNotEmit() async {
+        let store = TranscriptStore()
+        let turns = store.turnsStream()
+
+        store.apply(.volatile(text: "draft", tStart: 0, tEnd: 1), from: .mic)
+        store.apply(.turnEnded, from: .mic)
+        store.apply(.final(segment("  \n", .mic, 1, 2)), from: .mic)
+        store.apply(.turnEnded, from: .mic)
+        store.finishFinalsStreams()
+
+        var received: [TranscriptTurn] = []
+        for await turn in turns {
+            received.append(turn)
+        }
+        #expect(received.isEmpty)
+    }
+
+    @Test func resetEndsTurnsStreamAndDropsPendingTurn() async {
+        let store = TranscriptStore()
+        let turns = store.turnsStream()
+        store.apply(.final(segment("unfinished", .mic, 0, 1)), from: .mic)
+
+        store.reset()
+
+        var received: [TranscriptTurn] = []
+        for await turn in turns {
+            received.append(turn)
+        }
+        #expect(received.isEmpty)
+
+        let nextMeetingTurns = store.turnsStream()
+        store.apply(.turnEnded, from: .mic)
+        store.finishFinalsStreams()
+        var nextMeetingReceived: [TranscriptTurn] = []
+        for await turn in nextMeetingTurns {
+            nextMeetingReceived.append(turn)
+        }
+        #expect(nextMeetingReceived.isEmpty)
+    }
+
+    @Test func meetingFinishEndsTurnsStreamAfterDeliveringCompletedTurns() async {
+        let store = TranscriptStore()
+        let turns = store.turnsStream()
+        store.apply(.final(segment("complete", .system, 0, 1)), from: .system)
+        store.apply(.turnEnded, from: .system)
+
+        store.finishFinalsStreams()
+
+        var received: [String] = []
+        for await turn in turns {
+            received.append(turn.text)
+        }
+        #expect(received == ["complete"])
+    }
+
+    @Test func cancellingConsumerRemovesTurnsContinuation() async {
+        let store = TranscriptStore()
+        let turns = store.turnsStream()
+        #expect(store.activeTurnStreamCount == 1)
+
+        let consumer = Task {
+            var iterator = turns.makeAsyncIterator()
+            return await iterator.next()
+        }
+        await Task.yield()
+        consumer.cancel()
+        _ = await consumer.value
+        await Task.yield()
+
+        #expect(store.activeTurnStreamCount == 0)
     }
 }

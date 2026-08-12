@@ -18,10 +18,12 @@ struct MeetingPipelineTests {
     /// Shared, thread-safe call counters for the fakes.
     actor Counters {
         private(set) var captureStarts = 0
+        private(set) var captureStops = 0
         private(set) var transcribeCalls = 0
         private(set) var pauseCalls = 0
         private(set) var resumeCalls = 0
         func captureStarted() { captureStarts += 1 }
+        func captureStopped() { captureStops += 1 }
         func transcribeCalled() { transcribeCalls += 1 }
         func pauseCalled() { pauseCalls += 1 }
         func resumeCalled() { resumeCalls += 1 }
@@ -102,22 +104,108 @@ struct MeetingPipelineTests {
         func pause() async { await counters.pauseCalled() }
         func resume() async { await counters.resumeCalled() }
         func stop() async {
+            await counters.captureStopped()
             continuation?.finish()
             continuation = nil
         }
     }
 
+    /// Manually released suspension point used to hold a source operation
+    /// after it has been admitted but before it applies its physical state.
+    /// This makes the rapid-toggle ordering race deterministic.
+    actor TransitionGate {
+        private var entered = false
+        private var released = false
+        private var continuation: CheckedContinuation<Void, Never>?
+
+        func wait() async {
+            entered = true
+            guard !released else { return }
+            await withCheckedContinuation { continuation = $0 }
+        }
+
+        func hasEntered() -> Bool { entered }
+
+        func release() {
+            released = true
+            continuation?.resume()
+            continuation = nil
+        }
+    }
+
+    /// Reentrant actor fake: a blocked pause/resume yields the actor, allowing
+    /// a broken coordinator's newer operation to overtake it. When the older
+    /// gate is released it then applies last, exactly modeling the production
+    /// divergence this regression protects against.
+    actor BlockingCaptureSource: AudioCaptureSource {
+        enum Activity: Equatable { case stopped, capturing, paused }
+
+        nonisolated let source: AudioSource
+        private let counters: Counters
+        private let pauseGate: TransitionGate?
+        private let resumeGate: TransitionGate?
+        private var continuation: AsyncStream<AudioChunk>.Continuation?
+        private(set) var activity: Activity = .stopped
+
+        init(
+            source: AudioSource,
+            counters: Counters,
+            pauseGate: TransitionGate? = nil,
+            resumeGate: TransitionGate? = nil
+        ) {
+            self.source = source
+            self.counters = counters
+            self.pauseGate = pauseGate
+            self.resumeGate = resumeGate
+        }
+
+        func start(format: AVAudioFormat) async throws -> AsyncStream<AudioChunk> {
+            await counters.captureStarted()
+            let (stream, continuation) = AsyncStream<AudioChunk>.makeStream()
+            self.continuation = continuation
+            activity = .capturing
+            return stream
+        }
+
+        func pause() async {
+            await counters.pauseCalled()
+            await pauseGate?.wait()
+            activity = .paused
+        }
+
+        func resume() async {
+            await counters.resumeCalled()
+            await resumeGate?.wait()
+            activity = .capturing
+        }
+
+        func stop() async {
+            await counters.captureStopped()
+            activity = .stopped
+            continuation?.finish()
+            continuation = nil
+        }
+    }
+
+    actor CompletionFlag {
+        private var completed = false
+        func markCompleted() { completed = true }
+        func value() -> Bool { completed }
+    }
+
     /// No-op panel so the coordinator never builds an NSPanel/NSHostingView.
     final class FakePanel: PanelPresenting {
         private(set) var shown = false
-        func show(session: SessionController, store: TranscriptStore) { shown = true }
+        func show(session: SessionController, store: TranscriptStore, copilot: LiveCopilotModel) {
+            shown = true
+        }
         func hide() { shown = false }
     }
 
     // MARK: - Helpers
 
     private func makeCoordinator(
-        engine: FakeSTTEngine, source: FakeCaptureSource
+        engine: FakeSTTEngine, source: any AudioCaptureSource
     ) -> AppShellCoordinator {
         AppShellCoordinator(
             panel: FakePanel(), installHotKey: false,
@@ -139,6 +227,20 @@ struct MeetingPipelineTests {
     private func waitUntil(_ label: String, _ condition: @MainActor () -> Bool) async -> Bool {
         for _ in 0..<300 {
             if condition() { return true }
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
+        Issue.record("timed out waiting for: \(label)")
+        return false
+    }
+
+    /// Polls an actor-owned condition up to ~3s.
+    @discardableResult
+    private func waitUntilAsync(
+        _ label: String,
+        _ condition: () async -> Bool
+    ) async -> Bool {
+        for _ in 0..<300 {
+            if await condition() { return true }
             try? await Task.sleep(nanoseconds: 10_000_000)
         }
         Issue.record("timed out waiting for: \(label)")
@@ -645,6 +747,181 @@ struct MeetingPipelineTests {
         #expect(await counters.resumeCalls == 1)
 
         coordinator.toggleSession()  // stop
+        await coordinator.settle()
+    }
+
+    @Test func rapidPauseThenResumeSerializesBlockedSourceAndSettlesWholeTail() async {
+        let counters = Counters()
+        let pauseGate = TransitionGate()
+        let engine = FakeSTTEngine(
+            live: [.mic: [.final(seg("x", .mic, 0))]],
+            counters: counters
+        )
+        let source = BlockingCaptureSource(
+            source: .mic,
+            counters: counters,
+            pauseGate: pauseGate
+        )
+        let coordinator = makeCoordinator(engine: engine, source: source)
+
+        coordinator.toggleSession()
+        await waitUntil("started") { coordinator.store.segments.map(\.text) == ["x"] }
+
+        coordinator.togglePause() // desired paused; source pause suspends
+        await waitUntilAsync("pause entered") { await pauseGate.hasEntered() }
+        coordinator.togglePause() // desired capturing; must queue behind pause
+        #expect(coordinator.session.isCapturing)
+
+        let completed = CompletionFlag()
+        let settling = Task { @MainActor in
+            await coordinator.settle()
+            await completed.markCompleted()
+        }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let returnedBeforeRelease = await completed.value()
+        #expect(!returnedBeforeRelease, "settle returned while the overwritten pause was still live")
+
+        await pauseGate.release()
+        await settling.value
+        #expect(await source.activity == .capturing)
+        #expect(await counters.pauseCalls == 1)
+        #expect(await counters.resumeCalls == 1)
+
+        coordinator.toggleSession()
+        await coordinator.settle()
+    }
+
+    @Test func supersededPauseBeforeAdmissionTouchesNoCaptureSource() async {
+        let counters = Counters()
+        let engine = FakeSTTEngine(
+            live: [.mic: [.final(seg("x", .mic, 0))]],
+            counters: counters
+        )
+        let source = BlockingCaptureSource(source: .mic, counters: counters)
+        let coordinator = makeCoordinator(engine: engine, source: source)
+
+        coordinator.toggleSession()
+        await waitUntil("started") { coordinator.store.segments.map(\.text) == ["x"] }
+
+        // No suspension between toggles: the first transition cannot enter its
+        // Task before the desired-state revision advances again.
+        coordinator.togglePause()
+        coordinator.togglePause()
+        await coordinator.settle()
+
+        #expect(coordinator.session.isCapturing)
+        #expect(await source.activity == .capturing)
+        #expect(await counters.pauseCalls == 0)
+        #expect(await counters.resumeCalls == 0)
+
+        coordinator.toggleSession()
+        await coordinator.settle()
+    }
+
+    @Test func rapidResumeThenPauseSerializesBlockedSourceInDesiredOrder() async {
+        let counters = Counters()
+        let resumeGate = TransitionGate()
+        let engine = FakeSTTEngine(
+            live: [.mic: [.final(seg("x", .mic, 0))]],
+            counters: counters
+        )
+        let source = BlockingCaptureSource(
+            source: .mic,
+            counters: counters,
+            resumeGate: resumeGate
+        )
+        let coordinator = makeCoordinator(engine: engine, source: source)
+
+        coordinator.toggleSession()
+        await waitUntil("started") { coordinator.store.segments.map(\.text) == ["x"] }
+        coordinator.togglePause()
+        await coordinator.settle()
+        #expect(await source.activity == .paused)
+
+        coordinator.togglePause() // desired capturing; source resume suspends
+        await waitUntilAsync("resume entered") { await resumeGate.hasEntered() }
+        coordinator.togglePause() // desired paused; must queue behind resume
+        #expect(coordinator.session.isPaused)
+
+        let completed = CompletionFlag()
+        let settling = Task { @MainActor in
+            await coordinator.settle()
+            await completed.markCompleted()
+        }
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        let returnedBeforeRelease = await completed.value()
+        #expect(!returnedBeforeRelease, "settle returned while the overwritten resume was still live")
+
+        await resumeGate.release()
+        await settling.value
+        #expect(await source.activity == .paused)
+        #expect(await counters.pauseCalls == 2)
+        #expect(await counters.resumeCalls == 1)
+
+        coordinator.toggleSession()
+        await coordinator.settle()
+    }
+
+    @Test func blockedPauseDrainsBeforeTeardownAndNextMeetingCapture() async {
+        let firstCounters = Counters()
+        let secondCounters = Counters()
+        let pauseGate = TransitionGate()
+        let firstSource = BlockingCaptureSource(
+            source: .mic,
+            counters: firstCounters,
+            pauseGate: pauseGate
+        )
+        let secondSource = BlockingCaptureSource(source: .mic, counters: secondCounters)
+        let pipelineCount = CallCounter()
+        let coordinator = AppShellCoordinator(
+            panel: FakePanel(), installHotKey: false,
+            makePipeline: { store in
+                pipelineCount.count += 1
+                if pipelineCount.count == 1 {
+                    return MeetingPipeline(
+                        engine: FakeSTTEngine(
+                            live: [.mic: [.final(self.seg("first", .mic, 0))]],
+                            counters: firstCounters
+                        ),
+                        sources: [firstSource],
+                        store: store
+                    )
+                }
+                return MeetingPipeline(
+                    engine: FakeSTTEngine(
+                        live: [.mic: [.final(self.seg("second", .mic, 0))]],
+                        counters: secondCounters
+                    ),
+                    sources: [secondSource],
+                    store: store
+                )
+            },
+            makeDatabase: { try MacapyDatabase.inMemory() }
+        )
+
+        coordinator.toggleSession()
+        await waitUntil("first meeting started") {
+            coordinator.store.segments.map(\.text) == ["first"]
+        }
+        coordinator.togglePause()
+        await waitUntilAsync("first pause entered") { await pauseGate.hasEntered() }
+
+        coordinator.toggleSession() // paused -> idle; invalidates old transition
+        coordinator.toggleSession() // idle -> capturing; start waits old teardown
+        try? await Task.sleep(nanoseconds: 30_000_000)
+        #expect(await secondCounters.captureStarts == 0)
+
+        await pauseGate.release()
+        await coordinator.settle()
+        await waitUntil("second meeting started") {
+            coordinator.store.segments.map(\.text) == ["second"]
+        }
+        #expect(coordinator.session.isCapturing)
+        #expect(await firstSource.activity == .stopped)
+        #expect(await secondSource.activity == .capturing)
+        #expect(await firstCounters.pauseCalls == 1)
+
+        coordinator.toggleSession()
         await coordinator.settle()
     }
 }

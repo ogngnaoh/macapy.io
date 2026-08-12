@@ -7,6 +7,10 @@ import os
 /// settings UI.
 @MainActor
 final class HotKey {
+    static let copilotModifiers = UInt32(optionKey | cmdKey)
+    static let catchUpKeyCode = UInt32(kVK_ANSI_C)
+    static let askKeyCode = UInt32(kVK_ANSI_K)
+    static let dismissCopilotKeyCode = UInt32(kVK_ANSI_D)
     // nonisolated(unsafe): set once in init, released in deinit; Carbon
     // hot-key registration lives on the main run loop, and Swift 6 deinits
     // are nonisolated so plain @MainActor storage can't be touched there.
@@ -37,6 +41,36 @@ final class HotKey {
             keyCode: UInt32(kVK_ANSI_P),
             carbonModifiers: UInt32(optionKey | cmdKey),
             id: 2,
+            handler: handler
+        )
+    }
+
+    /// ⌥⌘C — catch up on the last 90 transcript-seconds.
+    static func catchUp(handler: @escaping @MainActor () -> Void) -> HotKey {
+        HotKey(
+            keyCode: catchUpKeyCode,
+            carbonModifiers: copilotModifiers,
+            id: 3,
+            handler: handler
+        )
+    }
+
+    /// ⌥⌘K — focus/open the meeting query affordance.
+    static func askCopilot(handler: @escaping @MainActor () -> Void) -> HotKey {
+        HotKey(
+            keyCode: askKeyCode,
+            carbonModifiers: copilotModifiers,
+            id: 4,
+            handler: handler
+        )
+    }
+
+    /// ⌥⌘D — dismiss the active copilot card or Ask surface.
+    static func dismissCopilot(handler: @escaping @MainActor () -> Void) -> HotKey {
+        HotKey(
+            keyCode: dismissCopilotKeyCode,
+            carbonModifiers: copilotModifiers,
+            id: 5,
             handler: handler
         )
     }
