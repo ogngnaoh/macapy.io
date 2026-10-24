@@ -1,7 +1,7 @@
 import SwiftUI
 
 // Pieces the M2 settings screens need, transcribed from the approved mockups
-// (design/06-settings.html + tokens.css). Same rule as the rest of the system:
+// (docs/design/06-settings.html + tokens.css). Same rule as the rest of the system:
 // machine voice is mono, human voice is SF, and amber appears only where the
 // mockup earns it.
 
@@ -181,7 +181,7 @@ struct DataTableRow: View {
 
 // MARK: - Stat tile (diagnostics grid)
 
-/// One cell of the diagnostics stat-grid (design/06: `.stat` — surface card,
+/// One cell of the diagnostics stat-grid (docs/design/06: `.stat` — surface card,
 /// hairline stroke, machine eyebrow over a large machine number with a small
 /// unit suffix). Added in slice 4 for the memory/drop tiles.
 struct StatTile: View {

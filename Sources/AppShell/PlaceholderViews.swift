@@ -26,7 +26,7 @@ struct SettingsPlaceholderView: View {
     }
 }
 
-/// The diagnostics stat-grid to design/06 (slice 4): latency percentiles from
+/// The diagnostics stat-grid to docs/design/06 (slice 4): latency percentiles from
 /// the recorder, memory footprint, G2/G3, and pipeline counters. Polls on a
 /// short timer: capture-facing sources are plain lock-protected classes, not
 /// `@Observable`, so polling surfaces fresh numbers without making capture

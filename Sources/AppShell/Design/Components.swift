@@ -114,7 +114,7 @@ struct SignalStripView: View {
         }
     }
 
-    /// Tick pattern transcribed from the approved mockup (design/tokens.css
+    /// Tick pattern transcribed from the approved mockup (docs/design/tokens.css
     /// nth-child rules): voice = amber (you) / slate (them) / faint (idle);
     /// heights and stagger match the CSS cascade exactly.
     private static let ticks: [Tick] = {

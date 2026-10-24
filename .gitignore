@@ -34,3 +34,6 @@ DerivedData/
 
 # Per-machine local config (never tracked; shared config lives in .claude/settings.json)
 .claude/settings.local.json
+
+# Private working notes and architecture/interview reference material.
+/docs/

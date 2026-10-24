@@ -102,7 +102,7 @@ public actor MeetingStore {
         }
     }
 
-    /// One history-list row (slice-05 doc decision, per design/04): the
+    /// One history-list row (slice-05 doc decision, per docs/design/04): the
     /// meeting plus the counts its summary line renders — duration ·
     /// speaker count · artifact count.
     public struct MeetingSummary: Decodable, FetchableRecord, Sendable, Equatable, Identifiable {

@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// SwiftUI translation of `design/tokens.css` — the approved "Quiet
+/// SwiftUI translation of `docs/design/tokens.css` — the approved "Quiet
 /// instrument" system (slice-01, direction record in the slice doc). Every
 /// reskinned view draws its colors, spacing, and radii from here; hex values
 /// match the mockups exactly. Light and dark are co-equal: role tokens adapt

@@ -2,7 +2,7 @@ import PersistKit
 import SwiftUI
 import TranscribeKit
 
-/// History (design/04-history.html): summary rows with duration · speaker
+/// History (docs/design/04-history.html): summary rows with duration · speaker
 /// count · artifact count, and — the moment the search field has text — the
 /// three grouped result sections (Meetings / Transcript passages /
 /// Artifacts) with passage deep-links into meeting detail. One

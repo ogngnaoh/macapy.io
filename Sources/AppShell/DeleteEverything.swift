@@ -49,7 +49,7 @@ final class DeleteEverythingModel: Identifiable {
 
 /// The custom type-to-confirm sheet (slice-05 doc decision 7) — composed
 /// purely from existing tokens/components; the design record is the sheet
-/// card in design/06-settings.html.
+/// card in docs/design/06-settings.html.
 struct DeleteEverythingSheet: View {
     @Bindable var model: DeleteEverythingModel
     let onDismiss: () -> Void

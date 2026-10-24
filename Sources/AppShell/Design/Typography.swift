@@ -38,7 +38,7 @@ enum FontRegistrar {
 }
 
 /// Human-voice roles (SF, the system face): UI chrome and transcript text.
-/// Sizes come from the approved scale (design/tokens.css --text-*).
+/// Sizes come from the approved scale (docs/design/tokens.css --text-*).
 enum UIType {
     /// 13pt — transcript lines, controls, row titles (semibold variant).
     static let body = Font.system(size: 13)

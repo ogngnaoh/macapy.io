@@ -2,7 +2,7 @@ import PersistKit
 import SwiftUI
 import TranscribeKit
 
-/// Meeting detail (design/05-meeting-detail.html): header bar (click-to-edit
+/// Meeting detail (docs/design/05-meeting-detail.html): header bar (click-to-edit
 /// title, meta line, Delete…), transcript replay with minute dividers on the
 /// left, artifacts pane on the right — drafts under review, or the pending /
 /// setup / cap-halt states when there are no rows yet.

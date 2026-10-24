@@ -22,7 +22,7 @@ enum SpendFormat {
 }
 
 /// The settings window: four tabs, matching the approved mockups
-/// (design/06-settings.html). Slice 2 builds Providers and Spend; General and
+/// (docs/design/06-settings.html). Slice 2 builds Providers and Spend; General and
 /// Diagnostics carry what already exists.
 struct SettingsWindowView: View {
     let coordinator: AppShellCoordinator
