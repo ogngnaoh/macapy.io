@@ -144,7 +144,9 @@ private final class DiarizationCompletion: @unchecked Sendable {
         waiting?.resume(returning: result)
     }
 
-    func wait(grace: Duration) async -> DiarizationWorkerResult? {
+    func wait(
+        grace: Duration, sleep: @escaping @Sendable (Duration) async -> Void
+    ) async -> DiarizationWorkerResult? {
         await withCheckedContinuation { continuation in
             let immediate = lock.withLock { () -> (Bool, DiarizationWorkerResult?) in
                 if completed { return (true, result) }
@@ -155,7 +157,7 @@ private final class DiarizationCompletion: @unchecked Sendable {
             if immediate.0 { continuation.resume(returning: immediate.1) }
             else {
                 Task.detached { [self] in
-                    try? await Task.sleep(for: grace)
+                    await sleep(grace)
                     finish(nil)
                 }
             }
@@ -223,7 +225,11 @@ final class OptionalDiarizationWorker: @unchecked Sendable {
     func enqueueFinal(_ segment: DiarizationSegmentSnapshot) { if !inbox.append(.final(segment)) { disable() } }
     func finishInput() { inbox.finish() }
     var droppedAudio: Int { inbox.droppedAudio }
-    func result(grace: Duration) async -> DiarizationWorkerResult? { await completion.wait(grace: grace) }
+    func result(
+        grace: Duration, sleep: @escaping @Sendable (Duration) async -> Void
+    ) async -> DiarizationWorkerResult? {
+        await completion.wait(grace: grace, sleep: sleep)
+    }
 
     func disable() {
         if fence.invalidate() { Task { @MainActor [onUnavailable] in onUnavailable() } }

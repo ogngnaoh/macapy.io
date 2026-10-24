@@ -86,13 +86,17 @@ struct OptionalDiarizationLifecycleTests {
     private func makePipeline(
         store: TranscriptStore, source: Source, lease: OptionalDiarizationLease,
         grace: Duration = .milliseconds(40),
+        sleepGrace: @escaping @Sendable (Duration) async -> Void = { duration in
+            try? await Task.sleep(for: duration)
+        },
         make: @escaping @Sendable () throws -> DiarizationSession
     ) -> MeetingPipeline {
         let segment = Segment(id: UUID(), source: .system, text: "Fictional project checkpoint.", tStart: 1, tEnd: 2)
         let engine = MeetingPipelineTests.FakeSTTEngine(
             live: [.system: [.final(segment)]], counters: .init())
         return MeetingPipeline(engine: engine, sources: [source], store: store,
-                               makeDiarizer: make, diarizationLease: lease, diarizationGrace: grace)
+                               makeDiarizer: make, diarizationLease: lease, diarizationGrace: grace,
+                               sleepDiarizationGrace: sleepGrace)
     }
 
     @Test func stalledInitializationDoesNotDelayCaptureAndLeaseOutlivesCancellation() async throws {
@@ -152,16 +156,31 @@ struct OptionalDiarizationLifecycleTests {
     func uncancellableIngestOrFinalizeCannotDelayStopOrWriteLate(finalize: Bool) async throws {
         let lease = OptionalDiarizationLease()
         let gate = Gate()
-        let watchdog = Task.detached { try? await Task.sleep(for: .seconds(30)); await gate.release() }
+        let graceGate = Gate()
+        let watchdog = Task.detached {
+            try? await Task.sleep(for: .seconds(30))
+            await gate.release()
+            await graceGate.release()
+        }
         defer { watchdog.cancel() }
         let engine = Engine(ingest: finalize ? nil : gate, finish: finalize ? gate : nil)
         let store = TranscriptStore()
         let meetings = MeetingStore(database: try MacapyDatabase.inMemory())
-        let pipeline = makePipeline(store: store, source: Source(), lease: lease) { DiarizationSession(engine: engine) }
+        let pipeline = makePipeline(
+            store: store, source: Source(), lease: lease,
+            sleepGrace: { _ in await graceGate.wait() }
+        ) { DiarizationSession(engine: engine) }
         try await pipeline.start(mode: .persistent(meetings))
         try await waitUntil { !store.segments.isEmpty }
         if !finalize { try await waitUntil { await gate.entered } }
-        let id = try #require(await pipeline.stop())
+        let stop = Task { await pipeline.stop() }
+        defer { stop.cancel() }
+        // Enter the exact blocked phase before expiring the grace timer.
+        // A shared runner's scheduling delay cannot choose a different phase.
+        try await waitUntil { await gate.entered }
+        try await waitUntil { await graceGate.entered }
+        await graceGate.release()
+        let id = try #require(await stop.value)
         #expect(await gate.isClosed, "Stop must complete before the blocked engine is released")
         #expect(lease.isOccupied)
         #expect(await gate.entered)

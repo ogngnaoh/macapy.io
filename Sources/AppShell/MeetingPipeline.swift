@@ -64,6 +64,7 @@ final class MeetingPipeline {
     private let makeDiarizer: (@Sendable () throws -> DiarizationSession)?
     private let diarizationLease: OptionalDiarizationLease
     private let diarizationGrace: Duration
+    private let sleepDiarizationGrace: @Sendable (Duration) async -> Void
     private var diarizationWorker: OptionalDiarizationWorker?
     private var diarizationFinalsTask: Task<Void, Never>?
     private var endedDiarizationDrops = 0
@@ -84,7 +85,10 @@ final class MeetingPipeline {
         sttErrorCounter: STTErrorCounter = STTErrorCounter(),
         makeDiarizer: (@Sendable () throws -> DiarizationSession)? = nil,
         diarizationLease: OptionalDiarizationLease = .shared,
-        diarizationGrace: Duration = .milliseconds(250)
+        diarizationGrace: Duration = .milliseconds(250),
+        sleepDiarizationGrace: @escaping @Sendable (Duration) async -> Void = { duration in
+            try? await Task.sleep(for: duration)
+        }
     ) {
         self.engine = engine
         self.sources = sources
@@ -96,6 +100,7 @@ final class MeetingPipeline {
         self.makeDiarizer = makeDiarizer
         self.diarizationLease = diarizationLease
         self.diarizationGrace = diarizationGrace
+        self.sleepDiarizationGrace = sleepDiarizationGrace
     }
 
     /// Flips the pipeline to "stopping" synchronously, so a `start()` still
@@ -345,7 +350,7 @@ final class MeetingPipeline {
         diarizationFinalsTask = nil
         if let worker = diarizationWorker {
             worker.finishInput()
-            if let outcome = await worker.result(grace: diarizationGrace),
+            if let outcome = await worker.result(grace: diarizationGrace, sleep: sleepDiarizationGrace),
                worker.fence.isCurrent, let meetingStore, let meetingID {
                 do {
                     let result = outcome.diarization
