@@ -15,6 +15,14 @@ import TranscribeKit
 @MainActor
 struct DiarizedPipelineTests {
 
+    private func waitForLabels(_ ids: [UUID], in store: TranscriptStore) async throws {
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while !ids.allSatisfy({ store.speakerLabels[$0] != nil }) && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(ids.allSatisfy { store.speakerLabels[$0] != nil })
+    }
+
     /// Emits scripted finals, then drains until capture stops. A natural live
     /// EOF is now correctly considered a capture/transcription interruption.
     private struct ScriptedFinalsEngine: STTEngine {
@@ -113,10 +121,13 @@ struct DiarizedPipelineTests {
             ],
             store: store,
             makeDiarizer: { DiarizationSession(engine: engine) },
-            diarizationLease: OptionalDiarizationLease()
+            diarizationLease: OptionalDiarizationLease(),
+            // This verifies attribution, not a shared runner's scheduling speed.
+            diarizationGrace: .seconds(30)
         )
 
         try await pipeline.start(mode: .persistent(meetingStore))
+        try await waitForLabels([themA.id, themB.id], in: store)
         let meetingID = try #require(await pipeline.stop())
 
         // Live map: them-only (check 4).
@@ -152,10 +163,12 @@ struct DiarizedPipelineTests {
             sources: [ScriptedSource(source: .system, chunkCount: 2)],
             store: store,
             makeDiarizer: { DiarizationSession(engine: engine) },
-            diarizationLease: OptionalDiarizationLease()
+            diarizationLease: OptionalDiarizationLease(),
+            diarizationGrace: .seconds(30)
         )
 
         try await pipeline.start(mode: .persistent(meetingStore))
+        try await waitForLabels([early.id, late.id], in: store)
         let meetingID = try #require(await pipeline.stop())
 
         let speakers = try await meetingStore.speakers(for: meetingID)
