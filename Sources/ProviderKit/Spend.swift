@@ -137,6 +137,7 @@ public actor SpendMeter {
         var model: String
         var purpose: Purpose
         var heldCostUSD: Double?
+        var durable: DurableUsageReservation? = nil
     }
 
     /// M2 requests did not require `maxTokens`. Keeping them source-compatible
@@ -174,6 +175,11 @@ public actor SpendMeter {
     /// in-flight work, but it cannot reserve capacity without a request shape.
     public func authorize(meetingID: UUID?) async throws {
         guard let capUSD, let meetingID else { return }
+        if let durable = ledger as? any DurableUsageLedger {
+            let committed = try await durable.usageCommitmentUSD(meetingID: meetingID)
+            guard committed < capUSD else { throw ProviderError.capReached(spentUSD: committed, capUSD: capUSD) }
+            return
+        }
         let spent = try await ledger.totalCostUSD(meetingID: meetingID)
         let committed = spent
             + uncertainCostUSD(meetingID: meetingID)
@@ -187,6 +193,9 @@ public actor SpendMeter {
     /// cost before the upstream provider can receive a request.
     public func reserve(_ request: CompletionRequest, meetingID: UUID?) async throws -> SpendReservation {
         try Task.checkCancellation()
+        if let meetingID, ledger is any DurableUsageLedger {
+            return try await reserveDurable(request, scope: .meeting(meetingID), job: nil)
+        }
         let estimate = requestCostCeilingUSD(request)
         var heldCost = estimate
         if let capUSD, let meetingID {
@@ -226,6 +235,35 @@ public actor SpendMeter {
         return reservation
     }
 
+    public func reserveBackground(_ request: CompletionRequest, scope: UsageScope, job: BackgroundUsageJob) async throws -> SpendReservation {
+        try await reserveDurable(request, scope: scope, job: job)
+    }
+
+    private func reserveDurable(_ request: CompletionRequest, scope: UsageScope, job: BackgroundUsageJob?) async throws -> SpendReservation {
+        try Task.checkCancellation()
+        guard let durable = ledger as? any DurableUsageLedger else { throw DurableUsageError.requiresDurableLedger }
+        let held = try await durable.admitUsage(UsageAdmission(
+            scope: scope, job: job, model: request.model, purpose: request.purpose,
+            estimatedCostUSD: requestCostCeilingUSD(request), meetingCapUSD: scope.meetingID == nil ? nil : capUSD))
+        do { try Task.checkCancellation() }
+        catch { try? await durable.cancelUsage(id: held.id); throw error }
+        let reservation = SpendReservation(id: held.id, meetingID: scope.meetingID, estimatedCostUSD: held.estimatedCostUSD)
+        reservations[held.id] = ReservationState(meetingID: scope.meetingID, model: request.model, purpose: request.purpose,
+                                                 heldCostUSD: held.heldCostUSD, durable: held)
+        return reservation
+    }
+
+    /// A failed durable dispatch marker prevents the provider call. This closes
+    /// the crash window between successful admission and network dispatch.
+    public func markDispatched(_ reservation: SpendReservation) async throws {
+        try Task.checkCancellation()
+        guard let state = reservations[reservation.id] else { throw DurableUsageError.invalidState }
+        if state.durable != nil, let durable = ledger as? any DurableUsageLedger {
+            try await durable.markUsageDispatched(id: reservation.id)
+        }
+        try Task.checkCancellation()
+    }
+
     /// Settles one reservation using provider-reported usage. The reservation
     /// stays held until the ledger write completes; once actual cost is known,
     /// the held amount is raised to that cost first so concurrent gates cannot
@@ -237,6 +275,18 @@ public actor SpendMeter {
         at: Date = Date()
     ) async throws -> SpendEntry? {
         guard var state = reservations[reservation.id] else { return nil }
+        if state.durable != nil, let durable = ledger as? any DurableUsageLedger {
+            defer { finishReservation(reservation.id, state: state, retainingUncertainDebit: false) }
+            do {
+                return try await durable.settleUsage(id: reservation.id, usage: usage,
+                    costUSD: usage.flatMap { pricing.estimatedCostUSD(model: state.model, usage: $0) }, at: at)
+            } catch {
+                // A failed settlement leaves a durable hold. Best-effort state
+                // labeling may fail too; relaunch still converts it to unknown.
+                try? await durable.cancelUsage(id: reservation.id)
+                throw error
+            }
+        }
         guard let usage else {
             finishReservation(reservation.id, state: state, retainingUncertainDebit: true)
             return nil
@@ -275,7 +325,12 @@ public actor SpendMeter {
     }
 
     /// Releases a call that failed or was cancelled before reporting usage.
-    public func cancel(_ reservation: SpendReservation) {
+    public func cancel(_ reservation: SpendReservation) async {
+        if let state = reservations[reservation.id], state.durable != nil,
+           let durable = ledger as? any DurableUsageLedger {
+            do { try await durable.cancelUsage(id: reservation.id) }
+            catch { ProviderLog.bookingFailed(model: state.model, purpose: state.purpose, error: error) }
+        }
         reservations.removeValue(forKey: reservation.id)
         resumeSettlementWaitersIfIdle()
     }
@@ -288,8 +343,11 @@ public actor SpendMeter {
     /// Conservative completed-call debits not represented in the ledger.
     /// Exposed for diagnostics and focused invariant tests; callers should use
     /// `spentUSD` for the user-facing persistent estimate.
-    public func uncertainUSD(meetingID: UUID) -> Double {
-        uncertainCostUSD(meetingID: meetingID)
+    public func uncertainUSD(meetingID: UUID) async -> Double {
+        if let durable = ledger as? any DurableUsageLedger {
+            return (try? await durable.usageUncertainUSD(meetingID: meetingID)) ?? 0
+        }
+        return uncertainCostUSD(meetingID: meetingID)
     }
 
     /// Suspends until every active reservation has either settled or been
@@ -427,11 +485,41 @@ public struct MeteredProvider: LLMProvider {
     let meter: SpendMeter
     /// `nil` for calls outside a meeting; those are booked but never capped.
     let meetingID: UUID?
+    private let background: (scope: UsageScope, job: BackgroundUsageJob)?
+    private let beforeDispatch: @Sendable () async -> Bool
 
-    public init(upstream: any LLMProvider, meter: SpendMeter, meetingID: UUID?) {
+    public init(upstream: any LLMProvider, meter: SpendMeter, meetingID: UUID?, beforeDispatch: @escaping @Sendable () async -> Bool = { true }) {
         self.upstream = upstream
         self.meter = meter
         self.meetingID = meetingID
+        self.background = nil
+        self.beforeDispatch = beforeDispatch
+    }
+
+    public init(upstream: any LLMProvider, meter: SpendMeter, scope: UsageScope, job: BackgroundUsageJob,
+                beforeDispatch: @escaping @Sendable () async -> Bool = { true }) {
+        self.upstream = upstream; self.meter = meter; self.meetingID = scope.meetingID
+        self.background = (scope, job)
+        self.beforeDispatch = beforeDispatch
+    }
+
+    /// Adds a last-moment source fence to this same metered provider. No second
+    /// meter or reservation is created, and the original global fence wins.
+    public func requiringDispatchValidation(_ validation: @escaping @Sendable () async -> Bool) -> MeteredProvider {
+        let previous = beforeDispatch
+        let combined: @Sendable () async -> Bool = {
+            guard await previous() else { return false }
+            return await validation()
+        }
+        if let background {
+            return MeteredProvider(upstream: upstream, meter: meter, scope: background.scope, job: background.job, beforeDispatch: combined)
+        }
+        return MeteredProvider(upstream: upstream, meter: meter, meetingID: meetingID, beforeDispatch: combined)
+    }
+
+    private func reserve(_ request: CompletionRequest) async throws -> SpendReservation {
+        if let background { return try await meter.reserveBackground(request, scope: background.scope, job: background.job) }
+        return try await meter.reserve(request, meetingID: meetingID)
     }
 
     public func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
@@ -439,11 +527,13 @@ public struct MeteredProvider: LLMProvider {
             let task = Task {
                 var reservation: SpendReservation?
                 do {
-                    let held = try await meter.reserve(request, meetingID: meetingID)
+                    let held = try await reserve(request)
                     reservation = held
                     var usage: TokenUsage?
                     var terminalEvent: LLMEvent?
                     do {
+                        try await meter.markDispatched(held)
+                        guard await beforeDispatch(), !Task.isCancelled else { throw CancellationError() }
                         for try await event in upstream.stream(request) {
                             if case .completed(let completion) = event {
                                 usage = completion.usage
@@ -501,8 +591,10 @@ public struct MeteredProvider: LLMProvider {
         _ request: CompletionRequest,
         as type: T.Type
     ) async throws -> CompletedCall<T> {
-        let reservation = try await meter.reserve(request, meetingID: meetingID)
+        let reservation = try await reserve(request)
         do {
+            try await meter.markDispatched(reservation)
+            guard await beforeDispatch(), !Task.isCancelled else { throw CancellationError() }
             let result = try await upstream.completeReportingUsage(request, as: type)
             await settleLoggingFailure(reservation, usage: result.usage, request: request)
             return result

@@ -1,0 +1,42 @@
+name: Verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline:
+    name: Offline tests and native build
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      DEVELOPER_DIR: /Applications/Xcode.app/Contents/Developer
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Record toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+          test "$(uname -m)" = arm64
+      - name: Check verification lane isolation
+        run: |
+          scripts/test-verification-lanes.sh
+          python3 scripts/test-release-tools.py
+          scripts/test-retrieval-tools.sh
+      - name: Run deterministic tests and compile the app
+        run: scripts/verify.sh offline
+
+# Installed-model evidence and billable provider evidence are deliberately local
+# opt-in lanes. This workflow never receives provider secrets or installs models.

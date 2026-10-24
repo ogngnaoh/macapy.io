@@ -7,6 +7,7 @@ import os
 /// settings UI.
 @MainActor
 final class HotKey {
+    private(set) var isRegistered = false
     static let copilotModifiers = UInt32(optionKey | cmdKey)
     static let catchUpKeyCode = UInt32(kVK_ANSI_C)
     static let askKeyCode = UInt32(kVK_ANSI_K)
@@ -75,7 +76,7 @@ final class HotKey {
         )
     }
 
-    init(keyCode: UInt32, carbonModifiers: UInt32, id: UInt32, handler: @escaping @MainActor () -> Void) {
+    init(keyCode: UInt32, carbonModifiers: UInt32, id: UInt32, exclusive: Bool = false, handler: @escaping @MainActor () -> Void) {
         self.handler = handler
         self.id = id
 
@@ -133,12 +134,13 @@ final class HotKey {
             carbonModifiers,
             hotKeyID,
             GetEventDispatcherTarget(),
-            0,
+            exclusive ? OptionBits(kEventHotKeyExclusive) : 0,
             &hotKeyRef
         )
         if registerStatus != noErr {
             Self.log.error("RegisterEventHotKey failed: \(registerStatus)")
         }
+        isRegistered = registerStatus == noErr
     }
 
     deinit {

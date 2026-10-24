@@ -51,6 +51,7 @@ public enum Purpose: String, Sendable, Codable, CaseIterable {
     case generation
     case artifact
     case memory
+    case brief
 }
 
 /// One chat message. `reasoningContent` exists for DeepSeek's continuation
@@ -125,6 +126,8 @@ public struct CompletionRequest: Sendable {
     /// Whether this call is a thinking-mode request (quirks may strip sampling
     /// parameters for these — see `Quirks.ignoresSamplingParamsWhenThinking`).
     public var thinking: Bool
+    /// Disclosure metadata; never serialized into provider-specific fields.
+    public var contextSources: [RequestSourceClass]
 
     public init(
         model: String,
@@ -133,7 +136,8 @@ public struct CompletionRequest: Sendable {
         responseFormat: ResponseFormat? = nil,
         temperature: Double? = nil,
         maxTokens: Int? = nil,
-        thinking: Bool = false
+        thinking: Bool = false,
+        contextSources: [RequestSourceClass] = [.transcript]
     ) {
         self.model = model
         self.messages = messages
@@ -142,6 +146,7 @@ public struct CompletionRequest: Sendable {
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.thinking = thinking
+        self.contextSources = contextSources
     }
 }
 

@@ -10,10 +10,10 @@ import TranscribeKit
 
 /// Live checks 9 and 11 (slice-03, re-expressed 2026-08-06 under the
 /// no-manual-checks ruling): the real extraction path against the real
-/// DeepSeek endpoint. Skipped, never failed, without the key — see
-/// `LiveCredentials`. Spends a fraction of a cent of the author's credit per
-/// run, booked through the same metered chain as production.
-@Suite(.enabled(if: LiveCredentials.hasDeepSeek))
+/// DeepSeek endpoint. Requires the explicit live-provider lane and a key.
+/// Calls are booked through the same metered chain as production; approve a
+/// bounded run before enabling the lane.
+@Suite(.enabled(if: TestRunPolicy.runsLiveProvider, "Requires MACAPY_RUN_LIVE_PROVIDER_TESTS=1 and a nonempty MACAPY_DEEPSEEK_KEY; billable/network lane"))
 struct PostMeetingLiveTests {
 
     /// A fixture meeting with *unambiguous* ground truth: one explicitly

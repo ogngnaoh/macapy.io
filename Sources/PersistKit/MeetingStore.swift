@@ -19,7 +19,8 @@ public enum MeetingStoreError: Error, Equatable {
 /// outside this actor still need `await` at the call site (Swift's implicit
 /// async for cross-actor calls) even though no method here is `async`.
 public actor MeetingStore {
-    private let database: MacapyDatabase
+    // Internal for focused, same-module transactional store extensions.
+    let database: MacapyDatabase
 
     public init(database: MacapyDatabase) {
         self.database = database
@@ -27,9 +28,9 @@ public actor MeetingStore {
 
     /// Inserts a new `meetings` row (`status = .active`) and returns it.
     @discardableResult
-    public func beginMeeting(startedAt: Date, ephemeral: Bool) throws -> MeetingRecord {
+    public func beginMeeting(id: UUID = UUID(), startedAt: Date, ephemeral: Bool) throws -> MeetingRecord {
         let record = MeetingRecord(
-            id: UUID(),
+            id: id,
             title: Self.defaultTitle(for: startedAt),
             startedAt: startedAt,
             endedAt: nil,
@@ -97,6 +98,7 @@ public actor MeetingStore {
 
     /// Deletes a meeting; `segments` rows cascade via the FK (SPEC §6.2).
     public func deleteMeeting(id: MeetingRecord.ID) throws {
+        try database.purgeMigrationSnapshot()
         try database.dbWriter.write { db in
             _ = try MeetingRecord.deleteOne(db, id: id)
         }
@@ -120,7 +122,7 @@ public actor MeetingStore {
             endedAt.map { $0.timeIntervalSince(startedAt) }
         }
 
-        public var hasEnded: Bool { status == MeetingRecord.endedStatus }
+        public var hasEnded: Bool { asRecord.hasEnded }
 
         /// The summary's meeting fields as a `MeetingRecord` — for callers
         /// (meeting detail) whose API speaks records.
@@ -178,8 +180,14 @@ public actor MeetingStore {
     /// checkpoint empties the WAL — that pair is what makes the byte-grep
     /// residue oracle (check 13) possible.
     public func deleteAllUserData() throws {
+        try database.purgeMigrationSnapshot()
         try database.dbWriter.write { db in
+            try BackgroundUsageSchema.deleteAll(in: db)
+            try BriefSchema.deleteAll(in: db)
             try db.execute(sql: "DELETE FROM meetings")
+            try MemorySchema.deleteAll(in: db)
+            try ActionSchema.deleteAll(in: db)
+            try SettingsStore.clearPersonalName(in: db)
             try db.execute(sql: "DELETE FROM spend_ledger")
             // The `_ad` triggers only *mark* index entries deleted — the FTS5
             // segment blobs in `*_fts_data` still contain the dead tokens

@@ -40,8 +40,9 @@ extension MeetingRecord {
     /// meeting detail decides "artifacts-pending" off `status == endedStatus`.
     public static let activeStatus = "active"
     public static let endedStatus = "ended"
+    public static let interruptedStatus = "interrupted"
 
-    public var hasEnded: Bool { status == Self.endedStatus }
+    public var hasEnded: Bool { status == Self.endedStatus || status == Self.interruptedStatus }
 }
 
 /// The `segments` row. Internal to PersistKit: `MeetingStore` converts to/from

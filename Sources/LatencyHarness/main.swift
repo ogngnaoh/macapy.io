@@ -21,7 +21,11 @@ guard arguments.count == 1 else {
 let fixtureURL = URL(fileURLWithPath: arguments[0])
 
 do {
-    let report = try await runHarness(fixtureURL: fixtureURL, diarize: diarize)
+    // Measurements require preinstalled assets. A benchmark must never turn
+    // into an implicit networked setup operation.
+    let report = try await runHarness(
+        fixtureURL: fixtureURL, diarize: diarize, assetInstallationPolicy: .installedOnly
+    )
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     let data = try encoder.encode(report)

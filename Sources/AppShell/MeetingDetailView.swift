@@ -1,6 +1,9 @@
+import AppKit
+import ActionKit
 import PersistKit
 import SwiftUI
 import TranscribeKit
+import UniformTypeIdentifiers
 
 /// Meeting detail (docs/design/05-meeting-detail.html): header bar (click-to-edit
 /// title, meta line, Delete…), transcript replay with minute dividers on the
@@ -30,20 +33,33 @@ struct MeetingDetailView: View {
     @State private var isEditingTitle = false
     @State private var titleDraft = ""
     @State private var confirmingDelete = false
+    @State private var showingExport = false
     @FocusState private var titleFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             headerBar
+            if meeting.status == MeetingRecord.interruptedStatus {
+                Label("Recovered committed transcript after an interrupted session. Audio and unsaved words cannot be recovered.",
+                      systemImage: "exclamationmark.triangle")
+                    .font(UIType.small)
+                    .foregroundStyle(DesignTokens.statusWarning)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(DesignTokens.Space.s3)
+                    .background(DesignTokens.statusWarningSurface)
+            }
             HStack(spacing: 0) {
                 transcriptPane
                     .frame(maxWidth: .infinity)
                 Divider().overlay(DesignTokens.hairline)
                 ArtifactsPane(model: model)
-                    .frame(minWidth: 260, idealWidth: 330, maxWidth: 400)
+                    .frame(minWidth: 300, idealWidth: 360, maxWidth: 430)
             }
         }
-        .navigationTitle(meeting.title)
+        .background(DesignTokens.bg)
+        .sheet(isPresented: $showingExport) {
+            if let model { MeetingExportSheet(model: model) }
+        }
         .task(id: meeting.id) {
             await loadTranscript()
             let built = makeModel(meeting)
@@ -55,61 +71,66 @@ struct MeetingDetailView: View {
     // MARK: - Header (the mockup's titlebar row)
 
     private var headerBar: some View {
-        HStack(spacing: DesignTokens.Space.s2) {
-            if isEditingTitle {
-                TextField("Meeting title", text: $titleDraft)
-                    .textFieldStyle(.plain)
-                    .font(UIType.bodySemibold)
-                    .foregroundStyle(DesignTokens.text)
-                    .focused($titleFocused)
-                    .frame(maxWidth: 320)
-                    .onSubmit { Task { await commitRename() } }
-                    .onExitCommand { isEditingTitle = false }
-                    .onChange(of: titleFocused) { _, focused in
-                        if !focused && isEditingTitle {
-                            Task { await commitRename() }
-                        }
-                    }
-            } else {
-                Button {
-                    guard onRename != nil else { return }
-                    titleDraft = meeting.title
-                    isEditingTitle = true
-                    titleFocused = true
-                } label: {
-                    Text(meeting.title)
-                        .font(UIType.bodySemibold)
+        HStack(alignment: .top, spacing: 20) {
+            VStack(alignment: .leading, spacing: 10) {
+                if isEditingTitle {
+                    TextField("meeting title", text: $titleDraft)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 28, weight: .regular))
                         .foregroundStyle(DesignTokens.text)
-                        .lineLimit(1)
+                        .focused($titleFocused)
+                        .onSubmit { Task { await commitRename() } }
+                        .onExitCommand { isEditingTitle = false }
+                        .onChange(of: titleFocused) { _, focused in
+                            if !focused && isEditingTitle { Task { await commitRename() } }
+                        }
+                } else {
+                    Button {
+                        guard onRename != nil else { return }
+                        titleDraft = meeting.title
+                        isEditingTitle = true
+                        titleFocused = true
+                    } label: {
+                        Text(meeting.title)
+                            .font(.system(size: 28, weight: .regular))
+                            .foregroundStyle(DesignTokens.text)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(onRename == nil)
+                    .accessibilityLabel("Meeting title: \(meeting.title). Click to rename")
                 }
-                .buttonStyle(.plain)
-                .disabled(onRename == nil)
-                .accessibilityLabel("Meeting title: \(meeting.title). Click to rename")
+                Text(HistoryRowFormat.detailMetaLine(startedAt: meeting.startedAt, endedAt: meeting.endedAt))
+                    .font(UIType.small)
+                    .foregroundStyle(DesignTokens.textSecondary)
             }
-            Text(HistoryRowFormat.detailMetaLine(startedAt: meeting.startedAt, endedAt: meeting.endedAt))
-                .font(MachineType.number())
-                .foregroundStyle(DesignTokens.textTertiary)
-            Spacer()
+            Spacer(minLength: 0)
+            if meeting.hasEnded, let model {
+                Button("copy / export…") { showingExport = true }
+                    .buttonStyle(SubtleButtonStyle()).disabled(model.isExporting)
+            }
             if meeting.hasEnded, onDelete != nil {
-                Button("Delete…") { confirmingDelete = true }
-                    .buttonStyle(SubtleButtonStyle())
-                    .accessibilityLabel("Delete meeting")
+                Menu {
+                    Button("delete meeting…", role: .destructive) { confirmingDelete = true }
+                } label: { Image(systemName: "ellipsis").frame(width: 25, height: 25) }
+                .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("Meeting actions")
             }
         }
-        .padding(.horizontal, DesignTokens.Space.s4)
-        .padding(.vertical, DesignTokens.Space.s2)
-        .background(DesignTokens.surface)
-        .overlay(alignment: .bottom) { Divider().overlay(DesignTokens.hairline) }
+        .padding(.horizontal, 25)
+        .padding(.vertical, 25)
+        .background(DesignTokens.bg)
+        .overlay(alignment: .bottom) { Rectangle().fill(DesignTokens.hairline).frame(height: 1) }
         .confirmationDialog(
             "Delete “\(meeting.title)”?",
             isPresented: $confirmingDelete,
             titleVisibility: .visible
         ) {
-            Button("Delete Meeting", role: .destructive) {
+            Button("delete meeting", role: .destructive) {
                 Task { await onDelete?() }
             }
         } message: {
-            Text("Its transcript, artifacts, and spend records are removed from this Mac. This can't be undone.")
+            Text("its transcript, artifacts, and spend records are removed from this mac. this can't be undone.")
         }
     }
 
@@ -146,9 +167,9 @@ struct MeetingDetailView: View {
         .overlay {
             if segments.isEmpty {
                 if let transcriptError {
-                    EmptyStateView(title: "Couldn't load transcript", message: transcriptError)
+                    EmptyStateView(title: "couldn't load transcript", message: transcriptError)
                 } else {
-                    EmptyStateView(title: "No transcript", message: "This meeting has no captured lines.")
+                    EmptyStateView(title: "no transcript", message: "This meeting has no captured lines.")
                 }
             }
         }
@@ -159,7 +180,7 @@ struct MeetingDetailView: View {
         switch row {
         case .minuteMark(let minute):
             Text(TranscriptRows.timestampLabel(minute: minute))
-                .font(MachineType.number(8.5))
+                .font(MachineType.number(11))
                 .foregroundStyle(DesignTokens.textTertiary)
                 .padding(.horizontal, DesignTokens.Space.s3)
                 .padding(.top, 6)
@@ -199,7 +220,7 @@ struct MeetingDetailView: View {
         do {
             segments = try await store.attributedSegments(for: meeting.id)
         } catch {
-            transcriptError = error.localizedDescription
+            transcriptError = "The transcript could not be opened. Reopen this meeting and try again."
         }
     }
 }
@@ -225,7 +246,8 @@ private struct ArtifactsPane: View {
         if let model {
             switch model.state {
             case .loading:
-                EmptyView()
+                ProgressView("loading meeting output…")
+                    .font(UIType.small)
             case .review:
                 ReviewSections(model: model)
             case .meetingInProgress:
@@ -236,12 +258,12 @@ private struct ArtifactsPane: View {
                 PaneNote(text: "Add a provider in Settings to draft a summary, decisions, and action items from this meeting.")
             case .halted(let spentUSD, let capUSD):
                 PaneNote(text: String(
-                    format: "AI stopped at this meeting's $%.2f cap ($%.2f spent). The transcript is complete and safe.",
+                    format: "ai stopped at this meeting's $%.2f cap ($%.2f spent). The transcript is complete and safe.",
                     capUSD, spentUSD))
             case .generating:
                 HStack(spacing: DesignTokens.Space.s2) {
                     ProgressView().controlSize(.small)
-                    Text("Drafting artifacts…")
+                    Text("drafting artifacts…")
                         .font(UIType.small)
                         .foregroundStyle(DesignTokens.textSecondary)
                 }
@@ -249,7 +271,7 @@ private struct ArtifactsPane: View {
             case .failed(let message):
                 VStack(alignment: .leading, spacing: DesignTokens.Space.s3) {
                     PaneNote(text: message)
-                    generateButton(model: model, title: "Try again")
+                    generateButton(model: model, title: "try again")
                 }
             case .unavailable:
                 PaneNote(text: "Artifacts are unavailable — the meeting database couldn't be opened.")
@@ -261,9 +283,9 @@ private struct ArtifactsPane: View {
 
     private func pendingNote(model: MeetingDetailModel) -> some View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.s3) {
-            SectionHead(title: "Artifacts")
+            SectionHead(title: "artifacts")
             PaneNote(text: "Artifacts weren't generated for this meeting yet. The transcript is complete and safe.")
-            generateButton(model: model, title: "Generate artifacts")
+            generateButton(model: model, title: "generate output")
         }
     }
 
@@ -276,111 +298,319 @@ private struct ArtifactsPane: View {
     }
 }
 
-/// The pane's review body: Summary / Decisions / Action items, to the mockup's
-/// section anatomy.
+/// Generated content remains editable and reviewable. Completion is a
+/// separate local task state; review never dispatches an external action.
 private struct ReviewSections: View {
     let model: MeetingDetailModel
+    @State private var editing: ArtifactRecord?
+    @State private var actionReview: ActionReviewModel?
 
     var body: some View {
-        if !model.summaries.isEmpty {
-            VStack(alignment: .leading, spacing: DesignTokens.Space.s2) {
-                SectionHead(
-                    title: "Summary",
-                    chip: model.summaries.first.map { chip(for: $0) },
-                    draftedIn: model.lastDraftedInSeconds
-                )
-                ForEach(model.summaries) { summary in
-                    ArtifactCard {
-                        Text(summary.payload(as: SummaryPayload.self)?.text ?? "")
-                            .font(UIType.body)
-                            .lineSpacing(3)
-                            .foregroundStyle(DesignTokens.text)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+        VStack(alignment: .leading, spacing: DesignTokens.Space.s4) {
+            Text("review the draft")
+                .font(UIType.heading)
+                .foregroundStyle(DesignTokens.text)
+            FormNote("corrections stay on this mac. reviewing an item does not complete a task or create a Calendar entry.")
+            if let error = model.operationError {
+                Text(error).font(UIType.small).foregroundStyle(DesignTokens.statusRejected)
+            } else if let notice = model.operationNotice {
+                Text(notice).font(UIType.small).foregroundStyle(DesignTokens.statusApproved)
+            }
+            if !model.summaries.isEmpty {
+                artifactSection("summary", rows: model.summaries)
+            }
+            if !model.decisions.isEmpty {
+                artifactSection("decisions · \(model.decisions.count)", rows: model.decisions)
+            }
+            if !model.actionItems.isEmpty {
+                artifactSection("action items · \(model.actionItems.count)", rows: model.actionItems)
             }
         }
-        if !model.decisions.isEmpty {
-            VStack(alignment: .leading, spacing: DesignTokens.Space.s2) {
-                SectionHead(title: "Decisions · \(model.decisions.count)")
-                ForEach(model.decisions) { decision in
-                    ArtifactCard {
-                        Text(decision.payload(as: DecisionPayload.self)?.text ?? "")
-                            .font(UIType.body)
-                            .lineSpacing(3)
-                            .foregroundStyle(DesignTokens.text)
-                            .fixedSize(horizontal: false, vertical: true)
-                        ReviewActions(model: model, artifact: decision, kindLabel: "decision")
-                    }
-                }
-            }
+        .sheet(item: $editing) { artifact in
+            ArtifactEditorSheet(model: model, artifact: artifact)
         }
-        if !model.actionItems.isEmpty {
-            VStack(alignment: .leading, spacing: DesignTokens.Space.s2) {
-                SectionHead(title: "Action items · \(model.actionItems.count)")
-                ForEach(model.actionItems) { item in
-                    let payload = item.payload(as: ActionItemPayload.self)
-                    ArtifactCard {
-                        Text(payload?.title ?? "")
-                            .font(UIType.body)
-                            .lineSpacing(3)
-                            .foregroundStyle(DesignTokens.text)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Text(Self.metaLine(for: payload))
-                            .font(MachineType.label())
-                            .foregroundStyle(DesignTokens.textTertiary)
-                        ReviewActions(model: model, artifact: item, kindLabel: "action item")
-                    }
-                }
-            }
-        }
+        .sheet(item: $actionReview) { review in ActionReviewSheet(model: review) }
     }
 
-    private func chip(for artifact: ArtifactRecord) -> Chip {
-        switch artifact.artifactStatus {
-        case .approved: Chip(text: "Approved", style: .approved)
-        case .rejected: Chip(text: "Rejected", style: .rejected)
-        default: Chip(text: "Draft", style: .quiet)
+    private func artifactSection(_ title: String, rows: [ArtifactRecord]) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Space.s2) {
+            SectionHead(title: title)
+            ForEach(rows) { artifact in
+                ArtifactCard {
+                    Text(ArtifactPresentation.text(artifact))
+                        .font(UIType.reading)
+                        .lineSpacing(4)
+                        .foregroundStyle(DesignTokens.text)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .textSelection(.enabled)
+                    if artifact.artifactKind == .actionItem {
+                        Text(ArtifactPresentation.metaLine(artifact.payload(as: ActionItemPayload.self)))
+                            .font(UIType.small)
+                            .foregroundStyle(DesignTokens.textSecondary)
+                    }
+                    if artifact.isUserEdited {
+                        Text("edited locally")
+                            .font(UIType.small)
+                            .tracking(DesignTokens.tracking)
+                            .foregroundStyle(DesignTokens.textSecondary)
+                    }
+                    HStack(spacing: DesignTokens.Space.s3) {
+                        Button("edit") {
+                            model.clearOperationFeedback()
+                            editing = artifact
+                        }
+                        Button("copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(ArtifactPresentation.copyText(artifact), forType: .string)
+                            model.didCopyExport()
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(UIType.small)
+                    .textCase(nil)
+                    .foregroundStyle(DesignTokens.accent)
+                    ReviewActions(model: model, artifact: artifact)
+                    if artifact.artifactKind == .actionItem, artifact.artifactStatus != .rejected,
+                       let makeActionReview = model.makeActionReview {
+                        HStack {
+                            Button("Calendar…") { actionReview = makeActionReview(artifact, .calendarEvent) }
+                            Button("reminder…") { actionReview = makeActionReview(artifact, .reminder) }
+                        }
+                        .buttonStyle(SubtleButtonStyle())
+                        .accessibilityHint("Review one new item before allowing macapy to create it")
+                    }
+                }
+            }
         }
-    }
-
-    /// "Owner · You — due Thursday" / "No owner stated — no deadline stated",
-    /// the mockup's meta line, from whatever the meeting actually stated.
-    static func metaLine(for payload: ActionItemPayload?) -> String {
-        let owner = payload?.owner.map { "Owner · \($0)" } ?? "No owner stated"
-        let deadline = payload?.deadline.map { "due \($0)" } ?? "no deadline stated"
-        return "\(owner) — \(deadline)"
     }
 }
 
-/// Per-item Approve/Reject while drafted; the settled chip afterwards
-/// (FR-009: the flip is the whole effect in M2).
+/// Pure content projection shared by displayed text, the editor and copy.
+/// Missing owner/deadline values remain explicitly unstated.
+enum ArtifactPresentation {
+    static func text(_ artifact: ArtifactRecord) -> String {
+        switch artifact.artifactKind {
+        case .summary: artifact.payload(as: SummaryPayload.self)?.text ?? ""
+        case .decision: artifact.payload(as: DecisionPayload.self)?.text ?? ""
+        case .actionItem: artifact.payload(as: ActionItemPayload.self)?.title ?? ""
+        case nil: "This output is not supported by this version of macapy."
+        }
+    }
+
+    static func metaLine(_ payload: ActionItemPayload?) -> String {
+        let owner = payload?.owner.map { "Owner · \($0)" } ?? "No owner stated"
+        let deadline = payload?.deadline.map { "Due · \($0)" } ?? "No deadline stated"
+        return "\(owner) · \(deadline)"
+    }
+
+    static func copyText(_ artifact: ArtifactRecord) -> String {
+        guard artifact.artifactKind == .actionItem else { return text(artifact) }
+        return "\(text(artifact))\n\(metaLine(artifact.payload(as: ActionItemPayload.self)))\nStatus · \(artifact.isComplete ? "Complete" : "Open")"
+    }
+
+    static func edit(_ kind: ArtifactKind?, text: String, owner: String, deadline: String) -> ArtifactEdit? {
+        switch kind {
+        case .summary: .summary(text)
+        case .decision: .decision(text)
+        case .actionItem: .actionItem(title: text, owner: optional(owner), deadline: optional(deadline))
+        case nil: nil
+        }
+    }
+
+    private static func optional(_ value: String) -> String? {
+        let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+}
+
 private struct ReviewActions: View {
     let model: MeetingDetailModel
     let artifact: ArtifactRecord
-    let kindLabel: String
 
     var body: some View {
-        HStack(spacing: DesignTokens.Space.s2) {
-            switch artifact.artifactStatus {
-            case .approved:
-                Chip(text: "Approved", style: .approved)
-            case .rejected:
-                Chip(text: "Rejected", style: .rejected)
-            default:
-                Button("Approve") {
-                    Task { await model.approve(artifact.id) }
+        VStack(alignment: .leading, spacing: DesignTokens.Space.s2) {
+            HStack(spacing: DesignTokens.Space.s2) {
+                switch artifact.artifactStatus {
+                case .approved: Chip(text: "reviewed", style: .approved)
+                case .rejected: Chip(text: "rejected", style: .rejected)
+                default: Chip(text: "draft", style: .quiet)
                 }
-                .controlSize(.small)
-                .accessibilityLabel("Approve \(kindLabel)")
-                Button("Reject") {
-                    Task { await model.reject(artifact.id) }
+                Spacer(minLength: 0)
+                if artifact.artifactStatus != .approved {
+                    Button("review") { Task { await model.approve(artifact.id) } }
+                        .accessibilityLabel("Mark this item reviewed")
                 }
-                .controlSize(.small)
-                .accessibilityLabel("Reject \(kindLabel)")
+                if artifact.artifactStatus != .rejected {
+                    Button("reject") { Task { await model.reject(artifact.id) } }
+                        .accessibilityLabel("Reject this draft")
+                }
+            }
+            .buttonStyle(.plain)
+            .font(UIType.small)
+            .foregroundStyle(DesignTokens.accent)
+            if artifact.artifactKind == .actionItem {
+                Button {
+                    Task { await model.setCompletion(!artifact.isComplete, id: artifact.id) }
+                } label: {
+                    Label(artifact.isComplete ? "completed · reopen" : "mark complete",
+                          systemImage: artifact.isComplete ? "checkmark.square" : "square")
+                }
+                .buttonStyle(.plain)
+                .font(UIType.small)
+                .foregroundStyle(artifact.isComplete ? DesignTokens.statusApproved : DesignTokens.textSecondary)
+                .accessibilityLabel(artifact.isComplete ? "Reopen action item" : "Mark action item complete")
             }
         }
-        .padding(.top, 2)
+        .padding(.top, DesignTokens.Space.s1)
+    }
+}
+
+private struct ArtifactEditorSheet: View {
+    let model: MeetingDetailModel
+    /// Snapshot revision is retained even if a background refresh changes rows.
+    let artifact: ArtifactRecord
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    @State private var owner: String
+    @State private var deadline: String
+    @State private var isSaving = false
+
+    init(model: MeetingDetailModel, artifact: ArtifactRecord) {
+        self.model = model
+        self.artifact = artifact
+        _text = State(initialValue: ArtifactPresentation.text(artifact))
+        _owner = State(initialValue: artifact.payload(as: ActionItemPayload.self)?.owner ?? "")
+        _deadline = State(initialValue: artifact.payload(as: ActionItemPayload.self)?.deadline ?? "")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Space.s3) {
+            Text("correct this draft")
+                .font(UIType.heading)
+            FormNote("saving returns the item to draft so you can review the corrected version. task completion stays separate.")
+            TextEditor(text: $text)
+                .font(UIType.reading)
+                .scrollContentBackground(.hidden)
+                .padding(DesignTokens.Space.s2)
+                .frame(height: 150)
+                .background(DesignTokens.sunken)
+                .overlay(Rectangle().stroke(DesignTokens.hairlineStrong))
+                .accessibilityLabel(artifact.artifactKind == .actionItem ? "Action title" : "Draft text")
+            if artifact.artifactKind == .actionItem {
+                editorField("owner (optional)", text: $owner)
+                editorField("deadline as stated (optional)", text: $deadline)
+                FormNote("leave a field empty when the meeting did not state it. a deadline is saved as text; it does not schedule anything.")
+            }
+            if let error = model.operationError {
+                Text(error).font(UIType.small).foregroundStyle(DesignTokens.statusRejected)
+            }
+            HStack {
+                Button("cancel") { dismiss() }
+                    .buttonStyle(SubtleButtonStyle())
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isSaving)
+                Spacer()
+                Button(isSaving ? "saving…" : "save correction") {
+                    guard let content = ArtifactPresentation.edit(artifact.artifactKind, text: text, owner: owner, deadline: deadline) else { return }
+                    isSaving = true
+                    Task {
+                        let saved = await model.edit(artifact.id, expectedRevision: artifact.revision, content: content)
+                        isSaving = false
+                        if saved { dismiss() }
+                    }
+                }
+                .buttonStyle(PrimaryButtonStyle())
+                .disabled(isSaving || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(DesignTokens.Space.s5)
+        .frame(width: 500)
+        .background(DesignTokens.bg)
+        .interactiveDismissDisabled(isSaving)
+    }
+
+    private func editorField(_ label: String, text: Binding<String>) -> some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Space.s1) {
+            Text(label).font(UIType.small).foregroundStyle(DesignTokens.textSecondary)
+            TextField(label, text: text)
+                .textFieldStyle(.plain)
+                .padding(DesignTokens.Space.s2)
+                .background(DesignTokens.sunken)
+                .overlay(Rectangle().stroke(DesignTokens.hairlineStrong))
+        }
+    }
+}
+
+private struct MeetingExportSheet: View {
+    let model: MeetingDetailModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var selection: MeetingExportSelection = .all
+    @State private var format: MeetingExportFormat = .markdown
+    @State private var isWorking = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Space.s3) {
+            Text("take the useful parts with you")
+                .font(UIType.heading)
+            FormNote("choose exactly what to copy or save. exports contain text and review status, never audio, credentials, or diagnostics.")
+            Picker("content", selection: $selection) {
+                Text("entire meeting").tag(MeetingExportSelection.all)
+                Text("transcript only").tag(MeetingExportSelection.transcript)
+                Text("summary only").tag(MeetingExportSelection.summary)
+                Text("action items only").tag(MeetingExportSelection.actionItems)
+            }
+            Picker("format", selection: $format) {
+                Text("Markdown (.md)").tag(MeetingExportFormat.markdown)
+                Text("plain text (.txt)").tag(MeetingExportFormat.text)
+                Text("structured JSON (.json)").tag(MeetingExportFormat.json)
+            }
+            if let error = model.operationError {
+                Text(error).font(UIType.small).foregroundStyle(DesignTokens.statusRejected)
+            } else if let notice = model.operationNotice {
+                Text(notice).font(UIType.small).foregroundStyle(DesignTokens.statusApproved)
+            }
+            HStack {
+                Button("done") { dismiss() }
+                    .buttonStyle(SubtleButtonStyle())
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("copy") { prepare(save: false) }
+                    .buttonStyle(SubtleButtonStyle())
+                Button(isWorking ? "preparing…" : "save file…") { prepare(save: true) }
+                    .buttonStyle(PrimaryButtonStyle())
+            }
+            .disabled(isWorking)
+        }
+        .padding(DesignTokens.Space.s5)
+        .frame(width: 500)
+        .background(DesignTokens.bg)
+        .interactiveDismissDisabled(isWorking)
+        .onAppear { model.clearOperationFeedback() }
+    }
+
+    private func prepare(save: Bool) {
+        guard !isWorking else { return }
+        isWorking = true
+        let requestedFormat = format
+        let requestedSelection = selection
+        Task {
+            defer { isWorking = false }
+            guard let data = await model.exportData(format: requestedFormat, selection: requestedSelection) else { return }
+            if save {
+                let panel = NSSavePanel()
+                panel.title = "Export meeting"
+                panel.nameFieldStringValue = "macapy-\(model.meeting.id.uuidString.lowercased()).\(requestedFormat.fileExtension)"
+                panel.allowedContentTypes = [UTType(filenameExtension: requestedFormat.fileExtension) ?? .plainText]
+                panel.canCreateDirectories = true
+                guard await panel.begin() == .OK, let destination = panel.url else { return }
+                model.saveExport(data, to: destination)
+            } else {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(String(decoding: data, as: UTF8.self), forType: .string)
+                model.didCopyExport()
+            }
+        }
     }
 }
 
@@ -389,7 +619,7 @@ private struct ReviewActions: View {
 // SectionHead moved to Design/SearchComponents.swift in slice 5 — the search
 // results' group headers share it.
 
-/// `.art-item` — one raised card.
+/// Open output row; hairlines separate drafts without nesting cards.
 private struct ArtifactCard<Content: View>: View {
     @ViewBuilder var content: Content
 
@@ -397,19 +627,15 @@ private struct ArtifactCard<Content: View>: View {
         VStack(alignment: .leading, spacing: DesignTokens.Space.s2) {
             content
         }
-        .padding(.horizontal, DesignTokens.Space.s3)
-        .padding(.vertical, 10)
+        .padding(.vertical, 15)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(DesignTokens.raised)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radiusCard))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.radiusCard)
-                .stroke(DesignTokens.hairline)
-        )
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(DesignTokens.hairlineStrong).frame(height: 1)
+        }
     }
 }
 
-/// `.pending-note` — the dashed quiet notice.
+/// Quiet inline notice for unavailable or pending output.
 private struct PaneNote: View {
     let text: String
 
@@ -422,23 +648,6 @@ private struct PaneNote: View {
             .padding(.horizontal, DesignTokens.Space.s3)
             .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.radiusCard)
-                    .stroke(DesignTokens.hairlineStrong, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-            )
-    }
-}
-
-/// `.btn.primary` — the amber button; meeting detail's "Generate artifacts"
-/// is the first surface that needs one in SwiftUI.
-struct PrimaryButtonStyle: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(UIType.bodySemibold)
-            .foregroundStyle(DesignTokens.textOnSignal)
-            .padding(.horizontal, DesignTokens.Space.s3)
-            .padding(.vertical, 5)
-            .background(DesignTokens.signal.opacity(configuration.isPressed ? 0.75 : 1))
-            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radiusControl))
+            .background(DesignTokens.sunken)
     }
 }

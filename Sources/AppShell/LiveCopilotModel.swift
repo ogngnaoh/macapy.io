@@ -1,5 +1,6 @@
 import AgentKit
 import Foundation
+import MemoryKit
 import Observation
 import PersistKit
 import ProviderKit
@@ -77,6 +78,7 @@ struct LiveCopilotCard: Sendable, Equatable, Identifiable {
     let requested: Bool
     var text: String
     var isStreaming: Bool
+    var evidence: [RetrievedExcerpt] = []
 
     var action: CopilotAction? {
         guard case .action(let action) = kind else { return nil }
@@ -94,6 +96,11 @@ struct LiveCopilotCard: Sendable, Equatable, Identifiable {
 @MainActor
 @Observable
 final class LiveCopilotModel {
+    struct GroundingPreview: Identifiable {
+        let id = UUID()
+        let title: String
+        let text: String
+    }
     static let maximumQueryCharacters = 800
 
     private(set) var availability: CopilotAvailability = .idle
@@ -109,10 +116,15 @@ final class LiveCopilotModel {
     private(set) var askFieldVisible = false
     private(set) var askFocusRevision = 0
     private(set) var latestTranscriptTime: TimeInterval = 0
+    var sourcePicker: LiveAskSourcesModel?
+    var groundingPreview: GroundingPreview?
     var queryText = "" {
         didSet {
             if queryText.count > Self.maximumQueryCharacters {
                 queryText = String(queryText.prefix(Self.maximumQueryCharacters))
+            }
+            if let sourcePicker, sourcePicker.question != normalizedQuery {
+                sourcePicker.cancel(); self.sourcePicker = nil
             }
         }
     }
@@ -124,6 +136,9 @@ final class LiveCopilotModel {
     @ObservationIgnored private var pendingPresentationMutation: Task<Void, Never>?
     @ObservationIgnored private var pendingDomainCommand: Task<Void, Never>?
     @ObservationIgnored private var activeMeetingID: UUID?
+    @ObservationIgnored private var sourceDatabase: MacapyDatabase?
+    @ObservationIgnored private var activeGrounding: LiveQueryGrounding?
+    @ObservationIgnored private var sourcePickerTask: Task<Void, Never>?
     @ObservationIgnored private var configuration = CopilotConfiguration(aiFeaturesEnabled: false)
     @ObservationIgnored private var providerAvailable = false
     @ObservationIgnored private var presentationRevision: UInt64 = 0
@@ -190,6 +205,8 @@ final class LiveCopilotModel {
     }
 
     var canSubmitAsk: Bool { canAsk && !normalizedQuery.isEmpty }
+    var sourceLookupAvailable: Bool { sourceDatabase != nil }
+    var canOpenSources: Bool { canSubmitAsk && sourceLookupAvailable }
     var canDismiss: Bool { card != nil || askFieldVisible }
     var isMeetingActive: Bool { orchestrator != nil }
 
@@ -198,7 +215,8 @@ final class LiveCopilotModel {
         provider: (any LLMProvider)?,
         fastModel: String,
         deepModel: String,
-        settings: LiveAISettings
+        settings: LiveAISettings,
+        sourceDatabase: MacapyDatabase? = nil
     ) {
         stopMeeting()
         suggestionLatencyRecorder.reset()
@@ -230,6 +248,7 @@ final class LiveCopilotModel {
         )
         orchestrator = domain
         activeMeetingID = meetingID
+        self.sourceDatabase = sourceDatabase
         providerAvailable = provider != nil
         availability = !settings.aiFeaturesEnabled
             ? .disabled
@@ -275,6 +294,7 @@ final class LiveCopilotModel {
         replacementID: UUID
     ) async {
         guard activeMeetingID == expectedMeetingID, let orchestrator else { return }
+        invalidateGrounding()
         pendingDomainCommand?.cancel()
         pendingDomainCommand = nil
         let outcome = await orchestrator.replaceProvider(
@@ -332,6 +352,7 @@ final class LiveCopilotModel {
 
     func requestAsk() {
         guard canAsk, let orchestrator else { return }
+        clearGroundingSelection()
         presentationRevision &+= 1
         let revision = presentationRevision
         expiryTask?.cancel()
@@ -353,6 +374,10 @@ final class LiveCopilotModel {
     func submitAsk() async -> Bool {
         let question = normalizedQuery
         guard canAsk, !question.isEmpty, let orchestrator else { return false }
+        await pendingPresentationMutation?.value
+        pendingPresentationMutation = nil
+        guard self.orchestrator === orchestrator, canAsk else { return false }
+        clearGroundingSelection()
         pendingDomainCommand?.cancel()
         pendingDomainCommand = nil
         presentationRevision &+= 1
@@ -369,6 +394,75 @@ final class LiveCopilotModel {
         askFieldVisible = true
         availability = .working
         return true
+    }
+
+    func openSources() {
+        guard canOpenSources, let database = sourceDatabase, let orchestrator, let meetingID = activeMeetingID else { return }
+        sourcePickerTask?.cancel()
+        let question = normalizedQuery, revision = presentationRevision
+        sourcePickerTask = Task { [weak self] in
+            guard let self else { return }
+            let recent = await orchestrator.recentTranscriptEvidence()
+            guard !Task.isCancelled, self.orchestrator === orchestrator, activeMeetingID == meetingID,
+                  presentationRevision == revision, normalizedQuery == question, canAsk else { return }
+            sourcePicker = LiveAskSourcesModel(database: database, question: question, recentTranscript: recent,
+                onSend: { [weak self] selection in
+                    guard let self, self.orchestrator === orchestrator, self.activeMeetingID == meetingID else { return false }
+                    return await self.submitGroundedAsk(question: question, selection: selection)
+                })
+        }
+    }
+
+    private func submitGroundedAsk(question: String, selection: LiveQueryGrounding) async -> Bool {
+        guard canAsk, normalizedQuery == question, let orchestrator else { return false }
+        await pendingPresentationMutation?.value
+        pendingPresentationMutation = nil
+        guard self.orchestrator === orchestrator, canAsk else { return false }
+        pendingDomainCommand?.cancel(); pendingDomainCommand = nil
+        presentationRevision &+= 1
+        let revision = presentationRevision
+        activeGrounding = selection; sourcePicker = nil; groundingPreview = nil
+        queryText = ""
+        guard let _ = await orchestrator.requestQuery(question, grounding: selection),
+              self.orchestrator === orchestrator, presentationRevision == revision else { return false }
+        askFieldVisible = true; availability = .working
+        return true
+    }
+
+    /// Root invokes this before source edits/deletion or privacy revocation.
+    /// Meeting-only work remains available when no grounded request exists.
+    func invalidateGrounding() {
+        let hadGrounding = activeGrounding != nil
+        clearGroundingSelection()
+        guard hadGrounding, let orchestrator else { return }
+        presentationRevision &+= 1
+        card = nil
+        pendingPresentationMutation = Task { await orchestrator.dismissPresentation() }
+        restoreProjectedAvailability()
+    }
+
+    func previewGrounding(_ evidence: RetrievedExcerpt) async {
+        guard let selection = activeGrounding, let orchestrator,
+              card?.evidence.contains(where: { $0.citationID == evidence.citationID }) == true else { return }
+        let revision = presentationRevision
+        guard await selection.validateExternal(), await orchestrator.validateTranscriptEvidence(selection.recentTranscript),
+              self.orchestrator === orchestrator, presentationRevision == revision else { invalidateGrounding(); return }
+        var text = evidence.text
+        if !evidence.sources.isEmpty, let database = sourceDatabase {
+            let memory = MemoryStore(database: database)
+            for source in evidence.sources {
+                guard let original = try? await memory.sourcePreview(source) else { invalidateGrounding(); return }
+                text += "\n\nOriginal evidence:\n" + original
+                text = String(text.prefix(8_000))
+            }
+        }
+        guard await selection.validateExternal(), self.orchestrator === orchestrator, presentationRevision == revision else { return }
+        groundingPreview = .init(title: evidence.title, text: text)
+    }
+
+    private func clearGroundingSelection() {
+        sourcePickerTask?.cancel(); sourcePickerTask = nil
+        sourcePicker?.cancel(); sourcePicker = nil; groundingPreview = nil; activeGrounding = nil
     }
 
     func dismissCard() {
@@ -423,6 +517,7 @@ final class LiveCopilotModel {
         pendingDomainCommand = nil
         orchestrator = nil
         activeMeetingID = nil
+        sourceDatabase = nil
         presentationRevision &+= 1
         suggestionLatencyRecorder.cancelPending()
         providerAvailable = false
@@ -505,7 +600,10 @@ private extension LiveCopilotModel {
             case .paused(let message): availability = .paused(message)
             }
         case .latestTranscriptTime(let time):
-            latestTranscriptTime = time
+            // receive() already advances this at the command boundary. An
+            // older queued projection from the same meeting cannot rewind it
+            // and temporarily disable Catch Up after enough context arrived.
+            latestTranscriptTime = max(latestTranscriptTime, time)
         case .card(let domainCard):
             if !configuration.aiFeaturesEnabled, domainCard != nil { return }
             if let domainCard {
@@ -550,7 +648,8 @@ private extension LiveCopilotModel {
             target: domain.target,
             requested: domain.requested,
             text: domain.text,
-            isStreaming: domain.isStreaming
+            isStreaming: domain.isStreaming,
+            evidence: domain.evidence
         )
         guard presentationClearFence.clearGeneration == clearGeneration else {
             reconcileAuthoritativePresentationClear()
@@ -566,6 +665,7 @@ private extension LiveCopilotModel {
     }
 
     func clearPresentation(clearSummary: Bool) {
+        clearGroundingSelection()
         expiryTask?.cancel()
         expiryTask = nil
         card = nil

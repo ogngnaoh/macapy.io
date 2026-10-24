@@ -6,6 +6,9 @@ import AVFoundation
 /// process-tap conformance would be a breaking change.
 public protocol AudioCaptureSource: Sendable {
     var source: AudioSource { get }
+    /// Subscribe before start. Sources with runtime health reporting expose a
+    /// bounded generation-fenced stream; deterministic fixtures may use empty.
+    var interruptions: AsyncStream<CaptureInterruption> { get }
 
     /// Starts capture and returns a stream of chunks already converted to
     /// `format`. The stream finishes when `stop()` is called.
@@ -14,4 +17,10 @@ public protocol AudioCaptureSource: Sendable {
     func pause() async
     func resume() async
     func stop() async
+}
+
+extension AudioCaptureSource {
+    public var interruptions: AsyncStream<CaptureInterruption> {
+        AsyncStream { $0.finish() }
+    }
 }

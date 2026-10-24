@@ -9,10 +9,12 @@ protocol PanelPresenting {
     func show(session: SessionController, store: TranscriptStore, copilot: LiveCopilotModel)
     func hide()
     func focusQuery()
+    func configureShortcuts(_ model: ShortcutPreferencesModel)
 }
 
 extension PanelPresenting {
     func focusQuery() {}
+    func configureShortcuts(_ model: ShortcutPreferencesModel) {}
 }
 
 /// Owns the compact always-on-top floating panel shown while a session runs.
@@ -22,6 +24,8 @@ extension PanelPresenting {
 @MainActor
 final class FloatingPanelController: PanelPresenting {
     private var panel: NSPanel?
+    private var shortcuts: ShortcutPreferencesModel?
+    func configureShortcuts(_ model: ShortcutPreferencesModel) { shortcuts = model }
     private static let panelSize = NSSize(
         width: PanelView.Layout.panelWidth,
         height: PanelView.Layout.panelHeight
@@ -65,7 +69,7 @@ final class FloatingPanelController: PanelPresenting {
         panel.isReleasedWhenClosed = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.contentView = NSHostingView(
-            rootView: PanelView()
+            rootView: ShortcutAwarePanel(shortcuts: shortcuts)
                 .environment(session)
                 .environment(store)
                 .environment(copilot)
@@ -83,5 +87,12 @@ final class FloatingPanelController: PanelPresenting {
             x: visible.maxX - Self.panelSize.width - margin,
             y: visible.maxY - Self.panelSize.height - margin
         ))
+    }
+}
+
+private struct ShortcutAwarePanel: View {
+    let shortcuts: ShortcutPreferencesModel?
+    var body: some View {
+        PanelView(shortcutLabels: shortcuts?.configuration.bindings.mapValues(\.display) ?? [:])
     }
 }

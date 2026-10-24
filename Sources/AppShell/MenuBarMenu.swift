@@ -10,62 +10,79 @@ struct MenuBarMenu: View {
     @Environment(\.openWindow) private var openWindow
 
     private var sessionActive: Bool {
-        coordinator.session.isCapturing || coordinator.session.isPaused
+        coordinator.session.isActive
     }
 
     var body: some View {
-        if sessionActive, let startedAt = coordinator.session.startedAt {
+        if coordinator.session.isPreparing {
+            Text("preparing · capture has not started")
+            Divider()
+        } else if sessionActive, let startedAt = coordinator.session.startedAt {
             // Snapshot at menu-open; menus don't tick.
             Text(
-                "\(coordinator.session.isPaused ? "Paused" : "Capturing") · "
+                "\(coordinator.session.isPaused ? "paused" : "capturing") · "
                     + ElapsedTimeFormat.string(
                         seconds: Int(Date().timeIntervalSince(startedAt)))
             )
             Divider()
         }
 
-        Button(sessionActive ? "Stop meeting" : "Start meeting") {
-            coordinator.toggleSession()
+        Button(sessionActive ? "stop meeting" : "start meeting") {
+            if !sessionActive && !coordinator.setup.isComplete {
+                openWindow(id: WindowID.setup)
+            } else {
+                coordinator.toggleSession()
+            }
         }
-        .keyboardShortcut("m", modifiers: [.option, .command])
+        .keyboardShortcut(coordinator.shortcuts.binding(for: .startStop).keyEquivalent, modifiers: coordinator.shortcuts.binding(for: .startStop).eventModifiers)
+        .disabled(coordinator.terminationInProgress || coordinator.contentDeletionInProgress || (!sessionActive && coordinator.setup.activity.isBusy))
 
         if sessionActive {
-            Button(coordinator.session.isPaused ? "Resume capture" : "Pause capture") {
+            Button(coordinator.session.isPaused ? "resume capture" : "pause capture") {
                 coordinator.togglePause()
             }
-            .keyboardShortcut("p", modifiers: [.option, .command])
+            .keyboardShortcut(coordinator.shortcuts.binding(for: .pauseResume).keyEquivalent, modifiers: coordinator.shortcuts.binding(for: .pauseResume).eventModifiers)
+            .disabled(coordinator.session.isPreparing)
 
-            Button("Catch up") { coordinator.requestCatchUp() }
-                .keyboardShortcut("c", modifiers: [.option, .command])
+            Button("catch up") { coordinator.requestCatchUp() }
+                .keyboardShortcut(coordinator.shortcuts.binding(for: .catchUp).keyEquivalent, modifiers: coordinator.shortcuts.binding(for: .catchUp).eventModifiers)
                 .disabled(!coordinator.copilot.canCatchUp)
 
-            Button("Ask") { coordinator.requestAsk() }
-                .keyboardShortcut("k", modifiers: [.option, .command])
+            Button("ask") { coordinator.requestAsk() }
+                .keyboardShortcut(coordinator.shortcuts.binding(for: .ask).keyEquivalent, modifiers: coordinator.shortcuts.binding(for: .ask).eventModifiers)
                 .disabled(!coordinator.copilot.canAsk)
 
-            Button("Dismiss copilot") { coordinator.requestDismissCopilot() }
-                .keyboardShortcut("d", modifiers: [.option, .command])
+            Button("dismiss copilot") { coordinator.requestDismissCopilot() }
+                .keyboardShortcut(coordinator.shortcuts.binding(for: .dismiss).keyEquivalent, modifiers: coordinator.shortcuts.binding(for: .dismiss).eventModifiers)
                 .disabled(!coordinator.copilot.canDismiss)
         }
 
         // Applies to the *next* meeting only (slice-04 doc decision 9) —
         // disabled while a meeting is already running so it can't look like
         // it retroactively changes the one in progress.
-        Toggle("Ephemeral meeting", isOn: Bindable(coordinator).ephemeralNextMeeting)
+        Toggle("ephemeral meeting", isOn: Bindable(coordinator).ephemeralNextMeeting)
             .disabled(sessionActive)
 
         Divider()
 
-        Button("History") {
+        Button("history") {
             openWindow(id: WindowID.history)
         }
         .keyboardShortcut("y")
+
+        Button("sample meeting") { openWindow(id: WindowID.sample) }
+        Button("memory & documents") { openWindow(id: WindowID.memory) }
+        Button("pre-meeting briefs") { openWindow(id: WindowID.briefs) }
+
+        Button("setup…") { openWindow(id: WindowID.setup) }
+
+        Button("outgoing ai text…") { openWindow(id: WindowID.requests) }
 
         SettingsLink()
 
         Divider()
 
-        Button("Quit macapy") {
+        Button("quit macapy") {
             NSApp.terminate(nil)
         }
         .keyboardShortcut("q")

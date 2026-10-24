@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import PersistKit
 import ProviderKit
 import ProviderTestSupport
@@ -8,9 +9,9 @@ import Testing
 /// D1). The provider already billed the call; eating a finished artifact — or
 /// leaking a raw `GRDB.DatabaseError` through the `LLMProvider` contract —
 /// over a bookkeeping row is the worse trade. Reproduced against the real
-/// GRDB store with the exact state FR-013 creates: a per-meeting deletion
-/// cascading while a call is in flight, so the `spend_ledger` insert fails
-/// its `meetings` foreign key.
+/// GRDB store by failing the ledger insert after valid durable admission.
+/// A missing source now fails before dispatch; true in-flight deletion is
+/// covered by BackgroundUsageStoreTests without a networked test server.
 struct MeteredBookingFailureTests {
 
     private static var request: CompletionRequest {
@@ -23,21 +24,25 @@ struct MeteredBookingFailureTests {
 
     private func fixture(
         responses: [FakeOpenAIServer.Response]
-    ) throws -> (server: FakeOpenAIServer, provider: MeteredProvider, store: SpendLedgerStore) {
+    ) async throws -> (server: FakeOpenAIServer, provider: MeteredProvider, store: SpendLedgerStore) {
         let server = try FakeOpenAIServer.start(responses: responses)
-        let store = SpendLedgerStore(database: try MacapyDatabase.inMemory())
+        let database = try MacapyDatabase.inMemory()
+        let meeting = try await MeetingStore(database: database).beginMeeting(startedAt: Date(), ephemeral: false)
+        try await database.dbWriter.write { db in
+            try db.execute(sql: "CREATE TRIGGER synthetic_booking_failure BEFORE INSERT ON spend_ledger BEGIN SELECT RAISE(ABORT,'synthetic settlement failure'); END")
+        }
+        let store = SpendLedgerStore(database: database)
         let meter = SpendMeter(ledger: store, pricing: PricingTable(rates: [:]), capUSD: nil)
-        // A meeting id with no `meetings` row: the FK on `spend_ledger` fails.
         let provider = MeteredProvider(
             upstream: OpenAICompatibleClient(profile: .fake(baseURL: server.baseURL), apiKey: "sk-test"),
             meter: meter,
-            meetingID: UUID()
+            meetingID: meeting.id
         )
         return (server, provider, store)
     }
 
     @Test func aLedgerWriteFailureNeverDestroysAStreamedResult() async throws {
-        let (server, provider, store) = try fixture(responses: [
+        let (server, provider, store) = try await fixture(responses: [
             .sse(frames: [
                 OpenAIFixtures.contentDelta("hello"),
                 OpenAIFixtures.finish(reason: "stop", promptTokens: 100, completionTokens: 10),
@@ -53,11 +58,11 @@ struct MeteredBookingFailureTests {
         #expect(events.contains { if case .completed = $0 { true } else { false } },
                 "the completed result must outlive the bookkeeping failure")
         #expect(try await store.allEntries().isEmpty,
-                "the meeting is gone; there is no valid row to write")
+                "the synthetic settlement failure must not fabricate a ledger row")
     }
 
     @Test func aLedgerWriteFailureNeverDestroysAStructuredResult() async throws {
-        let (server, provider, store) = try fixture(responses: [
+        let (server, provider, store) = try await fixture(responses: [
             .json(status: 200, body: OpenAIFixtures.completionBody(
                 content: #"{"answer":"yes"}"#,
                 promptTokens: 200,

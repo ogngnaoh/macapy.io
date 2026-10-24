@@ -15,6 +15,7 @@ final class HistorySearchModel {
     /// ~200 ms of debounce between keystrokes and the FTS query; 0 in tests
     /// so the oracles stay deterministic (slice-05 doc decision 6).
     private let debounceNanos: UInt64
+    private let onContentDeleted: @MainActor () -> Void
     private let log = Logger(subsystem: "io.macapy.app", category: "HistorySearch")
 
     private(set) var summaries: [MeetingStore.MeetingSummary] = []
@@ -26,11 +27,13 @@ final class HistorySearchModel {
     var targetSegmentID: UUID?
 
     @ObservationIgnored private var searchTask: Task<Void, Never>?
+    @ObservationIgnored private var contentRevision: UInt64 = 0
 
-    init(meetings: MeetingStore, search: SearchStore?, debounceNanos: UInt64 = 200_000_000) {
+    init(meetings: MeetingStore, search: SearchStore?, debounceNanos: UInt64 = 200_000_000, onContentDeleted: @escaping @MainActor () -> Void = {}) {
         self.meetings = meetings
         self.search = search
         self.debounceNanos = debounceNanos
+        self.onContentDeleted = onContentDeleted
     }
 
     var query: String = "" {
@@ -51,11 +54,18 @@ final class HistorySearchModel {
     /// Fetches the summary list and re-runs the active query (idempotent —
     /// the appear hook and every mutation path call it).
     func load() async {
+        contentRevision &+= 1
+        let token = contentRevision
         do {
-            summaries = try await meetings.meetingSummaries()
+            let fresh = try await meetings.meetingSummaries()
+            guard token == contentRevision else { return }
+            summaries = fresh
+            if let selectedMeetingID, !fresh.contains(where: { $0.id == selectedMeetingID }) {
+                self.selectedMeetingID = nil; targetSegmentID = nil
+            }
             loadError = nil
         } catch {
-            loadError = error.localizedDescription
+            loadError = "Local history could not be read or changed. Check available storage and try again."
         }
         await runSearchNow()
     }
@@ -87,7 +97,7 @@ final class HistorySearchModel {
         do {
             try await meetings.renameMeeting(id: meetingID, title: title)
         } catch {
-            log.error("rename failed: \(error.localizedDescription)")
+            log.error("rename failed: \(String(describing: type(of: error)), privacy: .public)")
             return false
         }
         await load()
@@ -98,11 +108,14 @@ final class HistorySearchModel {
     /// pointed at it, and re-runs the active query so its hits vanish
     /// (check 16).
     func deleteMeeting(id: UUID) async {
+        contentRevision &+= 1
+        searchTask?.cancel(); results = .empty
+        onContentDeleted()
         do {
             try await meetings.deleteMeeting(id: id)
         } catch {
-            log.error("delete failed: \(error.localizedDescription)")
-            loadError = error.localizedDescription
+            log.error("delete failed: \(String(describing: type(of: error)), privacy: .public)")
+            loadError = "Local history could not be read or changed. Check available storage and try again."
             return
         }
         if selectedMeetingID == id {
@@ -115,6 +128,7 @@ final class HistorySearchModel {
     // MARK: - Search plumbing
 
     private func scheduleSearch() {
+        contentRevision &+= 1
         searchTask?.cancel()
         let nanos = debounceNanos
         searchTask = Task { [weak self] in
@@ -138,9 +152,12 @@ final class HistorySearchModel {
             return
         }
         do {
-            results = try await search.search(matching: query)
+            let token = contentRevision, requestedQuery = query
+            let fresh = try await search.search(matching: requestedQuery)
+            guard token == contentRevision, requestedQuery == query, !Task.isCancelled else { return }
+            results = fresh
         } catch {
-            log.error("search failed: \(error.localizedDescription)")
+            log.error("search failed: \(String(describing: type(of: error)), privacy: .public)")
             results = .empty
         }
     }

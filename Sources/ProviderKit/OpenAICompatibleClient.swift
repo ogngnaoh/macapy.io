@@ -7,18 +7,22 @@ public struct OpenAICompatibleClient: LLMProvider {
     let profile: EndpointProfile
     let apiKey: String?
     let session: URLSession
+    let inspector: RequestInspector?
 
-    public init(profile: EndpointProfile, apiKey: String?, session: URLSession = .shared) {
+    public init(profile: EndpointProfile, apiKey: String?, session: URLSession = .shared, inspector: RequestInspector? = nil) {
         self.profile = profile
         self.apiKey = apiKey
         self.session = session
+        self.inspector = inspector
     }
 
     public func stream(_ request: CompletionRequest) -> AsyncThrowingStream<LLMEvent, Error> {
-        AsyncThrowingStream { continuation in
+        let generation = inspector?.generation
+        return AsyncThrowingStream { continuation in
             let task = Task {
                 do {
-                    try await runStream(request, into: continuation)
+                    try Task.checkCancellation()
+                    try await runStream(request, inspectionGeneration: generation, into: continuation)
                     continuation.finish()
                 } catch {
                     let mapped = Self.mappedTransport(error)
@@ -102,9 +106,10 @@ public struct OpenAICompatibleClient: LLMProvider {
 
     private func runStream(
         _ request: CompletionRequest,
+        inspectionGeneration: UInt64?,
         into continuation: AsyncThrowingStream<LLMEvent, Error>.Continuation
     ) async throws {
-        let urlRequest = try makeURLRequest(request, streaming: true)
+        let urlRequest = try makeURLRequest(request, streaming: true, inspectionGeneration: inspectionGeneration)
         let (bytes, response) = try await session.bytes(for: urlRequest)
         try await Self.checkStatus(of: response, bytes: bytes)
 
@@ -273,7 +278,8 @@ public struct OpenAICompatibleClient: LLMProvider {
 
     // MARK: - Request construction
 
-    private func makeURLRequest(_ request: CompletionRequest, streaming: Bool) throws -> URLRequest {
+    func makeURLRequest(_ request: CompletionRequest, streaming: Bool, inspectionGeneration: UInt64? = nil) throws -> URLRequest {
+        try Task.checkCancellation()
         var urlRequest = URLRequest(url: profile.baseURL.appending(path: "chat/completions"))
         urlRequest.httpMethod = "POST"
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -285,6 +291,14 @@ public struct OpenAICompatibleClient: LLMProvider {
             withJSONObject: try body(for: request, streaming: streaming),
             options: [.sortedKeys]
         )
+        guard let body = urlRequest.httpBody, body.count <= RequestInspector.maximumRequestBytes else {
+            throw ProviderError.malformedResponse("Request exceeds the local context limit")
+        }
+        if let inspector, let destination = urlRequest.url {
+            guard inspector.record(destination: destination, request: request, body: body, generation: inspectionGeneration ?? inspector.generation) else {
+                throw CancellationError()
+            }
+        }
         return urlRequest
     }
 

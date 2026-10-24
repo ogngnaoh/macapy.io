@@ -37,38 +37,34 @@ enum FontRegistrar {
     static func registerIfNeeded() -> Bool { registered }
 }
 
-/// Human-voice roles (SF, the system face): UI chrome and transcript text.
-/// Sizes come from the approved scale (docs/design/tokens.css --text-*).
+/// Restrained system-sans hierarchy from the stored design language. Native
+/// fonts follow the source's system fallback and avoid a new font dependency.
+/// Reading roles preserve source casing; authored chrome is lowercase.
 enum UIType {
-    /// 13pt — transcript lines, controls, row titles (semibold variant).
-    static let body = Font.system(size: 13)
-    static let bodySemibold = Font.system(size: 13, weight: .semibold)
-    /// 11pt — captions, hints, secondary rows.
+    static let body = Font.system(size: 12)
+    /// Compatibility name; medium is the source system's subtle emphasis.
+    static let bodySemibold = Font.system(size: 12, weight: .medium)
     static let small = Font.system(size: 11)
+    /// Compact live captions retain a useful reading size in the small panel.
+    static let compactReading = Font.system(size: 13)
+    static let reading = Font.system(size: 16)
+    static let heading = Font.system(size: 20, weight: .regular)
+    static let title = Font.system(size: 28, weight: .regular)
 }
 
-/// Type roles from the approved system: **machine speaks mono, humans speak
-/// SF.** SF (the system face) carries UI chrome and transcript text; Martian
-/// Mono is reserved for the machine's own voice — state labels, timers,
-/// timestamps, speaker gutters, diagnostics numerals.
+/// Existing role names are retained for page-level call sites. Labels now use
+/// quiet system sans; monospacing is reserved for values that benefit from
+/// aligned numerals. No UI label drops below the source's 11pt minimum.
 enum MachineType {
-    /// Micro label: state words, speaker gutters, eyebrows. Pair with
-    /// `.textCase(.uppercase)` and `.tracking(0.5)` at the use site when the
-    /// mockup shows uppercase tracking.
-    static func label(_ size: CGFloat = 9.5) -> Font {
-        FontRegistrar.registerIfNeeded()
-        return .custom("MartianMono-SemiBold", size: size)
+    static func label(_ size: CGFloat = 11) -> Font {
+        .system(size: max(11, size), weight: .medium)
     }
 
-    /// Numerals and running values: timers, timestamps, percentiles.
-    static func number(_ size: CGFloat = 9.5) -> Font {
-        FontRegistrar.registerIfNeeded()
-        return .custom("MartianMono-Regular", size: size)
+    static func number(_ size: CGFloat = 11) -> Font {
+        .system(size: max(11, size), weight: .regular, design: .monospaced)
     }
 
-    /// Brand-weight mono (wordmark lockup moments).
     static func brand(_ size: CGFloat) -> Font {
-        FontRegistrar.registerIfNeeded()
-        return .custom("MartianMono-Bold", size: size)
+        .system(size: size, weight: .medium)
     }
 }

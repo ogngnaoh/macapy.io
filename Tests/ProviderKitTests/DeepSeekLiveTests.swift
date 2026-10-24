@@ -7,15 +7,16 @@ import Testing
 /// Live checks against the **real** DeepSeek endpoint — the one profile
 /// live-verified in M2 (slice-02 doc, scope item 7).
 ///
-/// Gated on the key being present, so the suite is *skipped*, never failed, on
+/// Requires an explicit live-lane opt-in and a key, so the suite skips on
 /// a fresh clone, in CI, and for any contributor. Live results deliberately do
 /// not gate a slice ship — machine checks 1–8 do that. What these add is the
 /// single thing a fake server structurally cannot: evidence that the
 /// hand-written fixtures still describe how DeepSeek actually behaves.
 ///
-/// Run with `direnv allow` done (see `.envrc`), or:
-///     MACAPY_DEEPSEEK_KEY=… swift test --filter DeepSeekLiveTests
-@Suite(.enabled(if: LiveCredentials.hasDeepSeek))
+/// After explicit authorization for its bounded calls, run:
+///     MACAPY_RUN_LIVE_PROVIDER_TESTS=1 scripts/verify.sh live --filter DeepSeekLiveTests
+/// The credential is supplied through the environment; never print or persist it.
+@Suite(.enabled(if: TestRunPolicy.runsLiveProvider, "Requires MACAPY_RUN_LIVE_PROVIDER_TESTS=1 and a nonempty MACAPY_DEEPSEEK_KEY; billable/network lane"))
 struct DeepSeekLiveTests {
 
     private func client(key: String) -> OpenAICompatibleClient {

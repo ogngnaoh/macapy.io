@@ -287,7 +287,7 @@ struct MeetingPipelineTests {
         let coordinator = makeCoordinator(engine: engine, source: source)
 
         coordinator.toggleSession()  // start
-        #expect(coordinator.session.isCapturing)
+        #expect(coordinator.session.isPreparing)
         await waitUntil("segment applied") { coordinator.store.segments.map(\.text) == ["hello world"] }
         #expect(coordinator.store.segments.map(\.text) == ["hello world"])
 

@@ -60,8 +60,9 @@ struct DeleteEverythingSheet: View {
                 .font(UIType.bodySemibold)
                 .foregroundStyle(DesignTokens.text)
             Text(
-                "Every meeting, transcript, artifact, and spend record is removed from this Mac, "
-                    + "including its search index. Settings and API keys are kept. This can't be undone."
+                "Removes meetings, transcripts, notes, memory, people and projects, imported documents, calendar briefs, action history, search indexes, and your preferred name. "
+                    + "Provider and app settings, API keys, installed models, and anonymous budget counters are kept. "
+                    + "Previously created Calendar or Reminders items and exported files remain outside macapy. This can't be undone."
             )
             .font(UIType.small)
             .foregroundStyle(DesignTokens.textSecondary)
@@ -97,7 +98,7 @@ struct DeleteEverythingSheet: View {
                     .accessibilityLabel("Type DELETE to confirm")
 
                 if model.didFail {
-                    Text("Deletion didn't run — stop the current meeting first, then try again.")
+                    Text("Deletion could not finish. Stop any active meeting, check available storage, and try again.")
                         .font(UIType.small)
                         .foregroundStyle(DesignTokens.statusRejected)
                         .fixedSize(horizontal: false, vertical: true)

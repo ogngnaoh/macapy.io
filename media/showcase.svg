@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="360" viewBox="0 0 1600 360" role="img" aria-labelledby="title desc">
+  <title id="title">macapy — Stay in the conversation.</title>
+  <desc id="desc">A flat pink brand header with a black five-bar mark and the macapy wordmark. Native meeting assistant for macOS, built with Swift.</desc>
+  <rect width="1600" height="360" fill="#F7CAC9"/>
+  <g fill="#000000">
+    <rect x="70" y="114" width="16" height="40"/>
+    <rect x="102" y="90" width="16" height="64"/>
+    <rect x="134" y="66" width="16" height="88"/>
+    <rect x="166" y="106" width="16" height="48"/>
+    <rect x="198" y="82" width="16" height="72"/>
+  </g>
+  <g fill="#000000" font-family="-apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif">
+    <text x="250" y="139" font-size="88" font-weight="500" letter-spacing="-3">macapy</text>
+    <text x="70" y="237" font-size="44" font-weight="400">stay in the conversation.</text>
+    <text x="1530" y="77" text-anchor="end" font-size="17" letter-spacing="1">native / local first</text>
+    <text x="70" y="324" font-size="17" letter-spacing="1">a meeting assistant for your mac</text>
+    <text x="1530" y="324" text-anchor="end" font-size="17" letter-spacing="1">swift 6 · macos 26+</text>
+  </g>
+  <path d="M70 281H1530" stroke="#000000" stroke-width="1"/>
+</svg>

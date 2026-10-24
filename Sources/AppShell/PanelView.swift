@@ -17,10 +17,21 @@ struct PanelView: View {
         static let panelWidth: CGFloat = 340
         static let panelHeight: CGFloat = 470
         static let minimumTranscriptHeight: CGFloat = 96
-        static let maximumCopilotSurfaceHeight: CGFloat = 174
-        static let maximumAnswerViewportHeight: CGFloat = 112
+        static let maximumCopilotSurfaceHeight: CGFloat = 164
+        static let maximumAnswerViewportHeight: CGFloat = 96
+        static let copilotCardHeight = maximumCopilotSurfaceHeight - 2 * DesignTokens.Space.s1
         static let maximumRollingSummaryLines = 3
     }
+
+    enum LayoutRegion: Hashable { case transcript, copilot, answerViewport, answerContent, query, footer }
+
+    /// Optional native-layout observation for offscreen regression checks.
+    /// Production leaves this nil, so probes do not install geometry readers.
+    var onLayout: ((LayoutRegion, CGRect) -> Void)? = nil
+
+    /// Presentation values supplied by the shortcut preferences owner. Omitted
+    /// actions keep their default labels, including the isolated sample.
+    var shortcutLabels: [ShortcutAction: String] = [:]
 
     struct StreamingFragments: Equatable {
         let settled: String
@@ -54,11 +65,17 @@ struct PanelView: View {
         copilot.dismissCard()
     }
 
+    /// NSHostingView is outside the scene environment. The persistent menu
+    /// bar label routes this notification through its scene-owned action.
+    var onOpenSetup: () -> Void = {
+        NotificationCenter.default.post(name: .macapyOpenSetup, object: nil)
+    }
     @Environment(SessionController.self) private var session
     @Environment(TranscriptStore.self) private var store
     @Environment(LiveCopilotModel.self) private var copilot
     @FocusState private var copilotCardFocused: Bool
     @FocusState private var queryFieldFocused: Bool
+    @State private var showingStorageDetails = false
 
     /// Panel speaker label: mic is the user ("You"); system-audio is the
     /// meeting's other participants ("Them").
@@ -73,16 +90,25 @@ struct PanelView: View {
         VStack(spacing: 0) {
             SignalStripView(mode: session.isCapturing ? .live : .quiet, meter: session.signalMeter)
             header
-            rollingSummaryStrip
-            transcript
-            copilotSurface
-            queryBar
-            if session.isPaused {
-                pausedNote
+            if session.isPreparing {
+                preparationNotice
+            } else if let failure = session.failure {
+                failureNotice(failure)
+            } else {
+                if let warning = session.storageWarning ?? session.diarizationWarning {
+                    storageWarningStrip(warning)
+                } else {
+                    rollingSummaryStrip
+                }
+                transcript
+                copilotSurface
+                queryBar
+                if session.isPaused { pausedNote }
+                footer
             }
-            footer
         }
         .frame(width: Layout.panelWidth, height: Layout.panelHeight)
+        .coordinateSpace(name: Self.layoutCoordinateSpace)
         .background(DesignTokens.surface)
         // The command lives at the panel container so Escape is handled when
         // focus is in either the query field or its Submit button.
@@ -90,15 +116,19 @@ struct PanelView: View {
         .onChange(of: copilot.askFocusRevision) { _, _ in
             queryFieldFocused = copilot.askFieldVisible
         }
+        .popover(item: Binding(get: { copilot.sourcePicker }, set: { copilot.sourcePicker = $0 })) { picker in
+            LiveAskSourcesView(model: picker)
+        }
+        .popover(item: Binding(get: { copilot.groundingPreview }, set: { copilot.groundingPreview = $0 })) { preview in
+            LiveGroundingEvidenceView(title: preview.title, text: preview.text)
+        }
     }
 
     private var header: some View {
         HStack(alignment: .firstTextBaseline) {
-            Text(session.isPaused ? "Paused" : "Capturing")
+            Text(session.statusTitle.lowercased())
                 .font(MachineType.label())
-                .textCase(.uppercase)
-                .tracking(0.8)
-                .foregroundStyle(session.isPaused ? DesignTokens.textSecondary : DesignTokens.live)
+                .foregroundStyle(session.isPaused ? DesignTokens.textSecondary : DesignTokens.text)
             Spacer()
             if let startedAt = session.startedAt {
                 MeetingTimerText(startedAt: startedAt)
@@ -109,6 +139,86 @@ struct PanelView: View {
         .overlay(alignment: .bottom) { Divider().overlay(DesignTokens.hairline) }
     }
 
+    private func storageWarningStrip(_ warning: String) -> some View {
+        Button { showingStorageDetails = true } label: {
+            HStack(alignment: .top, spacing: DesignTokens.Space.s2) {
+                Image(systemName: "exclamationmark.triangle")
+                    .accessibilityHidden(true)
+                Text(warning)
+                    .font(UIType.small)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.right")
+                    .font(UIType.small)
+                    .accessibilityHidden(true)
+            }
+            .foregroundStyle(DesignTokens.statusWarning)
+            .padding(.horizontal, DesignTokens.Space.s3)
+            .padding(.vertical, DesignTokens.Space.s2)
+            .background(DesignTokens.statusWarningSurface)
+        }
+        .buttonStyle(.plain)
+        .help(warning)
+        .accessibilityLabel(warning)
+        .accessibilityHint("Show the complete capture notice. Capture continues.")
+        .popover(isPresented: $showingStorageDetails) {
+            VStack(alignment: .leading, spacing: DesignTokens.Space.s2) {
+                Text("capture notice").font(UIType.bodySemibold)
+                Text(warning).font(UIType.compactReading).lineSpacing(3)
+            }
+            .foregroundStyle(DesignTokens.text)
+            .padding(DesignTokens.Space.s4)
+            .frame(width: 300)
+            .background(DesignTokens.surface)
+        }
+    }
+
+    private var preparationNotice: some View {
+        VStack(alignment: .leading, spacing: DesignTokens.Space.s3) {
+            Spacer()
+            ProgressView().controlSize(.small)
+            Text("preparing your meeting")
+                .font(UIType.heading)
+                .foregroundStyle(DesignTokens.text)
+            Text("checking local speech support and starting audio. capture has not begun yet.")
+                .font(UIType.compactReading)
+                .foregroundStyle(DesignTokens.textSecondary)
+            Text("cancel from the menu bar or with \(shortcutLabel(.startStop)).")
+                .font(UIType.small)
+                .foregroundStyle(DesignTokens.textSecondary)
+            Spacer()
+        }
+        .padding(DesignTokens.Space.s5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func failureNotice(_ failure: SessionFailure) -> some View {
+        let interrupted = [SessionFailure.audioRoute, .captureInterrupted, .systemSleep, .transcription].contains(failure)
+        let finishing = failure == .shutdownDelayed
+        return VStack(alignment: .leading, spacing: DesignTokens.Space.s3) {
+            Spacer()
+            Image(systemName: "exclamationmark.square")
+                .foregroundStyle(DesignTokens.statusWarning)
+                .font(.system(size: 24))
+                .accessibilityHidden(true)
+            Text(finishing ? "still finishing" : (interrupted ? "recording stopped" : "let’s get you ready"))
+                .font(UIType.heading)
+                .foregroundStyle(DesignTokens.text)
+            Text(failure.message)
+                .font(UIType.compactReading)
+                .lineSpacing(3)
+                .foregroundStyle(DesignTokens.textSecondary)
+            if !interrupted && !finishing {
+                Button("open setup", action: onOpenSetup)
+                    .buttonStyle(PrimaryButtonStyle())
+            }
+            Spacer()
+        }
+        .padding(DesignTokens.Space.s5)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var transcript: some View {
         ScrollViewReader { proxy in
             ScrollView {
@@ -116,7 +226,7 @@ struct PanelView: View {
                     ForEach(store.segments) { segment in
                         TranscriptLineView(
                             speaker: store.speakerLabels[segment.id]
-                                ?? Self.speakerLabel(for: segment.source),
+                                ?? Self.speakerLabel(for: segment.source).lowercased(),
                             isYou: segment.source == .mic,
                             text: segment.text,
                             isVolatile: false
@@ -125,7 +235,7 @@ struct PanelView: View {
                     }
                     ForEach(volatileLines, id: \.source) { line in
                         TranscriptLineView(
-                            speaker: Self.speakerLabel(for: line.source),
+                            speaker: Self.speakerLabel(for: line.source).lowercased(),
                             isYou: line.source == .mic,
                             text: line.text,
                             isVolatile: true
@@ -144,17 +254,15 @@ struct PanelView: View {
             }
         }
         .frame(minHeight: Layout.minimumTranscriptHeight)
-        .layoutPriority(1)
+        .modifier(LayoutProbe(region: .transcript, observe: onLayout))
     }
 
     @ViewBuilder
     private var rollingSummaryStrip: some View {
         if let summary = copilot.rollingSummaryText {
             HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Space.s2) {
-                Text("So far")
+                Text("so far")
                     .font(MachineType.label())
-                    .textCase(.uppercase)
-                    .tracking(0.7)
                     .foregroundStyle(DesignTokens.textSecondary)
                 Text(summary)
                     .font(UIType.small)
@@ -172,7 +280,7 @@ struct PanelView: View {
     }
 
     private var pausedNote: some View {
-        Text("Capture is stopped. Nothing is being heard.")
+        Text("capture is paused. nothing is being heard.")
             .font(UIType.small)
             .foregroundStyle(DesignTokens.textSecondary)
             .frame(maxWidth: .infinity)
@@ -182,29 +290,35 @@ struct PanelView: View {
 
     private var footer: some View {
         HStack(spacing: DesignTokens.Space.s2) {
-            Button("Catch up") { copilot.requestCatchUp() }
+            Button("catch up") { copilot.requestCatchUp() }
                 .buttonStyle(.plain)
                 .font(UIType.small)
                 .foregroundStyle(copilot.canCatchUp ? DesignTokens.text : DesignTokens.textTertiary)
                 .disabled(!copilot.canCatchUp)
                 .accessibilityLabel("Catch up on the last 90 seconds")
-                .accessibilityHint("Keyboard shortcut Option Command C")
-            Button("Ask") { copilot.requestAsk() }
+                .accessibilityHint(shortcutHint(.catchUp))
+            Button("ask") { copilot.requestAsk() }
                 .buttonStyle(.plain)
                 .font(UIType.small)
                 .foregroundStyle(copilot.canAsk ? DesignTokens.text : DesignTokens.textTertiary)
                 .disabled(!copilot.canAsk)
                 .accessibilityLabel("Ask about this meeting")
-                .accessibilityHint("Keyboard shortcut Option Command K")
+                .accessibilityHint(shortcutHint(.ask))
             Spacer()
-            Text(copilot.askFieldVisible ? "Meeting only" : "⌥⌘M · ⌥⌘P")
-                .font(UIType.small)
-                .foregroundStyle(DesignTokens.textTertiary)
+            if copilot.askFieldVisible, copilot.sourceLookupAvailable {
+                Button("add sources…") { copilot.openSources() }.buttonStyle(.plain).font(UIType.small)
+                    .foregroundStyle(DesignTokens.accent).disabled(!copilot.canOpenSources)
+                    .help("Review selected history and documents before sending")
+            } else {
+                Text(copilot.askFieldVisible ? "meeting only" : "\(shortcutLabel(.startStop)) · \(shortcutLabel(.pauseResume))")
+                    .font(UIType.small).foregroundStyle(DesignTokens.textTertiary)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, DesignTokens.Space.s3)
             .padding(.vertical, DesignTokens.Space.s2)
             .overlay(alignment: .top) { Divider().overlay(DesignTokens.hairline) }
+            .modifier(LayoutProbe(region: .footer, observe: onLayout))
     }
 
     @ViewBuilder
@@ -214,42 +328,56 @@ struct PanelView: View {
                 HStack {
                     Text(cardTitle(card))
                         .font(MachineType.label())
-                        .tracking(0.7)
                         .foregroundStyle(DesignTokens.textSecondary)
                         .lineLimit(2)
                     Spacer()
-                    Button("Dismiss") { copilot.dismissCard() }
+                    if !card.evidence.isEmpty {
+                        Menu("sources") {
+                            ForEach(card.evidence) { evidence in
+                                Button(evidence.title) { Task { await copilot.previewGrounding(evidence) } }
+                            }
+                        }.menuStyle(.borderlessButton).fixedSize().font(UIType.small)
+                    }
+                    Button("dismiss") { copilot.dismissCard() }
                         .buttonStyle(.plain)
                         .font(UIType.small)
                         .accessibilityLabel("Dismiss copilot card")
-                        .accessibilityHint(Self.dismissShortcutAccessibilityHint)
+                        .accessibilityHint(shortcutHint(.dismiss))
                 }
                 if card.text.isEmpty && card.isStreaming {
-                    Text("Thinking…")
+                    Text("thinking…")
                         .font(UIType.body)
                         .foregroundStyle(DesignTokens.textSecondary)
                 } else {
                     ScrollView(.vertical) {
                         streamingAnswer(card)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .modifier(LayoutProbe(region: .answerContent, observe: onLayout))
                     }
-                    .frame(maxHeight: Layout.maximumAnswerViewportHeight)
+                    // A max-only ScrollView can accept a zero-height proposal
+                    // when the transcript consumes the available VStack space.
+                    // Reserve a readable viewport; long answers scroll inside it.
+                    .frame(height: Layout.maximumAnswerViewportHeight)
+                    .modifier(LayoutProbe(region: .answerViewport, observe: onLayout))
                     .textSelection(.enabled)
                     .accessibilityLabel(card.text)
                 }
             }
-            .padding(DesignTokens.Space.s3)
+            .padding(.horizontal, DesignTokens.Space.s3)
+            .padding(.vertical, DesignTokens.Space.s2)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(DesignTokens.raised)
+            .frame(height: Layout.copilotCardHeight, alignment: .top)
+            .background(DesignTokens.sunken)
             .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radiusCard))
             .overlay {
                 RoundedRectangle(cornerRadius: DesignTokens.radiusCard)
                     .stroke(DesignTokens.hairlineStrong, lineWidth: 1)
             }
-            .shadow(color: .black.opacity(0.10), radius: 7, y: 4)
             .padding(.horizontal, DesignTokens.Space.s3)
-            .padding(.vertical, DesignTokens.Space.s2)
-            .frame(maxHeight: Layout.maximumCopilotSurfaceHeight)
+            .padding(.vertical, DesignTokens.Space.s1)
+            .frame(height: Layout.maximumCopilotSurfaceHeight)
+            .modifier(LayoutProbe(region: .copilot, observe: onLayout))
             .focusable()
             .focused($copilotCardFocused)
             .onHover { copilot.setCardHovered($0) }
@@ -275,7 +403,7 @@ struct PanelView: View {
         if copilot.askFieldVisible {
             HStack(spacing: DesignTokens.Space.s2) {
                 TextField(
-                    "Ask about this meeting",
+                    "ask about this meeting",
                     text: Binding(
                         get: { copilot.queryText },
                         set: { copilot.queryText = $0 }
@@ -290,7 +418,7 @@ struct PanelView: View {
                 .overlay {
                     RoundedRectangle(cornerRadius: DesignTokens.radiusControl)
                         .stroke(
-                            queryFieldFocused ? DesignTokens.signal : DesignTokens.hairline,
+                            queryFieldFocused ? DesignTokens.accent : DesignTokens.hairlineStrong,
                             lineWidth: queryFieldFocused ? 2 : 1
                         )
                 }
@@ -312,28 +440,40 @@ struct PanelView: View {
             .padding(.vertical, DesignTokens.Space.s2)
             .overlay(alignment: .top) { Divider().overlay(DesignTokens.hairline) }
             .accessibilityElement(children: .contain)
+            .modifier(LayoutProbe(region: .query, observe: onLayout))
         }
     }
 
     private var availabilityMessage: String? {
         switch copilot.availability {
-        case .disabled: "AI features are off. Capture is unaffected."
-        case .setupRequired: "Add your DeepSeek key in Settings to use the copilot."
+        case .disabled: "ai features are off. capture continues."
+        case .setupRequired: "add your DeepSeek key in settings to use the copilot."
         case .paused(let message): message
         case .idle, .ready, .working: nil
         }
     }
 
+    private func shortcutLabel(_ action: ShortcutAction) -> String {
+        shortcutLabels[action] ?? ShortcutBinding(letter: action.defaultLetter).display
+    }
+
+    private func shortcutHint(_ action: ShortcutAction) -> String {
+        if shortcutLabels[action] == nil {
+            return "Keyboard shortcut Option Command \(action.defaultLetter)"
+        }
+        return "Keyboard shortcut \(shortcutLabel(action))"
+    }
+
     private func cardTitle(_ card: LiveCopilotCard) -> String {
         switch card.kind {
-        case .query(let question): "You asked · \(question)"
-        case .action(.suggestAnswer): "Suggested answer"
-        case .action(.flagCommitment): "Commitment"
-        case .action(.catchUp): "Catch up"
+        case .query(let question): "you asked · \(question)"
+        case .action(.suggestAnswer): "suggested answer"
+        case .action(.flagCommitment): "commitment"
+        case .action(.catchUp): "catch up"
         }
     }
 
-    private func streamingAnswer(_ card: LiveCopilotCard) -> Text {
+    private func streamingAnswer(_ card: LiveCopilotCard) -> some View {
         let fragments = Self.streamingFragments(for: card.text, isStreaming: card.isStreaming)
         let settled = Text(verbatim: fragments.settled)
             .foregroundColor(DesignTokens.text)
@@ -341,10 +481,29 @@ struct PanelView: View {
             .foregroundColor(DesignTokens.textSecondary)
             .underline(pattern: .dot, color: DesignTokens.textTertiary)
         return Text("\(settled)\(volatile)")
-            .font(UIType.body)
+            .font(UIType.compactReading)
+            .lineSpacing(3)
     }
 
     private static let bottomAnchor = "transcript-bottom"
+    nonisolated private static let layoutCoordinateSpace = "macapy-meeting-panel"
+
+    private struct LayoutProbe: ViewModifier {
+        let region: LayoutRegion
+        let observe: ((LayoutRegion, CGRect) -> Void)?
+
+        @ViewBuilder func body(content: Content) -> some View {
+            if let observe {
+                content.onGeometryChange(for: CGRect.self) { geometry in
+                    geometry.frame(in: .named(PanelView.layoutCoordinateSpace))
+                } action: { frame in
+                    observe(region, frame)
+                }
+            } else {
+                content
+            }
+        }
+    }
 
     /// Deterministic order so `ForEach` identity is stable.
     private var volatileLines: [TranscriptStore.VolatileLine] {

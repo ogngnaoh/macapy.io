@@ -27,7 +27,7 @@ private enum M3LivePipelineError: Error {
 /// `LiveCopilotModel.receive` and stops only when a non-empty card is observable
 /// by the panel. No diagnostics implementation seam is involved.
 @MainActor
-@Suite(.serialized, .enabled(if: LiveCredentials.hasDeepSeek))
+@Suite(.serialized, .enabled(if: TestRunPolicy.runsLiveProvider, "Requires MACAPY_RUN_LIVE_PROVIDER_TESTS=1 and a nonempty MACAPY_DEEPSEEK_KEY; billable/network lane"))
 struct M3LivePipelinePerformanceTests {
     @Test func triggerToFirstVisibleTokenP95IsUnderThreeSeconds() async throws {
         try await LiveProviderTestGate.shared.withExclusiveAccess {

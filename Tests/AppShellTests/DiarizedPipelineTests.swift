@@ -15,7 +15,8 @@ import TranscribeKit
 @MainActor
 struct DiarizedPipelineTests {
 
-    /// Emits one scripted final per source, then ends its event stream.
+    /// Emits scripted finals, then drains until capture stops. A natural live
+    /// EOF is now correctly considered a capture/transcription interruption.
     private struct ScriptedFinalsEngine: STTEngine {
         let finals: [AudioSource: [Segment]]
 
@@ -32,12 +33,10 @@ struct DiarizedPipelineTests {
             let events = finals[source] ?? []
             return AsyncThrowingStream { continuation in
                 let drain = Task {
-                    for await _ in audio {}  // keep the branch drained
+                    for segment in events { continuation.yield(.final(segment)) }
+                    for await _ in audio {}
+                    continuation.finish()
                 }
-                for segment in events {
-                    continuation.yield(.final(segment))
-                }
-                continuation.finish()
                 continuation.onTermination = { _ in drain.cancel() }
             }
         }
@@ -113,7 +112,8 @@ struct DiarizedPipelineTests {
                 ScriptedSource(source: .system, chunkCount: 3),
             ],
             store: store,
-            makeDiarizer: { DiarizationSession(engine: engine) }
+            makeDiarizer: { DiarizationSession(engine: engine) },
+            diarizationLease: OptionalDiarizationLease()
         )
 
         try await pipeline.start(mode: .persistent(meetingStore))
@@ -151,7 +151,8 @@ struct DiarizedPipelineTests {
             engine: ScriptedFinalsEngine(finals: [.system: [early, late]]),
             sources: [ScriptedSource(source: .system, chunkCount: 2)],
             store: store,
-            makeDiarizer: { DiarizationSession(engine: engine) }
+            makeDiarizer: { DiarizationSession(engine: engine) },
+            diarizationLease: OptionalDiarizationLease()
         )
 
         try await pipeline.start(mode: .persistent(meetingStore))
@@ -166,23 +167,25 @@ struct DiarizedPipelineTests {
     }
 
     @Test func stopCompletingDuringDiarizerConstructionOrphansNothing() async throws {
-        // Fresh-context critic finding: the detached session construction is a
-        // multi-second window; a stop() that runs to completion inside it must
-        // not leave the just-built session (a live CoreML load in production)
-        // alive past teardown. The weak box is the leak oracle.
+        // Capture starts independently of a blocked optional construction.
+        // Stop has a bounded grace, but the lease remains occupied until the
+        // underlying worker actually exits. Its late session is never adopted.
         final class Gate: @unchecked Sendable {
             let entered = DispatchSemaphore(value: 0)
             let release = DispatchSemaphore(value: 0)
-            weak var builtSession: DiarizationSession?
+            private weak var session: DiarizationSession?
             private let lock = NSLock()
+            var builtSession: DiarizationSession? { lock.withLock { session } }
             func noteBuilt(_ session: DiarizationSession) {
-                lock.withLock { builtSession = session }
+                lock.withLock { self.session = session }
             }
             // Sync wrapper: DispatchSemaphore.wait() is unavailable directly
             // in async contexts; the detached task calls this instead.
-            func waitUntilEntered() { entered.wait() }
+            func waitUntilEntered() -> Bool { entered.wait(timeout: .now() + 2) == .success }
         }
         let gate = Gate()
+        defer { gate.release.signal() }
+        let lease = OptionalDiarizationLease()
         let store = TranscriptStore()
         let meetingStore = MeetingStore(database: try MacapyDatabase.inMemory())
         let engine = ScriptedDiarizationEngine(turnBatches: [])
@@ -196,18 +199,21 @@ struct DiarizedPipelineTests {
                 let session = DiarizationSession(engine: engine)
                 gate.noteBuilt(session)
                 return session
-            }
+            },
+            diarizationLease: lease
         )
 
         let startTask = Task { try await pipeline.start(mode: .persistent(meetingStore)) }
-        // Wait (off the main actor) until start() is provably suspended inside
-        // the factory, then let stop() run to full completion.
-        await Task.detached { gate.waitUntilEntered() }.value
+        // Wait for the actual detached factory, not for a scheduling guess.
+        let entered = await Task.detached { gate.waitUntilEntered() }.value
+        try #require(entered)
         _ = await pipeline.stop()
+        #expect(lease.isOccupied)
 
         gate.release.signal()
         try await startTask.value
-        await Task.yield()
+        for _ in 0..<200 where lease.isOccupied { try await Task.sleep(for: .milliseconds(5)) }
+        #expect(!lease.isOccupied)
 
         // The session built after stop() completed was dropped, not adopted.
         #expect(gate.builtSession == nil)
@@ -223,7 +229,8 @@ struct DiarizedPipelineTests {
             engine: ScriptedFinalsEngine(finals: [.system: [segment]]),
             sources: [ScriptedSource(source: .system, chunkCount: 2)],
             store: store,
-            makeDiarizer: { throw Boom() }
+            makeDiarizer: { throw Boom() },
+            diarizationLease: OptionalDiarizationLease()
         )
 
         try await pipeline.start(mode: .persistent(meetingStore))

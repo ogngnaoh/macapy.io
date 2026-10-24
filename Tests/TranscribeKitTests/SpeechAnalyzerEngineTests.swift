@@ -1,31 +1,34 @@
 import AVFoundation
 import CaptureKit
 import Foundation
+import ProviderTestSupport
 import Testing
 
 @testable import TranscribeKit
 
-/// Check 1 (de-risk spike): a committed `say`-generated fixture wav fed through
+/// Check 1 (de-risk spike): an explicitly supplied local speech fixture WAV fed through
 /// the real `SpeechAnalyzerEngine` under `swift test` yields a nonempty
 /// transcript with the expected keywords; at least one `.volatile` precedes its
 /// `.final`; times are monotonic and non-negative; the event stream finishes
-/// after input ends. If the environment blocks the real engine (asset download
-/// impossible / speech TCC), this fails with an explicit "environment-blocked"
-/// message rather than being green-washed.
+/// after input ends. The real-engine test requires explicit local-model opt-in
+/// and installed assets. If execution then fails, it reports an explicit
+/// "environment-blocked" failure. Pure event-mapping checks always run.
 @Suite(.serialized)
 struct SpeechAnalyzerEngineTests {
 
     private static let englishUS = Locale(identifier: "en_US")
 
-    @Test func transcribesFixtureVolatileThenFinal() async throws {
-        guard let url = Bundle.module.url(
-            forResource: "fox", withExtension: "wav", subdirectory: "Fixtures"
-        ) else {
-            Issue.record("environment-blocked: fixture fox.wav missing from test bundle")
+    @Test(.enabled("Requires explicit model opt-in, installed en-US speech assets, and MACAPY_LOCAL_AUDIO_FIXTURES/fox.wav; no downloads") {
+        guard TestRunPolicy.runsLocalModels && LocalAudioFixtures.has(["fox.wav"]) else { return false }
+        return await SpeechAnalyzerEngine.assetsAreInstalled(locale: Locale(identifier: "en_US"))
+    })
+    func transcribesFixtureVolatileThenFinal() async throws {
+        guard let url = LocalAudioFixtures.url(named: "fox.wav") else {
+            Issue.record("environment-blocked: local fixture fox.wav missing")
             return
         }
 
-        let engine = SpeechAnalyzerEngine(locale: Self.englishUS)
+        let engine = SpeechAnalyzerEngine(locale: Self.englishUS, assetInstallationPolicy: .installedOnly)
         do {
             try await engine.prepare(locale: Self.englishUS)
         } catch {

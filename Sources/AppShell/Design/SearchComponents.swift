@@ -1,17 +1,13 @@
 import PersistKit
 import SwiftUI
 
-// Slice-5 pieces of the "Quiet instrument" system: the History toolbar's
-// search field, list/search rows, snippet rendering, and the subtle /
-// destructive button styles from tokens.css. Everything composes existing
-// tokens — no new colors, no new type roles.
+// History controls share the native editorial foundations: square fields,
+// legible search context, restrained selection and explicit keyboard focus.
 
 // MARK: - Search field
 
-/// `.searchfield` — sunken bed, hairline stroke, control radius. Custom
-/// rather than `.searchable` because system chrome can't match the mockup's
-/// treatment (slice-05 doc decision 6). Esc clears; ⌘F focuses (wired at the
-/// call site via `focus`).
+/// A square search field with a visible focus ring. Esc clears; ⌘F focuses
+/// through the caller-owned binding. Typed queries retain sentence case.
 struct SearchField: View {
     @Binding var text: String
     var focus: FocusState<Bool>.Binding
@@ -21,23 +17,36 @@ struct SearchField: View {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
                 .foregroundStyle(DesignTokens.textSecondary)
-            TextField("Search meetings", text: $text)
+            TextField("search meetings", text: $text)
                 .textFieldStyle(.plain)
-                .font(UIType.small)
+                .font(UIType.body)
                 .foregroundStyle(DesignTokens.text)
                 .focused(focus)
                 .onExitCommand { text = "" }
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                    focus.wrappedValue = true
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10))
+                        .foregroundStyle(DesignTokens.textSecondary)
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("clear search")
+            }
         }
         .padding(.horizontal, DesignTokens.Space.s2)
-        .padding(.vertical, 4)
-        .frame(minWidth: 200)
-        .background(DesignTokens.sunken)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radiusControl))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.radiusControl)
-                .stroke(DesignTokens.hairline)
-        )
-        .accessibilityLabel("Search meetings")
+        .padding(.vertical, 5)
+        .frame(minWidth: 220, minHeight: 30)
+        .background(DesignTokens.surface)
+        .overlay(Rectangle().stroke(
+            focus.wrappedValue ? DesignTokens.accent : DesignTokens.hairlineStrong,
+            lineWidth: focus.wrappedValue ? 2 : 1
+        ))
+        .accessibilityLabel("search meetings")
     }
 }
 
@@ -51,33 +60,39 @@ struct HistoryRow: View {
     let meta: String
     let isSelected: Bool
     let action: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: DesignTokens.Space.s3) {
-                VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: DesignTokens.Space.s1) {
                     Text(title)
-                        .font(UIType.bodySemibold)
+                        .font(UIType.compactReading)
                         .foregroundStyle(DesignTokens.text)
-                        .lineLimit(1)
+                        .lineLimit(2)
+                    HStack {
                     Text(subtitle)
                         .font(UIType.small)
                         .foregroundStyle(DesignTokens.textSecondary)
                         .lineLimit(1)
-                }
-                Spacer(minLength: DesignTokens.Space.s2)
+                Spacer(minLength: DesignTokens.Space.s1)
                 Text(meta)
-                    .font(MachineType.number())
+                    .font(UIType.small)
                     .foregroundStyle(DesignTokens.textTertiary)
+                    }
             }
             .padding(.horizontal, DesignTokens.Space.s4)
             .padding(.vertical, DesignTokens.Space.s3)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isSelected ? DesignTokens.signalSoft : .clear)
+            .background(isSelected ? DesignTokens.surface : (isHovered ? DesignTokens.sunken : .clear))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .overlay(alignment: .leading) {
+            if isSelected { Rectangle().fill(DesignTokens.selection).frame(width: 3) }
+        }
         .overlay(alignment: .bottom) { Divider().overlay(DesignTokens.hairline) }
+        .accessibilityValue(isSelected ? "Selected" : "")
     }
 }
 
@@ -87,12 +102,13 @@ struct PassageRow: View {
     let context: String
     let snippet: SearchSnippet
     let action: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: DesignTokens.Space.s1) {
                 Text(context)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(UIType.bodySemibold)
                     .foregroundStyle(DesignTokens.text)
                     .lineLimit(1)
                 SnippetTextView(snippet: snippet)
@@ -100,9 +116,11 @@ struct PassageRow: View {
             .padding(.horizontal, DesignTokens.Space.s4)
             .padding(.vertical, DesignTokens.Space.s2)
             .frame(maxWidth: .infinity, alignment: .leading)
+            .background(isHovered ? DesignTokens.sunken : .clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
         .overlay(alignment: .bottom) { Divider().overlay(DesignTokens.hairline) }
     }
 }
@@ -115,7 +133,7 @@ struct SnippetTextView: View {
 
     var body: some View {
         Text(Self.attributed(snippet))
-            .font(UIType.small)
+            .font(UIType.compactReading)
             .foregroundStyle(DesignTokens.textSecondary)
             .lineLimit(3)
             .multilineTextAlignment(.leading)
@@ -138,9 +156,8 @@ struct SnippetTextView: View {
 
 // MARK: - Section header (promoted from MeetingDetailView in slice 5)
 
-/// `.art-head` / `.result-group .machine` — mono section label, optional
-/// status chip, optional G3 readout pushed to the trailing edge. Shared by
-/// the artifacts pane and the search results' group headers.
+/// A quiet section label, optional status chip, and timing readout.
+/// Shared by the review pane and search result groups.
 struct SectionHead: View {
     let title: String
     var chip: Chip?
@@ -150,8 +167,7 @@ struct SectionHead: View {
         HStack(spacing: DesignTokens.Space.s2) {
             Text(title)
                 .font(MachineType.label())
-                .textCase(.uppercase)
-                .tracking(0.6)
+                .textCase(.lowercase)
                 .foregroundStyle(DesignTokens.textSecondary)
             if let chip { chip }
             if let draftedIn {
@@ -167,36 +183,61 @@ struct SectionHead: View {
 
 // MARK: - Button styles
 
-/// `.btn.subtle` — borderless, quiet; the detail toolbar's "Delete…".
-struct SubtleButtonStyle: ButtonStyle {
+/// Shared primary control. Native keyboard focus remains available around
+/// the flat neutral fill; disabled actions retain a readable visible label.
+struct PrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(UIType.body)
-            .foregroundStyle(DesignTokens.textSecondary)
+            .font(UIType.bodySemibold)
+            .foregroundStyle(isEnabled ? DesignTokens.textOnSelection : DesignTokens.textSecondary)
             .padding(.horizontal, DesignTokens.Space.s3)
-            .padding(.vertical, 5)
-            .background(
-                configuration.isPressed ? DesignTokens.sunken : .clear,
-                in: RoundedRectangle(cornerRadius: DesignTokens.radiusControl))
+            .padding(.vertical, 7)
+            .frame(minHeight: 30)
+            .background(isEnabled ? DesignTokens.selection.opacity(configuration.isPressed ? 0.8 : 1) : DesignTokens.sunken)
+            .overlay(Rectangle().stroke(isEnabled ? DesignTokens.selection : DesignTokens.hairlineStrong))
+            .contentShape(Rectangle())
     }
 }
 
-/// `.btn.destructive` — the standard raised button with the rejected-red
-/// label; Settings' "Delete all meeting data…".
-struct DestructiveButtonStyle: ButtonStyle {
+/// A quiet, square action that preserves the control's enabled state.
+struct SubtleButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(UIType.body)
-            .foregroundStyle(DesignTokens.statusRejected)
+            .foregroundStyle(isEnabled ? DesignTokens.text : DesignTokens.textTertiary)
             .padding(.horizontal, DesignTokens.Space.s3)
-            .padding(.vertical, 5)
+            .padding(.vertical, 7)
+            .frame(minHeight: 30)
             .background(
-                DesignTokens.raised.opacity(configuration.isPressed ? 0.7 : 1),
-                in: RoundedRectangle(cornerRadius: DesignTokens.radiusControl))
+                configuration.isPressed ? DesignTokens.sunken : DesignTokens.surface,
+                in: Rectangle())
+            .overlay(Rectangle().stroke(DesignTokens.hairlineStrong))
+            .contentShape(Rectangle())
+    }
+}
+
+/// An outlined destructive action; red reinforces the explicit label.
+struct DestructiveButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(UIType.body)
+            .foregroundStyle(isEnabled ? DesignTokens.statusRejected : DesignTokens.textTertiary)
+            .padding(.horizontal, DesignTokens.Space.s3)
+            .padding(.vertical, 7)
+            .frame(minHeight: 30)
+            .background(
+                configuration.isPressed ? DesignTokens.statusRejectedSurface : DesignTokens.surface,
+                in: Rectangle())
             .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.radiusControl)
-                    .stroke(DesignTokens.hairlineStrong)
+                Rectangle().stroke(DesignTokens.hairlineStrong)
             )
+            .contentShape(Rectangle())
     }
 }
 
@@ -211,6 +252,7 @@ enum HistoryRowFormat {
         _ summary: MeetingStore.MeetingSummary, now: Date = Date(), calendar: Calendar = .current
     ) -> String {
         var parts = [dateLabel(summary.startedAt, now: now, calendar: calendar)]
+        if summary.status == MeetingRecord.interruptedStatus { parts.append("interrupted") }
         if let duration = summary.duration {
             parts.append(durationLabel(duration))
         } else if !summary.hasEnded {

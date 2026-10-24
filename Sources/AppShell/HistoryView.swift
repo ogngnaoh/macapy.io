@@ -6,8 +6,8 @@ import TranscribeKit
 /// count · artifact count, and — the moment the search field has text — the
 /// three grouped result sections (Meetings / Transcript passages /
 /// Artifacts) with passage deep-links into meeting detail. One
-/// `NavigationSplitView`; the mockups' two-window presentation is
-/// presentation, not structure (slice-05 doc decision 6).
+/// Native split navigation when standalone; a fixed rail when embedded avoids
+/// changing the parent window's toolbar or title as the selected meeting changes.
 struct HistoryView: View {
     let model: HistorySearchModel
     let store: MeetingStore
@@ -16,35 +16,54 @@ struct HistoryView: View {
     /// transcripts; the app's scene graph passes the coordinator's factory.
     var makeDetailModel: @MainActor (MeetingRecord) -> MeetingDetailModel? = { _ in nil }
 
+    var isEmbedded = false
+
     @FocusState private var searchFocused: Bool
 
     var body: some View {
-        NavigationSplitView {
-            sidebar
-                .navigationTitle("History")
-                .navigationSplitViewColumnWidth(min: 300, ideal: 340)
-        } detail: {
-            detail
-        }
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                SearchField(
-                    text: Binding(get: { model.query }, set: { model.query = $0 }),
-                    focus: $searchFocused
-                )
+        workspace
+            .background(
+                Button("find") { searchFocused = true }
+                    .keyboardShortcut("f", modifiers: .command)
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+            )
+            .frame(minWidth: 1000, minHeight: 480)
+            .background(DesignTokens.bg)
+            .task { await model.load() }
+    }
+
+    @ViewBuilder
+    private var workspace: some View {
+        if isEmbedded {
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("saved meetings").font(UIType.bodySemibold)
+                        .padding(.horizontal, 20).padding(.top, 25).padding(.bottom, 15)
+                    SearchField(text: Binding(get: { model.query }, set: { model.query = $0 }), focus: $searchFocused)
+                        .padding(.horizontal, 5).padding(.bottom, 15)
+                    sidebar
+                }
+                .frame(width: 235)
+                .background(DesignTokens.sunken)
+                Rectangle().fill(DesignTokens.hairline).frame(width: 1)
+                detail.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        } else {
+            NavigationSplitView {
+                sidebar
+                    .navigationTitle("history")
+                    .navigationSplitViewColumnWidth(min: 250, ideal: 280, max: 330)
+            } detail: {
+                detail
+            }
+            .toolbar {
+                ToolbarItem(placement: .automatic) {
+                    SearchField(text: Binding(get: { model.query }, set: { model.query = $0 }), focus: $searchFocused)
+                }
             }
         }
-        .background(
-            // ⌘F focuses the search field (slice-05 doc decision 6); an
-            // invisible button carries the shortcut.
-            Button("Find") { searchFocused = true }
-                .keyboardShortcut("f", modifiers: .command)
-                .opacity(0)
-                .frame(width: 0, height: 0)
-                .accessibilityHidden(true)
-        )
-        .frame(minWidth: 720, minHeight: 400)
-        .task { await model.load() }
     }
 
     // MARK: - Sidebar
@@ -60,7 +79,7 @@ struct HistoryView: View {
                 }
             }
         }
-        .background(DesignTokens.bg)
+        .background(DesignTokens.sunken)
         .overlay { sidebarOverlay }
     }
 
@@ -81,7 +100,7 @@ struct HistoryView: View {
     private var searchResults: some View {
         let results = model.results
         if !results.meetings.isEmpty {
-            groupHead("Meetings · \(results.meetings.count)")
+            groupHead("meetings · \(results.meetings.count)")
             ForEach(results.meetings) { hit in
                 HistoryRow(
                     title: hit.title,
@@ -93,7 +112,7 @@ struct HistoryView: View {
             }
         }
         if !results.passages.isEmpty {
-            groupHead("Transcript passages · \(results.passages.count)")
+            groupHead("transcript passages · \(results.passages.count)")
             ForEach(results.passages) { passage in
                 PassageRow(
                     context: "\(passage.meetingTitle) · \(TranscriptRows.timestampLabel(tStart: passage.tStart))",
@@ -103,7 +122,7 @@ struct HistoryView: View {
             }
         }
         if !results.artifacts.isEmpty {
-            groupHead("Artifacts · \(results.artifacts.count)")
+            groupHead("outputs · \(results.artifacts.count)")
             ForEach(results.artifacts) { artifact in
                 PassageRow(
                     context: artifactContext(for: artifact),
@@ -146,16 +165,16 @@ struct HistoryView: View {
     @ViewBuilder
     private var sidebarOverlay: some View {
         if let loadError = model.loadError, model.summaries.isEmpty {
-            EmptyStateView(title: "Couldn't load history", message: loadError)
+            EmptyStateView(title: "couldn’t load history", message: loadError)
         } else if model.isSearching && model.results.isEmpty {
             EmptyStateView(
-                title: "No matches",
+                title: "no matches",
                 message: "Nothing in titles, transcripts, or artifacts matches “\(model.query)”."
             )
         } else if !model.isSearching && model.summaries.isEmpty {
             EmptyStateView(
-                title: "No meetings yet",
-                message: "Press ⌥⌘M when your next meeting starts.\nEverything stays on this Mac."
+                title: "no meetings yet",
+                message: "Press ⌥⌘M when your next meeting starts.\nEverything stays on this mac."
             )
         }
     }
@@ -181,8 +200,8 @@ struct HistoryView: View {
             .id(summary.id)
         } else {
             EmptyStateView(
-                title: "Select a meeting",
-                message: "Its transcript and artifacts open here."
+                title: "select a meeting",
+                message: "its transcript and reviewed output open here."
             )
         }
     }

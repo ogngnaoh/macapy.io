@@ -161,7 +161,11 @@ struct MeetingDataDeletionTests {
             return (counts, try Int.fetchOne(db, sql: "SELECT count(*) FROM settings") ?? -1)
         }
         #expect(tableCounts.allSatisfy { $0.value == 0 })
-        #expect(settingsCount == 1)
+        // Non-content preferences survive; a second row explicitly remembers
+        // that deletion cleared the name so startup cannot refill it.
+        #expect(settingsCount == 2)
+        let liveSettings = try await settings.liveAISettings()
+        #expect(liveSettings.preferredName == nil && !liveSettings.usesSystemPreferredName)
         #expect(try await settings.value(forKey: "macapy.test.probe") == "survives")
 
         // Byte-grep: no canary bytes anywhere in the database files —

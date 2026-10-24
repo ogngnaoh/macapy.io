@@ -48,6 +48,8 @@ final class MeetingPipeline {
     private var dropCounters: [BoundedAudioFanOut.DropCounter] = []
     private var forwardingTasks: [Task<Void, Never>] = []
     private var eventTasks: [Task<Void, Never>] = []
+    private var healthTasks: [Task<Void, Never>] = []
+    private var reportedCaptureFailure = false
     private var stopped = false
     private let log = Logger(subsystem: "io.macapy.app", category: "MeetingPipeline")
 
@@ -57,16 +59,20 @@ final class MeetingPipeline {
     private var segmentWriter: SegmentWriter?
     private var writerTask: Task<Void, Never>?
 
-    /// Built off the main actor in `start()` (model load is ~8s on first
-    /// use); nil = no diarization this meeting (models absent, factory nil,
-    /// or construction failed — transcription must never suffer for it).
+    /// Optional installed-model work runs independently of capture startup.
+    /// A stalled worker holds the process lease until its actual exit.
     private let makeDiarizer: (@Sendable () throws -> DiarizationSession)?
-    private var diarizationSession: DiarizationSession?
-    private var diarizeTasks: [Task<Void, Never>] = []
+    private let diarizationLease: OptionalDiarizationLease
+    private let diarizationGrace: Duration
+    private var diarizationWorker: OptionalDiarizationWorker?
+    private var diarizationFinalsTask: Task<Void, Never>?
+    private var endedDiarizationDrops = 0
 
     /// Invoked on a mid-stream transcription failure (the coordinator stops the
     /// session). Errors thrown from `start()` propagate to the caller instead.
     var onFailure: (@MainActor (any Error) -> Void)?
+    var onPersistenceStatus: (@MainActor (SegmentPersistenceStatus) -> Void)?
+    var onDiarizationUnavailable: (@MainActor () -> Void)?
 
     init(
         engine: any STTEngine,
@@ -76,7 +82,9 @@ final class MeetingPipeline {
         recorder: LatencyRecorder = LatencyRecorder(sessionStart: Date()),
         fedAudioClock: FedAudioClock = FedAudioClock(),
         sttErrorCounter: STTErrorCounter = STTErrorCounter(),
-        makeDiarizer: (@Sendable () throws -> DiarizationSession)? = nil
+        makeDiarizer: (@Sendable () throws -> DiarizationSession)? = nil,
+        diarizationLease: OptionalDiarizationLease = .shared,
+        diarizationGrace: Duration = .milliseconds(250)
     ) {
         self.engine = engine
         self.sources = sources
@@ -86,6 +94,8 @@ final class MeetingPipeline {
         self.fedAudioClock = fedAudioClock
         self.sttErrorCounter = sttErrorCounter
         self.makeDiarizer = makeDiarizer
+        self.diarizationLease = diarizationLease
+        self.diarizationGrace = diarizationGrace
     }
 
     /// Flips the pipeline to "stopping" synchronously, so a `start()` still
@@ -134,41 +144,43 @@ final class MeetingPipeline {
         // always happens strictly after that reset and gets a live
         // continuation; a fresh `SegmentWriter` is created here on every call,
         // satisfying "re-attach after every reset" by construction.
-        let writer = SegmentWriter(store: resolvedStore, meetingID: meeting.id)
+        let writer = SegmentWriter(store: resolvedStore, meetingID: meeting.id, onStatus: { [weak self] status in
+            Task { @MainActor in self?.onPersistenceStatus?(status) }
+        })
         segmentWriter = writer
         let finals = store.finalsStream()
         writerTask = Task { await writer.run(consuming: finals) }
 
-        // Diarization (slice-4 decision 3). Session construction is detached —
-        // the CoreML model load takes seconds on first use and must not block
-        // the main actor. Failure degrades to an M1 meeting, never an error.
-        // The finals subscription attaches HERE, under the same
-        // before-capture binding constraint as the SegmentWriter above.
-        if let makeDiarizer {
-            do {
-                let session = try await Task.detached { try makeDiarizer() }.value
-                // stop() may have run to completion while the (slow, first-use
-                // ~8s) construction was in flight; adopting the session now
-                // would orphan a live CoreML load past teardown (fresh-context
-                // critic finding, G4). Drop the local and bail — the check and
-                // the assignments below are one synchronous MainActor stretch,
-                // so stop() cannot interleave after the check.
-                if stopped { return }
-                diarizationSession = session
+        // Subscribe before capture but do not await model construction. The
+        // inbox carries bounded audio and timing-only finals while it loads.
+        // The worker never owns TranscriptStore or a database write.
+        if let makeDiarizer, sources.contains(where: { $0.source == .system }) {
+            if let leaseID = diarizationLease.acquire() {
+                let worker = OptionalDiarizationWorker(
+                    lease: diarizationLease, leaseID: leaseID, makeSession: makeDiarizer,
+                    onLabels: { [weak store] labels in
+                        for label in labels { store?.setSpeakerLabel(label.label, for: label.segmentID) }
+                    },
+                    onUnavailable: { [weak self] in self?.onDiarizationUnavailable?() }
+                )
+                diarizationWorker = worker
                 let diarizerFinals = store.finalsStream()
-                let task = Task { @MainActor [store] in
+                diarizationFinalsTask = Task {
                     for await segment in diarizerFinals where segment.source == .system {
-                        let attributions = await session.noteFinal(
-                            segmentID: segment.id, tStart: segment.tStart, tEnd: segment.tEnd)
-                        for attribution in attributions {
-                            store.setSpeakerLabel(attribution.label, for: attribution.segmentID)
-                        }
+                        worker.enqueueFinal(.init(id: segment.id, tStart: segment.tStart, tEnd: segment.tEnd))
                     }
                 }
-                diarizeTasks.append(task)
-            } catch {
-                log.error("diarization unavailable this meeting: \(error.localizedDescription)")
-            }
+            } else { onDiarizationUnavailable?() }
+        }
+
+        for source in sources {
+            let health = source.interruptions
+            healthTasks.append(Task { [weak self] in
+                for await interruption in health {
+                    guard let self, !self.stopped else { return }
+                    self.reportCaptureFailure(interruption)
+                }
+            })
         }
 
         let baseFormat: AVAudioFormat
@@ -216,36 +228,18 @@ final class MeetingPipeline {
             // bounded branch, so an analyzer stall evicts oldest chunks (with
             // an exact surfaced count) instead of growing memory. The tap
             // computes RMS per chunk for the signal strip. Branch 0 is always
-            // STT; the them-stream gets branch 1 for the diarizer.
+            // STT. Optional audio enters its independent bounded inbox from
+            // the cheap tap, so model load and ingest never delay the fan-out.
             let meter = signalMeter
             let fedAudioClock = self.fedAudioClock
-            let diarizing = src == .system && diarizationSession != nil
-            let fanOut = BoundedAudioFanOut.split(audio, branchCount: diarizing ? 2 : 1) { chunk in
+            let optionalWorker = src == .system ? diarizationWorker : nil
+            let fanOut = BoundedAudioFanOut.split(audio, branchCount: 1) { chunk in
                 meter.record(source: src, level: AudioLevel.rms(of: chunk.buffer))
                 fedAudioClock.record(chunk, source: src)
+                optionalWorker?.enqueueAudio(chunk)
             }
             dropCounters.append(fanOut.drops)
             forwardingTasks.append(fanOut.forwarding)
-            if diarizing, let session = diarizationSession {
-                let branch = fanOut.branches[1]
-                let diarizerLog = log
-                let task = Task { @MainActor [store] in
-                    do {
-                        for await chunk in branch {
-                            let attributions = try await session.ingest(chunk)
-                            for attribution in attributions {
-                                store.setSpeakerLabel(attribution.label, for: attribution.segmentID)
-                            }
-                        }
-                    } catch {
-                        // Diarization dies quietly; the transcript is
-                        // untouched and the un-drained branch surfaces as
-                        // drop-counter honesty, not a meeting failure.
-                        diarizerLog.error("diarization failed mid-meeting: \(error.localizedDescription)")
-                    }
-                }
-                diarizeTasks.append(task)
-            }
             let events = engine.transcribe(fanOut.branches[0], source: src)
             let recorder = self.recorder
             let sttErrorCounter = self.sttErrorCounter
@@ -276,17 +270,24 @@ final class MeetingPipeline {
                         }
                         store.apply(event, from: src)
                     }
+                    // Natural EOF is expected only after this pipeline began
+                    // stopping. An engine disappearing mid-meeting must not
+                    // leave the UI claiming that speech is still captured.
+                    if self?.stopped == false {
+                        sttErrorCounter.increment()
+                        self?.reportCaptureFailure(CaptureInterruption(source: src, reason: .sourceUnavailable))
+                    }
                 } catch is CancellationError {
                     // Normal pipeline teardown must not inflate the STT error
                     // tile if an engine chooses cancellation over EOF.
                     if self?.stopped == false {
                         sttErrorCounter.increment()
-                        self?.onFailure?(CancellationError())
+                        self?.reportCaptureFailure(CancellationError())
                     }
                 } catch {
                     sttErrorCounter.increment()
-                    self?.log.error("source \(src.rawValue) failed: \(error.localizedDescription)")
-                    self?.onFailure?(error)
+                    self?.log.error("source \(src.rawValue) failed: \(String(describing: type(of: error)), privacy: .public)")
+                    self?.reportCaptureFailure(error)
                 }
             }
             eventTasks.append(task)
@@ -300,6 +301,8 @@ final class MeetingPipeline {
     @discardableResult
     func stop() async -> MeetingRecord.ID? {
         stopped = true
+        for task in healthTasks { task.cancel() }
+        healthTasks.removeAll()
         for source in sources {
             await source.stop()
         }
@@ -333,47 +336,47 @@ final class MeetingPipeline {
             do {
                 try await segmentWriter.flushAndStop()
             } catch {
-                log.error("final segment flush failed: \(error.localizedDescription)")
+                log.error("final segment flush failed: \(String(describing: type(of: error)), privacy: .public)")
             }
         }
-        // Diarization persistence sweep (slice-4 decision 3): both diarize
-        // tasks are provably done here — the chunk consumer ended when the
-        // fan-out finished its branches (awaited above), the finals consumer
-        // when finishFinalsStreams() ran — and flushAndStop() has committed
-        // every segment row, so the batched attribution UPDATE can't race the
-        // writer. Runs before endMeeting: the post-meeting agent (triggered
-        // by stop()'s return) always sees labeled segments.
-        for task in diarizeTasks {
-            _ = await task.value
-        }
-        diarizeTasks.removeAll()
-        if let session = diarizationSession, let meetingStore, let meetingID {
-            do {
-                let result = try await session.finalize()
-                if !result.speakers.isEmpty {
+        // This forwarding task never awaits platform work. It just drains
+        // the final windows into a bounded inbox after the STT tail above.
+        await diarizationFinalsTask?.value
+        diarizationFinalsTask = nil
+        if let worker = diarizationWorker {
+            worker.finishInput()
+            if let outcome = await worker.result(grace: diarizationGrace),
+               worker.fence.isCurrent, let meetingStore, let meetingID {
+                do {
+                    let result = outcome.diarization
                     let records = result.speakers.map {
                         SpeakerRecord(
                             id: UUID(), meetingID: meetingID, label: $0.label, embedding: $0.embedding)
                     }
                     let speakerIDByKey = Dictionary(
                         uniqueKeysWithValues: zip(result.speakers.map(\.key), records.map(\.id)))
-                    try await meetingStore.insertSpeakers(records)
-                    try await meetingStore.assignSpeakers(
-                        result.assignments.compactMapValues { speakerIDByKey[$0] },
-                        meetingID: meetingID
+                    let fence = worker.fence
+                    try await meetingStore.applyDiarization(
+                        speakers: records,
+                        assignments: result.assignments.compactMapValues { speakerIDByKey[$0] },
+                        meetingID: meetingID, expectedSegments: outcome.segments,
+                        isCurrent: { fence.isCurrent }
                     )
+                } catch {
+                    log.error("diarization persistence failed: \(String(describing: type(of: error)), privacy: .public)")
+                    worker.disable()
                 }
-            } catch {
-                log.error("diarization persistence failed: \(error.localizedDescription)")
-            }
+            } else { worker.disable() }
+            endedDiarizationDrops = worker.droppedAudio
+            worker.close()
         }
-        diarizationSession = nil
+        diarizationWorker = nil
 
         if let meetingStore, let meetingID {
             do {
                 try await meetingStore.endMeeting(id: meetingID, endedAt: Date())
             } catch {
-                log.error("endMeeting failed: \(error.localizedDescription)")
+                log.error("endMeeting failed: \(String(describing: type(of: error)), privacy: .public)")
             }
         }
         let endedPersistentMeetingID = isEphemeral ? nil : meetingID
@@ -384,11 +387,17 @@ final class MeetingPipeline {
         return endedPersistentMeetingID
     }
 
+    private func reportCaptureFailure(_ error: any Error) {
+        guard !stopped, !reportedCaptureFailure else { return }
+        reportedCaptureFailure = true
+        onFailure?(error)
+    }
+
     /// Total chunks evicted across all sources' bounded branches this meeting
     /// (slice-4 decision 4) — the diagnostics "Dropped chunks" tile. 0 in a
     /// healthy meeting; anything else means a consumer stalled.
     var droppedChunks: Int {
-        dropCounters.reduce(0) { $0 + $1.total }
+        dropCounters.reduce(0) { $0 + $1.total } + (diarizationWorker?.droppedAudio ?? endedDiarizationDrops)
     }
 
     func pause() async {

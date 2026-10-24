@@ -1,13 +1,10 @@
 import SwiftUI
 
-// Pieces the M2 settings screens need, transcribed from the approved mockups
-// (docs/design/06-settings.html + tokens.css). Same rule as the rest of the system:
-// machine voice is mono, human voice is SF, and amber appears only where the
-// mockup earns it.
+// Shared settings surfaces follow the stored editorial design language:
+// square controls, lowercase labels, hairlines, and restrained status color.
 
-/// `.chip` — a micro mono badge. `.active` is the amber "Active" state
-/// (`.chip.you`); `.approved`/`.rejected` are meeting detail's review states
-/// (slice 3); everything else is the quiet outline.
+/// A square, text-labelled status badge. Color reinforces the written state
+/// and semantic fills keep every label legible in both appearances.
 struct Chip: View {
     enum Style { case quiet, active, approved, rejected }
 
@@ -17,30 +14,33 @@ struct Chip: View {
     var body: some View {
         Text(text)
             .font(MachineType.label())
-            .textCase(.uppercase)
-            .tracking(0.5)
+            .textCase(.lowercase)
             .foregroundStyle(foreground)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(style == .active ? DesignTokens.signalSoft : DesignTokens.sunken)
-            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radiusChip))
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.radiusChip)
-                    .stroke(style == .active ? .clear : DesignTokens.hairline)
-            )
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(background)
+    }
+
+    private var background: Color {
+        switch style {
+        case .quiet: DesignTokens.sunken
+        case .active: DesignTokens.sunken
+        case .approved: DesignTokens.statusApprovedSurface
+        case .rejected: DesignTokens.statusRejectedSurface
+        }
     }
 
     private var foreground: Color {
         switch style {
         case .quiet: DesignTokens.textSecondary
-        case .active: DesignTokens.live
+        case .active: DesignTokens.text
         case .approved: DesignTokens.statusApproved
         case .rejected: DesignTokens.statusRejected
         }
     }
 }
 
-/// `.form-row` — a right-aligned 170pt label beside its control.
+/// A right-aligned label beside its native control.
 struct FormRow<Content: View>: View {
     let label: String
     @ViewBuilder var content: Content
@@ -48,7 +48,8 @@ struct FormRow<Content: View>: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Space.s3) {
             Text(label)
-                .font(UIType.body)
+                .font(UIType.small)
+                .textCase(.lowercase)
                 .foregroundStyle(DesignTokens.textSecondary)
                 .frame(width: 120, alignment: .trailing)
             content
@@ -66,9 +67,9 @@ struct FormNote: View {
 
     var body: some View {
         Text(text)
-            .font(UIType.small)
+            .font(UIType.body)
             .foregroundStyle(DesignTokens.textTertiary)
-            .lineSpacing(1.5)
+            .lineSpacing(3)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -82,11 +83,12 @@ struct ProviderRow: View {
     let chip: String
     let isActive: Bool
     let action: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: DesignTokens.Space.s3) {
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: DesignTokens.Space.s1) {
                     Text(name)
                         .font(UIType.bodySemibold)
                         .foregroundStyle(DesignTokens.text)
@@ -102,22 +104,22 @@ struct ProviderRow: View {
                 Chip(text: chip, style: isActive ? .active : .quiet)
             }
             .padding(.horizontal, DesignTokens.Space.s3)
-            .padding(.vertical, 9)
+            .padding(.vertical, DesignTokens.Space.s3)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(isActive ? DesignTokens.raised : DesignTokens.surface)
-            .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radiusCard))
-            .overlay(
-                RoundedRectangle(cornerRadius: DesignTokens.radiusCard)
-                    .stroke(isActive ? DesignTokens.hairlineStrong : DesignTokens.hairline)
-            )
+            .background(isHovered ? DesignTokens.sunken : DesignTokens.surface)
+            .overlay(Rectangle().stroke(
+                isActive ? DesignTokens.selection : DesignTokens.hairlineStrong,
+                lineWidth: isActive ? 2 : 1
+            ))
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
         .accessibilityLabel("\(name), \(isActive ? "active" : "not configured")")
     }
 }
 
-/// `.cap-meter` — spend against the per-meeting cap. Amber fill on a sunken
-/// bed; it is a readout, not decoration.
+/// Spend against the per-meeting cap: a flat ink bar on a neutral bed.
+/// The adjacent text supplies the accessible amount and cap.
 struct CapMeter: View {
     /// 0...1, clamped.
     let fraction: Double
@@ -125,9 +127,9 @@ struct CapMeter: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
-                Capsule().fill(DesignTokens.sunken)
-                Capsule()
-                    .fill(DesignTokens.signal)
+                Rectangle().fill(DesignTokens.sunken)
+                Rectangle()
+                    .fill(DesignTokens.selection)
                     .frame(width: geometry.size.width * min(max(fraction, 0), 1))
             }
         }
@@ -136,7 +138,7 @@ struct CapMeter: View {
     }
 }
 
-/// `.data-table` — mono, right-aligned numerals, hairline rules.
+/// Quiet column labels with right-aligned values and hairline rules.
 struct DataTableHeader: View {
     let columns: [String]
     let numericFrom: Int
@@ -146,8 +148,7 @@ struct DataTableHeader: View {
             ForEach(Array(columns.enumerated()), id: \.offset) { index, title in
                 Text(title)
                     .font(MachineType.label())
-                    .textCase(.uppercase)
-                    .tracking(0.6)
+                    .textCase(.lowercase)
                     .foregroundStyle(DesignTokens.textTertiary)
                     .frame(maxWidth: .infinity, alignment: index >= numericFrom ? .trailing : .leading)
             }
@@ -181,25 +182,22 @@ struct DataTableRow: View {
 
 // MARK: - Stat tile (diagnostics grid)
 
-/// One cell of the diagnostics stat-grid (docs/design/06: `.stat` — surface card,
-/// hairline stroke, machine eyebrow over a large machine number with a small
-/// unit suffix). Added in slice 4 for the memory/drop tiles.
+/// A flat diagnostics tile: restrained label, aligned value, subtle unit.
 struct StatTile: View {
     let label: String
     let value: String
     var unit: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: DesignTokens.Space.s2) {
             Text(label)
-                .font(MachineType.label(8.5))
-                .textCase(.uppercase)
-                .tracking(0.4)
+                .font(MachineType.label())
+                .textCase(.lowercase)
                 .foregroundStyle(DesignTokens.textSecondary)
                 .lineLimit(1)
             HStack(alignment: .firstTextBaseline, spacing: 2) {
                 Text(value)
-                    .font(MachineType.number(20))
+                    .font(MachineType.number(24))
                     .foregroundStyle(DesignTokens.text)
                 if let unit {
                     Text(unit)
@@ -211,10 +209,6 @@ struct StatTile: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(DesignTokens.Space.s3)
         .background(DesignTokens.surface)
-        .clipShape(RoundedRectangle(cornerRadius: DesignTokens.radiusCard))
-        .overlay(
-            RoundedRectangle(cornerRadius: DesignTokens.radiusCard)
-                .stroke(DesignTokens.hairline, lineWidth: 1)
-        )
+        .overlay(Rectangle().stroke(DesignTokens.hairlineStrong, lineWidth: 1))
     }
 }

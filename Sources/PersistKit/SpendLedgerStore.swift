@@ -54,7 +54,7 @@ struct SpendLedgerRecord: Codable, FetchableRecord, PersistableRecord {
 /// reason as `MeetingStore`: the metered provider books from whichever task
 /// made the call, while the Spend tab reads totals concurrently.
 public actor SpendLedgerStore: SpendLedger {
-    private let database: MacapyDatabase
+    let database: MacapyDatabase
 
     public init(database: MacapyDatabase) {
         self.database = database

@@ -14,6 +14,11 @@ public struct ArtifactRecord: Codable, Sendable, Identifiable, Equatable {
     public var payload: String
     public var status: String
     public var createdAt: Date
+    /// Content revision used by editors and external-action review fences.
+    public private(set) var revision: Int
+    public private(set) var editedAt: Date?
+    /// Local task state, independent of whether this artifact was reviewed.
+    public private(set) var completedAt: Date?
     /// Derived per-kind searchable text (schema v5, slice-05 doc decision 2).
     /// Computed from kind + payload at construction — never set by callers —
     /// so the row and its FTS index entry can't disagree. `setStatus` uses
@@ -26,7 +31,10 @@ public struct ArtifactRecord: Codable, Sendable, Identifiable, Equatable {
         kind: String,
         payload: String,
         status: String,
-        createdAt: Date
+        createdAt: Date,
+        revision: Int = 0,
+        editedAt: Date? = nil,
+        completedAt: Date? = nil
     ) {
         self.id = id
         self.meetingID = meetingID
@@ -34,7 +42,31 @@ public struct ArtifactRecord: Codable, Sendable, Identifiable, Equatable {
         self.payload = payload
         self.status = status
         self.createdAt = createdAt
+        self.revision = revision
+        self.editedAt = editedAt
+        self.completedAt = completedAt
         self.searchText = ArtifactSearchText.derive(kind: kind, payload: payload)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, meetingID, kind, payload, status, createdAt, searchText
+        case revision, editedAt, completedAt
+    }
+
+    /// Older row exports predate correction metadata. Missing values have the
+    /// same defaults as the additive migration; payload shapes remain intact.
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            id: try values.decode(UUID.self, forKey: .id),
+            meetingID: try values.decode(UUID.self, forKey: .meetingID),
+            kind: try values.decode(String.self, forKey: .kind),
+            payload: try values.decode(String.self, forKey: .payload),
+            status: try values.decode(String.self, forKey: .status),
+            createdAt: try values.decode(Date.self, forKey: .createdAt),
+            revision: try values.decodeIfPresent(Int.self, forKey: .revision) ?? 0,
+            editedAt: try values.decodeIfPresent(Date.self, forKey: .editedAt),
+            completedAt: try values.decodeIfPresent(Date.self, forKey: .completedAt))
     }
 }
 
@@ -59,6 +91,8 @@ public enum ArtifactStatus: String, Sendable {
 public extension ArtifactRecord {
     var artifactKind: ArtifactKind? { ArtifactKind(rawValue: kind) }
     var artifactStatus: ArtifactStatus? { ArtifactStatus(rawValue: status) }
+    var isUserEdited: Bool { editedAt != nil }
+    var isComplete: Bool { artifactKind == .actionItem && completedAt != nil }
 
     /// Decodes the payload as `T`, or `nil` when it doesn't fit — defensive
     /// for rows written by a newer build; every row this build writes
@@ -118,6 +152,44 @@ public struct DraftArtifact: Sendable, Equatable {
     }
 }
 
+public enum ArtifactStoreError: Error, Equatable, Sendable {
+    case notFound
+    case revisionConflict
+    case kindMismatch
+    case emptyContent
+    case notAnActionItem
+    case existingArtifacts
+}
+
+/// Typed editor values prevent accidental kind changes or malformed JSON.
+public enum ArtifactEdit: Sendable, Equatable {
+    case summary(String)
+    case decision(String)
+    case actionItem(title: String, owner: String?, deadline: String?)
+
+    fileprivate func draft() throws -> DraftArtifact {
+        func required(_ value: String) throws -> String {
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { throw ArtifactStoreError.emptyContent }
+            return trimmed
+        }
+        func optional(_ value: String?) -> String? {
+            guard let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !trimmed.isEmpty else { return nil }
+            return trimmed
+        }
+        switch self {
+        case .summary(let text):
+            return try DraftArtifact(kind: .summary, encoding: SummaryPayload(text: required(text)))
+        case .decision(let text):
+            return try DraftArtifact(kind: .decision, encoding: DecisionPayload(text: required(text)))
+        case .actionItem(let title, let owner, let deadline):
+            return try DraftArtifact(kind: .actionItem, encoding: ActionItemPayload(
+                title: required(title), owner: optional(owner), deadline: optional(deadline)))
+        }
+    }
+}
+
 /// Owns `artifacts` reads and writes — actor-isolated like `MeetingStore`,
 /// over the same database.
 public actor ArtifactStore {
@@ -151,6 +223,11 @@ public actor ArtifactStore {
         // handing back the un-rounded in-memory copies would make "what
         // insert returned" and "what a later fetch returns" unequal.
         return try database.dbWriter.write { db in
+            // The pre-network existing-artifacts check is insufficient across
+            // awaits. Refuse a second generation at the transaction boundary.
+            guard try ArtifactRecord.filter(Column("meetingID") == meetingID).fetchCount(db) == 0 else {
+                throw ArtifactStoreError.existingArtifacts
+            }
             for record in records {
                 try record.insert(db)
             }
@@ -172,12 +249,73 @@ public actor ArtifactStore {
     /// Flips one artifact's status and touches nothing else — the whole of
     /// approve/reject in M2 (FR-009: no external effect; EventKit is M4).
     /// A no-op if the id matches no row.
-    public func setStatus(_ status: ArtifactStatus, id: ArtifactRecord.ID) throws {
+    public func setStatus(
+        _ status: ArtifactStatus,
+        id: ArtifactRecord.ID,
+        expectedRevision: Int? = nil
+    ) throws {
+        try database.purgeMigrationSnapshot()
         try database.dbWriter.write { db in
+            if let expectedRevision {
+                _ = try Self.checkedRecord(db, id: id, expectedRevision: expectedRevision)
+            }
             try db.execute(
                 sql: "UPDATE artifacts SET status = ? WHERE id = ?",
                 arguments: [status.rawValue, id]
             )
         }
+    }
+
+    /// Changes the payload and its FTS text in the same transaction. A content
+    /// correction needs fresh review but does not implicitly reopen a task.
+    @discardableResult
+    public func edit(
+        id: ArtifactRecord.ID,
+        expectedRevision: Int,
+        content: ArtifactEdit,
+        at date: Date = Date()
+    ) throws -> ArtifactRecord {
+        let draft = try content.draft()
+        try database.purgeMigrationSnapshot()
+        return try database.dbWriter.write { db in
+            let record = try Self.checkedRecord(db, id: id, expectedRevision: expectedRevision)
+            guard record.kind == draft.kind.rawValue else { throw ArtifactStoreError.kindMismatch }
+            guard record.payload != draft.payload else { return record }
+            try db.execute(sql: """
+                UPDATE artifacts SET payload = ?, searchText = ?, revision = revision + 1,
+                    editedAt = ?, status = ? WHERE id = ?
+                """, arguments: [draft.payload,
+                    ArtifactSearchText.derive(kind: record.kind, payload: draft.payload),
+                    date, ArtifactStatus.draft.rawValue, id])
+            return try ArtifactRecord.fetchOne(db, id: id)!
+        }
+    }
+
+    @discardableResult
+    public func setCompletion(
+        _ complete: Bool,
+        id: ArtifactRecord.ID,
+        expectedRevision: Int,
+        at date: Date = Date()
+    ) throws -> ArtifactRecord {
+        try database.purgeMigrationSnapshot()
+        return try database.dbWriter.write { db in
+            let record = try Self.checkedRecord(db, id: id, expectedRevision: expectedRevision)
+            guard record.artifactKind == .actionItem else { throw ArtifactStoreError.notAnActionItem }
+            guard record.isComplete != complete else { return record }
+            try db.execute(sql: "UPDATE artifacts SET completedAt = ? WHERE id = ?",
+                           arguments: [complete ? date : nil, id])
+            return try ArtifactRecord.fetchOne(db, id: id)!
+        }
+    }
+
+    private static func checkedRecord(
+        _ db: Database, id: UUID, expectedRevision: Int
+    ) throws -> ArtifactRecord {
+        guard let record = try ArtifactRecord.fetchOne(db, id: id) else {
+            throw ArtifactStoreError.notFound
+        }
+        guard record.revision == expectedRevision else { throw ArtifactStoreError.revisionConflict }
+        return record
     }
 }

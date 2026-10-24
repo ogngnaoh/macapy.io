@@ -17,6 +17,7 @@ xcuserdata/
 DerivedData/
 *.dSYM/
 *.app.zip
+*.profraw
 
 # Secrets (never committed; real keys live in Keychain)
 *.pem

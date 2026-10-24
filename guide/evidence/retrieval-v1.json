@@ -1,0 +1,1795 @@
+{
+  "architecture" : "arm64",
+  "configuration" : "Release",
+  "cpu" : "Apple M2 Pro",
+  "documentChunkerVersion" : 1,
+  "documentChunks" : 10000,
+  "filteredEmptyEvidenceRate" : 1,
+  "fixtureSHA256" : "c5da243216ce654272af03c8f3fe0568f36c571d9b17a81943ac4abc88cfe6b2",
+  "historyLatency" : {
+    "maximumMilliseconds" : 54.847624999999994,
+    "p50Milliseconds" : 0.8325,
+    "p95Milliseconds" : 53.2495,
+    "samples" : 100
+  },
+  "lexicalRecallAt8" : 1,
+  "limitations" : [
+    "Original English synthetic corpus: 20 answerable, 10 temporal\/conflicting, 10 insufficient\/adversarial cases; 10 held out before first run. No real meeting data.",
+    "Five warm retrieval repetitions (200 samples); four warm history queries repeated 25 times (100 samples). Initial application startup and cold I\/O are not measured.",
+    "RSS is the peak Release test process including fixture construction and optional embeddings; it is not active app memory, a capture workload, or a one\/three-hour soak measurement.",
+    "No generated answers or provider calls. Empty evidence and citation\/source integrity are structural checks, not semantic answer correctness, model abstention, or resistance to prompt injection.",
+    "The optional vector\/RRF comparison is an offline experiment over the same eligible chunks. It does not enable production semantic retrieval. Failed, null, and unavailable results remain recorded.",
+    "Ten thousand synthetic document chunks are generated in bounded batches. The transcript corpus uses SearchFixtureSeeder's fixed-seed vocabulary; results are not representative field telemetry."
+  ],
+  "logicalCPUCount" : 10,
+  "machineModel" : "Mac14,9",
+  "measuredAt" : "2026-10-23T22:35:12Z",
+  "os" : "Version 26.6.2 (Build 25G83)",
+  "physicalMemoryBytes" : 17179869184,
+  "processPeakRSSBytes" : 146407424,
+  "results" : [
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.669209,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        1
+      ],
+      "heldOut" : false,
+      "id" : "a01",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        34,
+        33,
+        1,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.653833,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        2
+      ],
+      "heldOut" : false,
+      "id" : "a02",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        34,
+        33,
+        2,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.638625,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        3
+      ],
+      "heldOut" : false,
+      "id" : "a03",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        3,
+        34,
+        33,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.615166,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        4
+      ],
+      "heldOut" : true,
+      "id" : "a04",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        34,
+        4,
+        33,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.604333,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        5
+      ],
+      "heldOut" : false,
+      "id" : "a05",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        34,
+        5,
+        33,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.6114580000000001,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        6
+      ],
+      "heldOut" : false,
+      "id" : "a06",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        6,
+        34,
+        33,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.7045,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        7
+      ],
+      "heldOut" : false,
+      "id" : "a07",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        34,
+        33,
+        7,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.714875,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        8
+      ],
+      "heldOut" : true,
+      "id" : "a08",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        8,
+        34,
+        33,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.630125,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        9
+      ],
+      "heldOut" : false,
+      "id" : "a09",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        9,
+        34,
+        33,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.630541,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        10
+      ],
+      "heldOut" : false,
+      "id" : "a10",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        34,
+        33,
+        10,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.625833,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        11
+      ],
+      "heldOut" : false,
+      "id" : "a11",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        34,
+        33,
+        11,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.841167,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        12
+      ],
+      "heldOut" : true,
+      "id" : "a12",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        34,
+        33,
+        12,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.694125,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        13
+      ],
+      "heldOut" : false,
+      "id" : "a13",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        13,
+        21,
+        22,
+        23,
+        24,
+        26,
+        28,
+        30
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.6799160000000001,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        14
+      ],
+      "heldOut" : false,
+      "id" : "a14",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        14,
+        34,
+        33,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.68875,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        15
+      ],
+      "heldOut" : false,
+      "id" : "a15",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        34,
+        33,
+        15,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.634417,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        16
+      ],
+      "heldOut" : true,
+      "id" : "a16",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        16,
+        34,
+        33,
+        22,
+        24,
+        26,
+        28,
+        30
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.9788749999999999,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        17
+      ],
+      "heldOut" : false,
+      "id" : "a17",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        17,
+        34,
+        33,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.7346250000000001,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        18
+      ],
+      "heldOut" : false,
+      "id" : "a18",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        34,
+        33,
+        18,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.663875,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        19
+      ],
+      "heldOut" : false,
+      "id" : "a19",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        19,
+        34,
+        33,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "answerable",
+      "elapsedMilliseconds" : 0.607125,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        20
+      ],
+      "heldOut" : true,
+      "id" : "a20",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        34,
+        33,
+        20,
+        16,
+        22,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "insufficientOrAdversarial",
+      "elapsedMilliseconds" : 0.45245799999999997,
+      "emptyEvidence" : true,
+      "expectedEmptyEvidence" : true,
+      "expectedSourceKeys" : [
+
+      ],
+      "heldOut" : false,
+      "id" : "n01",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "insufficientOrAdversarial",
+      "elapsedMilliseconds" : 0.41825,
+      "emptyEvidence" : true,
+      "expectedEmptyEvidence" : true,
+      "expectedSourceKeys" : [
+
+      ],
+      "heldOut" : false,
+      "id" : "n02",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "insufficientOrAdversarial",
+      "elapsedMilliseconds" : 0.414,
+      "emptyEvidence" : true,
+      "expectedEmptyEvidence" : true,
+      "expectedSourceKeys" : [
+
+      ],
+      "heldOut" : true,
+      "id" : "n03",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "insufficientOrAdversarial",
+      "elapsedMilliseconds" : 0.379334,
+      "emptyEvidence" : true,
+      "expectedEmptyEvidence" : true,
+      "expectedSourceKeys" : [
+
+      ],
+      "heldOut" : false,
+      "id" : "n04",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "insufficientOrAdversarial",
+      "elapsedMilliseconds" : 0.431292,
+      "emptyEvidence" : true,
+      "expectedEmptyEvidence" : true,
+      "expectedSourceKeys" : [
+
+      ],
+      "heldOut" : false,
+      "id" : "n05",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "insufficientOrAdversarial",
+      "elapsedMilliseconds" : 0.39520799999999995,
+      "emptyEvidence" : true,
+      "expectedEmptyEvidence" : true,
+      "expectedSourceKeys" : [
+
+      ],
+      "heldOut" : false,
+      "id" : "n06",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "insufficientOrAdversarial",
+      "elapsedMilliseconds" : 0.470542,
+      "emptyEvidence" : true,
+      "expectedEmptyEvidence" : true,
+      "expectedSourceKeys" : [
+
+      ],
+      "heldOut" : false,
+      "id" : "n07",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "insufficientOrAdversarial",
+      "elapsedMilliseconds" : 0.466959,
+      "emptyEvidence" : true,
+      "expectedEmptyEvidence" : true,
+      "expectedSourceKeys" : [
+
+      ],
+      "heldOut" : true,
+      "id" : "n08",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "insufficientOrAdversarial",
+      "elapsedMilliseconds" : 0.44137499999999996,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        33
+      ],
+      "heldOut" : false,
+      "id" : "n09",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        33
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "insufficientOrAdversarial",
+      "elapsedMilliseconds" : 0.436042,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        34
+      ],
+      "heldOut" : true,
+      "id" : "n10",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        34
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "temporal",
+      "elapsedMilliseconds" : 0.568542,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        21
+      ],
+      "heldOut" : false,
+      "id" : "t01",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        21,
+        23,
+        25,
+        27,
+        29
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "temporal",
+      "elapsedMilliseconds" : 11.111875,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        23
+      ],
+      "heldOut" : true,
+      "id" : "t02",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        23,
+        21,
+        25,
+        27,
+        29,
+        1731,
+        3438,
+        9984
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "temporal",
+      "elapsedMilliseconds" : 12.056417,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        25
+      ],
+      "heldOut" : false,
+      "id" : "t03",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        25,
+        21,
+        23,
+        27,
+        29,
+        5243,
+        4309,
+        6365
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "temporal",
+      "elapsedMilliseconds" : 0.733792,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        27
+      ],
+      "heldOut" : false,
+      "id" : "t04",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        27,
+        21,
+        23,
+        25,
+        29
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "temporal",
+      "elapsedMilliseconds" : 0.666667,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        29
+      ],
+      "heldOut" : false,
+      "id" : "t05",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        29,
+        21,
+        23,
+        25,
+        27
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "temporal",
+      "elapsedMilliseconds" : 0.6977920000000001,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        21,
+        22
+      ],
+      "heldOut" : false,
+      "id" : "t06",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        28,
+        30
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "temporal",
+      "elapsedMilliseconds" : 11.110750000000001,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        23,
+        24
+      ],
+      "heldOut" : true,
+      "id" : "t07",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        23,
+        24,
+        21,
+        22,
+        25,
+        26,
+        28,
+        30
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "temporal",
+      "elapsedMilliseconds" : 11.406708,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        25,
+        26
+      ],
+      "heldOut" : false,
+      "id" : "t08",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        25,
+        26,
+        21,
+        22,
+        23,
+        24,
+        28,
+        30
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "temporal",
+      "elapsedMilliseconds" : 0.931875,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        27,
+        28
+      ],
+      "heldOut" : false,
+      "id" : "t09",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        27,
+        28,
+        21,
+        22,
+        23,
+        24,
+        26,
+        30
+      ],
+      "validSourceReferences" : true
+    },
+    {
+      "category" : "temporal",
+      "elapsedMilliseconds" : 0.800666,
+      "emptyEvidence" : false,
+      "expectedEmptyEvidence" : false,
+      "expectedSourceKeys" : [
+        29,
+        30
+      ],
+      "heldOut" : false,
+      "id" : "t10",
+      "prohibitedSourcesAbsent" : true,
+      "returnedSourceKeys" : [
+        29,
+        30,
+        21,
+        22,
+        23,
+        24,
+        26,
+        28
+      ],
+      "validSourceReferences" : true
+    }
+  ],
+  "retrievalLatency" : {
+    "maximumMilliseconds" : 12.512042,
+    "p50Milliseconds" : 0.656916,
+    "p95Milliseconds" : 11.308083,
+    "samples" : 200
+  },
+  "schemaVersion" : 1,
+  "segments" : 146458,
+  "sourceTreeSHA256" : "b5bf4b44e3fcec15ab2aa0aac05da3d1dd03d87626d859c61240ecd5b7ebee5a",
+  "swiftVersion" : "Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)\nTarget: arm64-apple-macosx26.0",
+  "temporalRecallAt8" : 1,
+  "transcriptFixtureScale" : 1,
+  "transcriptFixtureVersion" : 1,
+  "validSourceReferenceRate" : 1,
+  "vectorExperiment" : {
+    "dimension" : 512,
+    "embeddedChunks" : 9999,
+    "exactLatency" : {
+      "maximumMilliseconds" : 22.985,
+      "p50Milliseconds" : 16.221125,
+      "p95Milliseconds" : 19.68325,
+      "samples" : 40
+    },
+    "exactRecallAt8" : 0.65,
+    "hybridLatency" : {
+      "maximumMilliseconds" : 31.452751,
+      "p50Milliseconds" : 16.92175,
+      "p95Milliseconds" : 27.816917000000004,
+      "samples" : 40
+    },
+    "hybridRecallAt8" : 1,
+    "indexingMilliseconds" : 81456.2525,
+    "language" : "en",
+    "modelRevision" : 1,
+    "productionEnabled" : false,
+    "queryResults" : [
+      {
+        "exactSourceKeys" : [
+          12,
+          7,
+          4,
+          22,
+          28,
+          13,
+          26,
+          27
+        ],
+        "hybridSourceKeys" : [
+          22,
+          28,
+          26,
+          12,
+          34,
+          7,
+          33,
+          1
+        ],
+        "id" : "a01"
+      },
+      {
+        "exactSourceKeys" : [
+          4745,
+          5910,
+          2372,
+          2,
+          8535,
+          9947,
+          4171,
+          6365
+        ],
+        "hybridSourceKeys" : [
+          2,
+          34,
+          4745,
+          33,
+          5910,
+          2372,
+          16,
+          22
+        ],
+        "id" : "a02"
+      },
+      {
+        "exactSourceKeys" : [
+          12,
+          2776,
+          3462,
+          7322,
+          4745,
+          5910,
+          7273,
+          10001
+        ],
+        "hybridSourceKeys" : [
+          3,
+          12,
+          34,
+          2776,
+          33,
+          3462,
+          16,
+          7322
+        ],
+        "id" : "a03"
+      },
+      {
+        "exactSourceKeys" : [
+          4,
+          13,
+          12,
+          7,
+          5,
+          6,
+          16,
+          19
+        ],
+        "hybridSourceKeys" : [
+          4,
+          16,
+          34,
+          13,
+          12,
+          33,
+          7,
+          5
+        ],
+        "id" : "a04"
+      },
+      {
+        "exactSourceKeys" : [
+          5,
+          27,
+          25,
+          21,
+          22,
+          26,
+          28,
+          29
+        ],
+        "hybridSourceKeys" : [
+          5,
+          22,
+          26,
+          28,
+          34,
+          27,
+          25,
+          33
+        ],
+        "id" : "a05"
+      },
+      {
+        "exactSourceKeys" : [
+          6,
+          7,
+          12,
+          5,
+          4,
+          13,
+          5672,
+          1495
+        ],
+        "hybridSourceKeys" : [
+          6,
+          7,
+          34,
+          12,
+          33,
+          5,
+          16,
+          4
+        ],
+        "id" : "a06"
+      },
+      {
+        "exactSourceKeys" : [
+          4,
+          13,
+          7,
+          12,
+          6,
+          2,
+          5,
+          30
+        ],
+        "hybridSourceKeys" : [
+          7,
+          4,
+          34,
+          13,
+          33,
+          12,
+          16,
+          6
+        ],
+        "id" : "a07"
+      },
+      {
+        "exactSourceKeys" : [
+          12,
+          8,
+          7,
+          4,
+          5,
+          13,
+          19,
+          27
+        ],
+        "hybridSourceKeys" : [
+          8,
+          12,
+          34,
+          7,
+          33,
+          4,
+          16,
+          5
+        ],
+        "id" : "a08"
+      },
+      {
+        "exactSourceKeys" : [
+          4,
+          12,
+          7,
+          9,
+          2,
+          19,
+          18,
+          17
+        ],
+        "hybridSourceKeys" : [
+          9,
+          4,
+          12,
+          34,
+          7,
+          33,
+          16,
+          2
+        ],
+        "id" : "a09"
+      },
+      {
+        "exactSourceKeys" : [
+          4,
+          5,
+          12,
+          7,
+          13,
+          24,
+          28,
+          22
+        ],
+        "hybridSourceKeys" : [
+          24,
+          22,
+          28,
+          4,
+          34,
+          5,
+          33,
+          10
+        ],
+        "id" : "a10"
+      },
+      {
+        "exactSourceKeys" : [
+          12,
+          13,
+          4,
+          7,
+          5,
+          6,
+          2,
+          22
+        ],
+        "hybridSourceKeys" : [
+          22,
+          12,
+          34,
+          13,
+          33,
+          4,
+          11,
+          7
+        ],
+        "id" : "a11"
+      },
+      {
+        "exactSourceKeys" : [
+          12,
+          4,
+          13,
+          7,
+          27,
+          28,
+          22,
+          30
+        ],
+        "hybridSourceKeys" : [
+          12,
+          22,
+          28,
+          34,
+          4,
+          33,
+          13,
+          7
+        ],
+        "id" : "a12"
+      },
+      {
+        "exactSourceKeys" : [
+          13,
+          4,
+          1868,
+          2731,
+          5075,
+          10096,
+          9576,
+          6251
+        ],
+        "hybridSourceKeys" : [
+          13,
+          4,
+          21,
+          22,
+          1868,
+          23,
+          2731,
+          24
+        ],
+        "id" : "a13"
+      },
+      {
+        "exactSourceKeys" : [
+          4,
+          13,
+          1833,
+          12,
+          5347,
+          7,
+          2777,
+          8997
+        ],
+        "hybridSourceKeys" : [
+          4,
+          14,
+          13,
+          34,
+          33,
+          1833,
+          12,
+          16
+        ],
+        "id" : "a14"
+      },
+      {
+        "exactSourceKeys" : [
+          4,
+          15,
+          8724,
+          1170,
+          9913,
+          3498,
+          1082,
+          6100
+        ],
+        "hybridSourceKeys" : [
+          15,
+          4,
+          34,
+          33,
+          8724,
+          16,
+          1170,
+          22
+        ],
+        "id" : "a15"
+      },
+      {
+        "exactSourceKeys" : [
+          9,
+          4,
+          5,
+          12,
+          13,
+          6,
+          16,
+          18
+        ],
+        "hybridSourceKeys" : [
+          16,
+          9,
+          4,
+          34,
+          5,
+          33,
+          12,
+          22
+        ],
+        "id" : "a16"
+      },
+      {
+        "exactSourceKeys" : [
+          17,
+          2323,
+          10158,
+          10260,
+          9913,
+          2474,
+          9597,
+          2639
+        ],
+        "hybridSourceKeys" : [
+          17,
+          34,
+          2323,
+          33,
+          10158,
+          16,
+          10260,
+          22
+        ],
+        "id" : "a17"
+      },
+      {
+        "exactSourceKeys" : [
+          4,
+          12,
+          13,
+          17,
+          7,
+          19,
+          2,
+          5
+        ],
+        "hybridSourceKeys" : [
+          4,
+          34,
+          12,
+          33,
+          13,
+          18,
+          16,
+          17
+        ],
+        "id" : "a18"
+      },
+      {
+        "exactSourceKeys" : [
+          13,
+          19,
+          2733,
+          5910,
+          1014,
+          5175,
+          3186,
+          12
+        ],
+        "hybridSourceKeys" : [
+          19,
+          13,
+          34,
+          33,
+          2733,
+          16,
+          5910,
+          22
+        ],
+        "id" : "a19"
+      },
+      {
+        "exactSourceKeys" : [
+          4,
+          13,
+          24,
+          28,
+          12,
+          22,
+          23,
+          7
+        ],
+        "hybridSourceKeys" : [
+          24,
+          22,
+          28,
+          4,
+          34,
+          13,
+          33,
+          20
+        ],
+        "id" : "a20"
+      },
+      {
+        "exactSourceKeys" : [
+          33,
+          9,
+          17,
+          7712,
+          8680,
+          14,
+          6086,
+          4382
+        ],
+        "hybridSourceKeys" : [
+          33,
+          9,
+          17,
+          7712,
+          8680,
+          14,
+          6086,
+          4382
+        ],
+        "id" : "n01"
+      },
+      {
+        "exactSourceKeys" : [
+          8737,
+          8680,
+          9861,
+          3012,
+          9,
+          7103,
+          2265,
+          7625
+        ],
+        "hybridSourceKeys" : [
+          8737,
+          8680,
+          9861,
+          3012,
+          9,
+          7103,
+          2265,
+          7625
+        ],
+        "id" : "n02"
+      },
+      {
+        "exactSourceKeys" : [
+          8283,
+          7979,
+          2918,
+          6,
+          7687,
+          9849,
+          2916,
+          6667
+        ],
+        "hybridSourceKeys" : [
+          8283,
+          7979,
+          2918,
+          6,
+          7687,
+          9849,
+          2916,
+          6667
+        ],
+        "id" : "n03"
+      },
+      {
+        "exactSourceKeys" : [
+
+        ],
+        "hybridSourceKeys" : [
+
+        ],
+        "id" : "n04"
+      },
+      {
+        "exactSourceKeys" : [
+
+        ],
+        "hybridSourceKeys" : [
+
+        ],
+        "id" : "n05"
+      },
+      {
+        "exactSourceKeys" : [
+          33,
+          9,
+          4630,
+          8293,
+          6877,
+          7163,
+          4782,
+          1148
+        ],
+        "hybridSourceKeys" : [
+          33,
+          9,
+          4630,
+          8293,
+          6877,
+          7163,
+          4782,
+          1148
+        ],
+        "id" : "n06"
+      },
+      {
+        "exactSourceKeys" : [
+          4444,
+          2866,
+          4832,
+          3112,
+          3397,
+          8814,
+          6086,
+          10788
+        ],
+        "hybridSourceKeys" : [
+          4444,
+          2866,
+          4832,
+          3112,
+          3397,
+          8814,
+          6086,
+          10788
+        ],
+        "id" : "n07"
+      },
+      {
+        "exactSourceKeys" : [
+          2
+        ],
+        "hybridSourceKeys" : [
+          2
+        ],
+        "id" : "n08"
+      },
+      {
+        "exactSourceKeys" : [
+          8432,
+          7881,
+          6380,
+          5506,
+          7830,
+          10658,
+          8083,
+          4141
+        ],
+        "hybridSourceKeys" : [
+          33,
+          8432,
+          7881,
+          6380,
+          5506,
+          7830,
+          10658,
+          8083
+        ],
+        "id" : "n09"
+      },
+      {
+        "exactSourceKeys" : [
+          8293,
+          8014,
+          7889,
+          8283,
+          3672,
+          5784,
+          7265,
+          3370
+        ],
+        "hybridSourceKeys" : [
+          34,
+          8293,
+          8014,
+          7889,
+          8283,
+          3672,
+          5784,
+          7265
+        ],
+        "id" : "n10"
+      },
+      {
+        "exactSourceKeys" : [
+          23,
+          21,
+          27,
+          25,
+          29,
+          12,
+          7,
+          4
+        ],
+        "hybridSourceKeys" : [
+          21,
+          23,
+          25,
+          27,
+          29,
+          12,
+          7,
+          4
+        ],
+        "id" : "t01"
+      },
+      {
+        "exactSourceKeys" : [
+          23,
+          27,
+          21,
+          25,
+          29,
+          4,
+          12,
+          5
+        ],
+        "hybridSourceKeys" : [
+          23,
+          21,
+          27,
+          25,
+          29,
+          4,
+          1731,
+          12
+        ],
+        "id" : "t02"
+      },
+      {
+        "exactSourceKeys" : [
+          25,
+          23,
+          27,
+          21,
+          29,
+          9,
+          1162,
+          9913
+        ],
+        "hybridSourceKeys" : [
+          25,
+          23,
+          21,
+          27,
+          29,
+          9,
+          5243,
+          1162
+        ],
+        "id" : "t03"
+      },
+      {
+        "exactSourceKeys" : [
+          23,
+          27,
+          21,
+          25,
+          29,
+          12,
+          7,
+          11
+        ],
+        "hybridSourceKeys" : [
+          27,
+          23,
+          21,
+          25,
+          29,
+          12,
+          7,
+          11
+        ],
+        "id" : "t04"
+      },
+      {
+        "exactSourceKeys" : [
+          29,
+          25,
+          21,
+          27,
+          23,
+          12,
+          9,
+          7
+        ],
+        "hybridSourceKeys" : [
+          29,
+          21,
+          25,
+          23,
+          27,
+          12,
+          9,
+          7
+        ],
+        "id" : "t05"
+      },
+      {
+        "exactSourceKeys" : [
+          22,
+          28,
+          26,
+          30,
+          24,
+          27,
+          25,
+          21
+        ],
+        "hybridSourceKeys" : [
+          22,
+          21,
+          28,
+          26,
+          24,
+          30,
+          25,
+          23
+        ],
+        "id" : "t06"
+      },
+      {
+        "exactSourceKeys" : [
+          24,
+          23,
+          28,
+          22,
+          26,
+          30,
+          27,
+          25
+        ],
+        "hybridSourceKeys" : [
+          23,
+          24,
+          22,
+          28,
+          26,
+          25,
+          30,
+          21
+        ],
+        "id" : "t07"
+      },
+      {
+        "exactSourceKeys" : [
+          26,
+          25,
+          30,
+          22,
+          28,
+          29,
+          27,
+          21
+        ],
+        "hybridSourceKeys" : [
+          25,
+          26,
+          22,
+          21,
+          30,
+          28,
+          23,
+          24
+        ],
+        "id" : "t08"
+      },
+      {
+        "exactSourceKeys" : [
+          28,
+          22,
+          24,
+          26,
+          27,
+          30,
+          23,
+          25
+        ],
+        "hybridSourceKeys" : [
+          28,
+          27,
+          22,
+          24,
+          26,
+          23,
+          30,
+          21
+        ],
+        "id" : "t09"
+      },
+      {
+        "exactSourceKeys" : [
+          30,
+          26,
+          22,
+          25,
+          28,
+          29,
+          27,
+          21
+        ],
+        "hybridSourceKeys" : [
+          30,
+          29,
+          22,
+          26,
+          21,
+          28,
+          25,
+          23
+        ],
+        "id" : "t10"
+      }
+    ],
+    "status" : "measured-experiment-only"
+  }
+}

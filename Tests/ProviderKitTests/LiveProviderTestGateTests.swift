@@ -80,7 +80,7 @@ struct LiveProviderTestGateTests {
             let hasCredentialedSuite = source.split(separator: "\n").contains { line in
                 let declaration = line.trimmingCharacters(in: .whitespaces)
                 return declaration.hasPrefix("@Suite(")
-                    && declaration.contains("LiveCredentials.hasDeepSeek")
+                    && declaration.contains("TestRunPolicy.runsLiveProvider")
             }
             if hasCredentialedSuite {
                 credentialedSources[sourceURL.lastPathComponent] = source

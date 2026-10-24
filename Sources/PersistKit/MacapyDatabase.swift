@@ -1,6 +1,11 @@
 import Foundation
 import GRDB
 
+public enum DatabaseRecoveryError: Error, Equatable, Sendable {
+    case futureSchema
+    case verificationFailed
+}
+
 /// Wraps one GRDB database connection. Two factories: an on-disk `DatabasePool`
 /// (WAL mode, production path `~/Library/Application Support/macapy/macapy.sqlite`)
 /// and an in-memory `DatabaseQueue`. Ephemeral meetings and **every PersistKit
@@ -9,9 +14,22 @@ import GRDB
 /// construction (slice-04 doc decision 2).
 public struct MacapyDatabase: Sendable {
     public let dbWriter: any DatabaseWriter
+    public let migrationSnapshotURL: URL?
 
-    init(dbWriter: any DatabaseWriter) {
+    init(dbWriter: any DatabaseWriter, migrationSnapshotURL: URL? = nil) {
         self.dbWriter = dbWriter
+        self.migrationSnapshotURL = migrationSnapshotURL
+    }
+
+    /// Deletion must not leave an older app-managed snapshot able to restore
+    /// deleted content. Failure to remove it fails deletion visibly.
+    public func purgeMigrationSnapshot() throws {
+        guard let url = migrationSnapshotURL else { return }
+        for path in [url.path, url.path + "-wal", url.path + "-shm"] {
+            if FileManager.default.fileExists(atPath: path) {
+                try FileManager.default.removeItem(atPath: path)
+            }
+        }
     }
 
     /// WAL-mode on-disk database at `url`, migrated to schema v1. Creates the
@@ -23,8 +41,42 @@ public struct MacapyDatabase: Sendable {
             withIntermediateDirectories: true
         )
         let pool = try DatabasePool(path: url.path)
+        let snapshotURL = url.appendingPathExtension("pre-migration")
+        let database = MacapyDatabase(dbWriter: pool, migrationSnapshotURL: snapshotURL)
+        if let attributes = try? FileManager.default.attributesOfItem(atPath: snapshotURL.path),
+           let created = attributes[.modificationDate] as? Date,
+           Date().timeIntervalSince(created) >= 86_400 {
+            try database.purgeMigrationSnapshot()
+        }
+        let schema = try pool.read { db in
+            (try migrator.hasBeenSuperseded(db), try migrator.hasCompletedMigrations(db), try migrator.appliedIdentifiers(db).isEmpty)
+        }
+        guard !schema.0 else { throw DatabaseRecoveryError.futureSchema }
+        if !schema.1 && !schema.2 && !FileManager.default.fileExists(atPath: snapshotURL.path) {
+            // SQLite's online backup API takes a consistent view including
+            // committed WAL pages. Never copy the live database file.
+            let snapshot = try DatabaseQueue(path: snapshotURL.path)
+            try pool.backup(to: snapshot)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: snapshotURL.path)
+        }
         try migrator.migrate(pool)
-        return MacapyDatabase(dbWriter: pool)
+        try pool.write { db in
+            guard try String.fetchOne(db, sql: "PRAGMA quick_check") == "ok",
+                  try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").isEmpty
+            else { throw DatabaseRecoveryError.verificationFailed }
+            // Recover only committed text. Relaunch time is not recording
+            // duration and no lost audio/tail is claimed to be recoverable.
+            for var meeting in try MeetingRecord.filter(Column("status") == MeetingRecord.activeStatus).fetchAll(db) {
+                let tail = try Double.fetchOne(db, sql: "SELECT MAX(tEnd) FROM segments WHERE meetingID = ?", arguments: [meeting.id]) ?? 0
+                meeting.status = MeetingRecord.interruptedStatus
+                meeting.endedAt = meeting.startedAt.addingTimeInterval(max(0, tail))
+                try meeting.update(db)
+            }
+            try ActionSchema.recoverInterruptedDispatches(in: db)
+            try BackgroundUsageSchema.recoverInterrupted(in: db)
+        }
+        try database.purgeMigrationSnapshot()
+        return database
     }
 
     /// A private in-memory database, migrated to schema v1. Used by ephemeral
@@ -168,6 +220,29 @@ public struct MacapyDatabase: Sendable {
             // 10⁵-row scale the scan was already cheap, but the index makes
             // the ordering cost independent of history size (check 1 pins it).
             try db.create(indexOn: "meetings", columns: ["startedAt"])
+        }
+        migrator.registerMigration("v6-artifact-editing") { db in
+            try db.alter(table: "artifacts") { t in
+                t.add(column: "revision", .integer).notNull().defaults(to: 0)
+                t.add(column: "editedAt", .datetime)
+                t.add(column: "completedAt", .datetime)
+            }
+        }
+        migrator.registerMigration("v7-memory-documents") { db in
+            try MemorySchema.install(in: db)
+        }
+        migrator.registerMigration("v8-external-actions") { db in
+            try ActionSchema.install(in: db)
+        }
+        migrator.registerMigration("v9-durable-usage") { db in
+            try BackgroundUsageSchema.install(in: db)
+        }
+        migrator.registerMigration("v10-calendar-briefs") { db in
+            try BriefSchema.install(in: db)
+            try BackgroundUsageSchema.installBriefDeletionTrigger(in: db)
+        }
+        migrator.registerMigration("v11-automatic-brief-consent") { db in
+            try db.execute(sql: "ALTER TABLE brief_preferences ADD COLUMN automaticAIEnabled BOOLEAN NOT NULL DEFAULT 0")
         }
         return migrator
     }

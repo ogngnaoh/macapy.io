@@ -1,6 +1,7 @@
 import AVFoundation
 import CaptureKit
 import Foundation
+import ProviderTestSupport
 import Testing
 import TranscribeKit
 
@@ -14,6 +15,10 @@ import TranscribeKit
 /// user-walked in the live checks. If the environment blocks the real engine,
 /// this fails with an explicit "environment-blocked" message rather than being
 /// green-washed.
+@Suite(.enabled("Requires explicit model opt-in, installed speech assets, and local fox.wav/train.wav; no downloads") {
+    guard TestRunPolicy.runsLocalModels && LocalAudioFixtures.has(["fox.wav", "train.wav"]) else { return false }
+    return await SpeechAnalyzerEngine.assetsAreInstalled(locale: Locale(identifier: "en_US"))
+})
 struct ConcurrentEngineTests {
 
     private static let englishUS = Locale(identifier: "en_US")
@@ -33,9 +38,7 @@ struct ConcurrentEngineTests {
         resource: String,
         source: AudioSource
     ) async throws -> Transcript {
-        guard let url = Bundle.module.url(
-            forResource: resource, withExtension: "wav", subdirectory: "Fixtures"
-        ) else {
+        guard let url = LocalAudioFixtures.url(named: "\(resource).wav") else {
             throw TranscribeError.assetsUnavailable(Self.englishUS, underlying: nil)
         }
 
@@ -67,7 +70,7 @@ struct ConcurrentEngineTests {
     }
 
     @Test func twoConcurrentAnalyzersBothTranscribeWithoutCrosstalk() async throws {
-        let engine = SpeechAnalyzerEngine(locale: Self.englishUS)
+        let engine = SpeechAnalyzerEngine(locale: Self.englishUS, assetInstallationPolicy: .installedOnly)
         do {
             try await engine.prepare(locale: Self.englishUS)
         } catch {

@@ -2,6 +2,12 @@ import Foundation
 import TranscribeKit
 import os
 
+public struct SegmentPersistenceStatus: Sendable, Equatable {
+    public let isDegraded: Bool
+    public let bufferedSegments: Int
+    public let droppedSegments: Int
+}
+
 /// Batches `TranscriptStore.finalsStream()` output into `MeetingStore.append`
 /// calls: flush on a debounce window (default ~1s, coalescing — each new
 /// segment resets the timer) or a row-count threshold, whichever comes first,
@@ -36,6 +42,16 @@ public actor SegmentWriter {
     private let meetingID: MeetingRecord.ID
     private let batchThreshold: Int
     private let debounceNanos: UInt64
+    private let maximumBufferedSegments: Int
+    private let onStatus: @Sendable (SegmentPersistenceStatus) -> Void
+    private var writeFailed = false
+    private var droppedSegments = 0
+    private var flushing = false
+    private var flushWaiters: [CheckedContinuation<Void, Never>] = []
+
+    public var persistenceStatus: SegmentPersistenceStatus {
+        SegmentPersistenceStatus(isDegraded: writeFailed, bufferedSegments: buffer.count, droppedSegments: droppedSegments)
+    }
 
     private var buffer: [Segment] = []
     private var debounceTask: Task<Void, Never>?
@@ -54,12 +70,16 @@ public actor SegmentWriter {
         store: MeetingStore,
         meetingID: MeetingRecord.ID,
         batchThreshold: Int = 25,
-        debounceNanos: UInt64 = 1_000_000_000
+        debounceNanos: UInt64 = 1_000_000_000,
+        maximumBufferedSegments: Int = 2048,
+        onStatus: @escaping @Sendable (SegmentPersistenceStatus) -> Void = { _ in }
     ) {
         self.store = store
         self.meetingID = meetingID
         self.batchThreshold = batchThreshold
         self.debounceNanos = debounceNanos
+        self.maximumBufferedSegments = max(1, maximumBufferedSegments)
+        self.onStatus = onStatus
     }
 
     /// Consumes `finals` until the stream ends (the store's `reset()` or
@@ -82,7 +102,7 @@ public actor SegmentWriter {
         do {
             try await flushOrThrow()
         } catch {
-            log.error("trailing segment flush failed: \(error.localizedDescription)")
+            log.error("trailing segment flush failed")
             runFinishError = error
         }
         runFinished = true
@@ -129,16 +149,44 @@ public actor SegmentWriter {
         do {
             try await flushOrThrow()
         } catch {
-            log.error("segment flush failed: \(error.localizedDescription)")
+            log.error("segment flush failed; bounded retry buffer retained")
         }
     }
 
     private func flushOrThrow() async throws {
+        // Debounce, threshold and final-drain callers can interleave across
+        // the store await. Serialize complete flush attempts before touching
+        // the retry buffer so none can duplicate or drop another's batch.
+        if flushing {
+            await withCheckedContinuation { flushWaiters.append($0) }
+            return try await flushOrThrow()
+        }
         debounceTask?.cancel()
         debounceTask = nil
         guard !buffer.isEmpty else { return }
         let batch = buffer
         buffer.removeAll()
-        try await store.append(batch, to: meetingID)
+        flushing = true
+        defer {
+            flushing = false
+            let waiters = flushWaiters
+            flushWaiters.removeAll()
+            for waiter in waiters { waiter.resume() }
+        }
+        do {
+            try await store.append(batch, to: meetingID)
+            writeFailed = false
+            onStatus(persistenceStatus)
+        } catch {
+            buffer.insert(contentsOf: batch, at: 0)
+            if buffer.count > maximumBufferedSegments {
+                let excess = buffer.count - maximumBufferedSegments
+                buffer.removeFirst(excess)
+                droppedSegments += excess
+            }
+            writeFailed = true
+            onStatus(persistenceStatus)
+            throw error
+        }
     }
 }

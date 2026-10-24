@@ -47,11 +47,11 @@ private struct TimedClassifierResult: Sendable {
     let retries: Int
 }
 
-/// Credential-gated and serialized so the holdout and timing authorities never
+/// Explicitly opted-in, credential-gated, and serialized so the holdout and timing authorities never
 /// become a request storm. Quality and service timing are separate tests: a
 /// transient latency incident can be rerun without paying for 130 unrelated
 /// quality calls, while neither gate is weakened or averaged across attempts.
-@Suite(.serialized, .enabled(if: LiveCredentials.hasDeepSeek))
+@Suite(.serialized, .enabled(if: TestRunPolicy.runsLiveProvider, "Requires MACAPY_RUN_LIVE_PROVIDER_TESTS=1 and a nonempty MACAPY_DEEPSEEK_KEY; billable/network lane"))
 struct M3LiveEvidenceTests: Sendable {
     @Test func realDeepSeekFrozenHoldoutMeetsQuietGuarantee() async throws {
         try await LiveProviderTestGate.shared.withExclusiveAccess {

@@ -2,9 +2,9 @@ import AppKit
 import CaptureKit
 import SwiftUI
 
-// Reusable pieces of the "Quiet instrument" system (slice-01). Only what the
-// reskinned M1 surfaces need lives here; M2+ screens add their components in
-// their own slices, to this design.
+// Shared native components: square geometry, restrained typography, and
+// flat neutral surfaces. The signal strip keeps macapy’s functional identity
+// while using the stored editorial system’s cobalt accent.
 
 // MARK: - Signal strip (the signature)
 
@@ -17,7 +17,7 @@ import SwiftUI
 /// session) collapses it to a steady dot.
 struct SignalStripView: View {
     enum Mode {
-        /// Capturing: animated amber/slate ticks.
+        /// Capturing: animated cobalt/neutral ticks.
         case live
         /// Paused: a still, dim dot — nothing is being heard.
         case quiet
@@ -38,7 +38,7 @@ struct SignalStripView: View {
                         let them = Self.displayScale(for: meter.level(for: .system))
                         HStack(spacing: 0) {
                             ForEach(Self.ticks) { tick in
-                                Capsule()
+                                Rectangle()
                                     .fill(tick.color)
                                     .frame(width: 3, height: tick.height)
                                     .scaleEffect(
@@ -52,7 +52,7 @@ struct SignalStripView: View {
                     }
                 } else {
                     ForEach(Self.ticks) { tick in
-                        Capsule()
+                        Rectangle()
                             .fill(tick.color)
                             .frame(width: 3, height: tick.height)
                             .scaleEffect(y: animating && tick.animates ? 1.6 : 0.7, anchor: .center)
@@ -68,8 +68,8 @@ struct SignalStripView: View {
                     }
                 }
             } else {
-                Circle()
-                    .fill(mode == .live ? DesignTokens.signal : DesignTokens.textTertiary)
+                Rectangle()
+                    .fill(mode == .live ? DesignTokens.live : DesignTokens.textTertiary)
                     .frame(width: 6, height: 6)
             }
         }
@@ -115,7 +115,7 @@ struct SignalStripView: View {
     }
 
     /// Tick pattern transcribed from the approved mockup (docs/design/tokens.css
-    /// nth-child rules): voice = amber (you) / slate (them) / faint (idle);
+    /// nth-child rules): voice = cobalt (you) / neutral (them) / faint (idle);
     /// heights and stagger match the CSS cascade exactly.
     private static let ticks: [Tick] = {
         let voices: [Voice] = [
@@ -132,7 +132,7 @@ struct SignalStripView: View {
             if n.isMultiple(of: 7) { height = 9 }
             let color: Color =
                 switch voice {
-                case .you: DesignTokens.signal
+                case .you: DesignTokens.live
                 case .them: DesignTokens.textTertiary
                 case .idle: DesignTokens.hairlineStrong
                 }
@@ -155,6 +155,7 @@ struct SignalStripView: View {
 /// two cues — slate color and a dotted baseline — and settle to plain ink
 /// (the M1 ".secondary alone" miss, retired by design).
 struct TranscriptLineView: View {
+    static let speakerGutterWidth: CGFloat = 58
     let speaker: String
     let isYou: Bool
     let text: String
@@ -164,12 +165,14 @@ struct TranscriptLineView: View {
         HStack(alignment: .firstTextBaseline, spacing: DesignTokens.Space.s2) {
             Text(speaker)
                 .font(MachineType.label())
-                .textCase(.uppercase)
-                .tracking(0.5)
-                .foregroundStyle(isYou ? DesignTokens.live : DesignTokens.textTertiary)
-                .frame(width: 34, alignment: .trailing)
+                .foregroundStyle(isYou ? DesignTokens.text : DesignTokens.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(width: Self.speakerGutterWidth, alignment: .trailing)
+                .help(speaker)
+                .accessibilityLabel(speaker)
             Text(text)
-                .font(UIType.body)
+                .font(UIType.compactReading)
                 .lineSpacing(3)
                 .foregroundStyle(isVolatile ? DesignTokens.textSecondary : DesignTokens.text)
                 .underline(isVolatile, pattern: .dot, color: DesignTokens.textTertiary)
@@ -190,7 +193,7 @@ enum ElapsedTimeFormat {
     }
 }
 
-/// Ticking elapsed-time readout for the panel header (machine voice).
+/// Ticking elapsed-time readout with stable monospaced numerals.
 struct MeetingTimerText: View {
     let startedAt: Date
 
@@ -207,18 +210,18 @@ struct MeetingTimerText: View {
 
 // MARK: - Empty state
 
-/// Quiet-confident empty/error state: short title, plain-fact body.
+/// A compact, readable empty/error state with plain-language recovery copy.
 struct EmptyStateView: View {
     let title: String
     let message: String
 
     var body: some View {
-        VStack(spacing: DesignTokens.Space.s1) {
+        VStack(spacing: DesignTokens.Space.s2) {
             Text(title)
-                .font(UIType.bodySemibold)
+                .font(UIType.heading)
                 .foregroundStyle(DesignTokens.text)
             Text(message)
-                .font(UIType.small)
+                .font(UIType.compactReading)
                 .foregroundStyle(DesignTokens.textSecondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(2)
@@ -234,8 +237,8 @@ struct EmptyStateView: View {
 /// monochrome template glyph — it stays template in every session state
 /// (decision recorded in the slice doc; the panel is the capture indicator).
 enum SignalMark {
-    /// Bar geometry from the brand card's 44×24 viewBox, scaled to a menu bar
-    /// glyph. (x, y, height) in viewBox units; width 4, corner radius 2.
+    /// Existing five-bar geometry keeps the macapy signal identity. Square
+    /// ends match the current system. (x, y, height) in a 44×24 viewBox.
     private static let bars: [(x: CGFloat, y: CGFloat, h: CGFloat)] = [
         (0, 14, 10), (8, 8, 16), (16, 2, 22), (24, 12, 12), (32, 6, 18),
     ]
@@ -246,12 +249,10 @@ enum SignalMark {
         let image = NSImage(size: size, flipped: true) { _ in
             NSColor.black.setFill()
             for bar in bars {
-                NSBezierPath(
-                    roundedRect: NSRect(
-                        x: bar.x * scale, y: bar.y * scale,
-                        width: 4 * scale, height: bar.h * scale),
-                    xRadius: 2 * scale, yRadius: 2 * scale
-                ).fill()
+                NSBezierPath(rect: NSRect(
+                    x: bar.x * scale, y: bar.y * scale,
+                    width: 4 * scale, height: bar.h * scale
+                )).fill()
             }
             return true
         }

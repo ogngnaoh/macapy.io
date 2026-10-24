@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
+  <title id="title">macapy — Native meeting assistant for macOS</title>
+  <desc id="desc">Original pink, black, and cobalt macapy branding with a five-bar mark. Swift 6, local first, macOS 26 or later. Transcribe, review, remember.</desc>
+  <metadata>Copyright 2026 Hoang Ngo. Original macapy artwork licensed under the repository MIT license. Geometric vector artwork and text only; no external images, stock assets, app screenshots, or third-party logos.</metadata>
+  <rect width="1200" height="630" fill="#F7CAC9"/>
+  <g fill="#000000">
+    <rect x="64" y="119" width="16" height="40"/>
+    <rect x="96" y="95" width="16" height="64"/>
+    <rect x="128" y="71" width="16" height="88"/>
+    <rect x="160" y="111" width="16" height="48"/>
+    <rect x="192" y="87" width="16" height="72"/>
+  </g>
+  <g fill="#000000" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
+    <text x="248" y="154" font-size="96" font-weight="500" letter-spacing="-4">macapy</text>
+    <text x="1136" y="84" text-anchor="end" font-size="16" letter-spacing="1.4">native / local first</text>
+    <text x="64" y="313" font-size="58" font-weight="400" letter-spacing="-1.6">native meeting assistant</text>
+    <text x="64" y="385" font-size="58" font-weight="400" letter-spacing="-1.6">for macos.</text>
+  </g>
+  <path d="M64 438H1136" stroke="#000000" stroke-width="1"/>
+  <rect y="482" width="1200" height="148" fill="#0047AB"/>
+  <g fill="#FFFFFF" font-family="'Helvetica Neue', Helvetica, Arial, sans-serif">
+    <text x="64" y="537" font-size="23" font-weight="500" letter-spacing="1">swift 6</text>
+    <text x="600" y="537" text-anchor="middle" font-size="23" font-weight="500" letter-spacing="1">local first</text>
+    <text x="1136" y="537" text-anchor="end" font-size="23" font-weight="500" letter-spacing="1">macos 26+</text>
+    <text x="64" y="594" font-size="17" letter-spacing="1.2">transcribe / review / remember</text>
+    <text x="1136" y="594" text-anchor="end" font-size="17" letter-spacing="1.2">no backend. no meeting bot.</text>
+  </g>
+</svg>

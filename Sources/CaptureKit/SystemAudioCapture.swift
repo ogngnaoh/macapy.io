@@ -22,12 +22,18 @@ public actor SystemAudioCapture: AudioCaptureSource {
     private var ioProcID: AudioDeviceIOProcID?
     private var continuation: AsyncStream<AudioChunk>.Continuation?
     private var running = false
+    private let health = CaptureInterruptionChannel()
+    private var healthReporter: CaptureInterruptionChannel.Reporter?
+    private var routeObservation: AudioRouteObservation?
+    public nonisolated var interruptions: AsyncStream<CaptureInterruption> { health.stream() }
 
     private let log = Logger(subsystem: "io.macapy.app", category: "SystemAudioCapture")
 
     public init() {}
 
     public func start(format: AVAudioFormat) async throws -> AsyncStream<AudioChunk> {
+        let reporter = health.begin(source: source)
+        healthReporter = reporter
         // 1) Create the process tap (excludes our own process).
         let (tap, tapUUID) = try createProcessTap()
         self.tapID = tap
@@ -51,7 +57,7 @@ public actor SystemAudioCapture: AudioCaptureSource {
             //    only `context` (an @unchecked Sendable box whose sole user, after
             //    start, is that thread) — never `self` or actor state.
             let context = IOProcContext(
-                converter: converter, nativeFormat: nativeFormat, continuation: continuation)
+                converter: converter, nativeFormat: nativeFormat, continuation: continuation, reporter: reporter)
             var procID: AudioDeviceIOProcID?
             let createStatus = AudioDeviceCreateIOProcIDWithBlock(&procID, aggregate, nil) {
                 _, inInputData, _, _, _ in
@@ -61,6 +67,7 @@ public actor SystemAudioCapture: AudioCaptureSource {
                 throw CaptureError.processTapFailed(stage: "AudioDeviceCreateIOProcID", status: createStatus)
             }
             self.ioProcID = procID
+            routeObservation = try AudioRouteObservation(tapID: tap, reporter: reporter)
 
             // 6) Start pulling audio (this is where the tap actually runs).
             let startStatus = AudioDeviceStart(aggregate, procID)
@@ -83,15 +90,15 @@ public actor SystemAudioCapture: AudioCaptureSource {
 
     public func pause() async {
         guard running, aggregateID != AudioObjectID(kAudioObjectUnknown), let ioProcID else { return }
-        AudioDeviceStop(aggregateID, ioProcID)  // returns once the IOProc is no longer running
-        running = false
+        if AudioDeviceStop(aggregateID, ioProcID) == noErr { running = false }
+        else { healthReporter?(.pauseFailed) }
     }
 
     public func resume() async {
         guard !running, aggregateID != AudioObjectID(kAudioObjectUnknown), let ioProcID else { return }
         if AudioDeviceStart(aggregateID, ioProcID) == noErr {
             running = true
-        }
+        } else { healthReporter?(.resumeFailed) }
     }
 
     public func stop() async {
@@ -155,6 +162,10 @@ public actor SystemAudioCapture: AudioCaptureSource {
     /// are ignored (there is nothing to recover to) but the object IDs are
     /// cleared so a double `stop()` is a no-op.
     private func teardownCoreAudio() {
+        health.end()
+        healthReporter = nil
+        routeObservation?.stop()
+        routeObservation = nil
         if aggregateID != AudioObjectID(kAudioObjectUnknown), let ioProcID {
             AudioDeviceStop(aggregateID, ioProcID)          // waits out any in-flight callback
             AudioDeviceDestroyIOProcID(aggregateID, ioProcID)
@@ -220,15 +231,18 @@ public actor SystemAudioCapture: AudioCaptureSource {
         let converter: BufferConverter
         let nativeFormat: AVAudioFormat
         let continuation: AsyncStream<AudioChunk>.Continuation
+        let reporter: CaptureInterruptionChannel.Reporter
 
         init(
             converter: BufferConverter,
             nativeFormat: AVAudioFormat,
-            continuation: AsyncStream<AudioChunk>.Continuation
+            continuation: AsyncStream<AudioChunk>.Continuation,
+            reporter: CaptureInterruptionChannel.Reporter
         ) {
             self.converter = converter
             self.nativeFormat = nativeFormat
             self.continuation = continuation
+            self.reporter = reporter
         }
 
         /// Real-time thread: wrap the incoming buffer list (no copy), convert to
@@ -236,10 +250,12 @@ public actor SystemAudioCapture: AudioCaptureSource {
         /// wrapper is only read synchronously inside `convert`; the underlying
         /// buffer-list memory is owned by Core Audio and valid for the callback.
         func handle(_ inInputData: UnsafePointer<AudioBufferList>) {
-            guard let input = AVAudioPCMBuffer(pcmFormat: nativeFormat, bufferListNoCopy: inInputData),
-                  input.frameLength > 0,
-                  let converted = try? converter.convert(input) else { return }
-            continuation.yield(AudioChunk(buffer: converted, time: nil))
+            guard let input = AVAudioPCMBuffer(pcmFormat: nativeFormat, bufferListNoCopy: inInputData) else {
+                reporter(.sourceUnavailable); return
+            }
+            guard input.frameLength > 0 else { return }
+            do { continuation.yield(AudioChunk(buffer: try converter.convert(input), time: nil)) }
+            catch { reporter(.conversionFailed) }
         }
     }
 }

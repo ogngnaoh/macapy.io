@@ -13,13 +13,20 @@ public actor MicCapture: AudioCaptureSource {
     private let engine = AVAudioEngine()
     private var continuation: AsyncStream<AudioChunk>.Continuation?
     private var tapInstalled = false
+    private let health = CaptureInterruptionChannel()
+    private var healthReporter: CaptureInterruptionChannel.Reporter?
+    private var configurationObserver: NSObjectProtocol?
+    public nonisolated var interruptions: AsyncStream<CaptureInterruption> { health.stream() }
     private let log = Logger(subsystem: "io.macapy.app", category: "MicCapture")
 
     public init() {}
 
     public func start(format: AVAudioFormat) async throws -> AsyncStream<AudioChunk> {
+        let reporter = health.begin(source: source)
+        healthReporter = reporter
         let input = engine.inputNode
         let nativeFormat = input.outputFormat(forBus: 0)
+        guard nativeFormat.sampleRate > 0, nativeFormat.channelCount > 0 else { throw CaptureError.formatUnavailable }
         let converter = try BufferConverter(from: nativeFormat, to: format)
 
         let (stream, continuation) = AsyncStream<AudioChunk>.makeStream(bufferingPolicy: .unbounded)
@@ -32,12 +39,15 @@ public actor MicCapture: AudioCaptureSource {
         // own reused buffer is never handed downstream (AudioChunk rule).
         let box = ConverterBox(converter)
         input.installTap(onBus: 0, bufferSize: 4096, format: nativeFormat) { buffer, _ in
-            guard let converted = try? box.converter.convert(buffer) else { return }
-            continuation.yield(AudioChunk(buffer: converted, time: nil))
+            do { continuation.yield(AudioChunk(buffer: try box.converter.convert(buffer), time: nil)) }
+            catch { reporter(.conversionFailed) }
         }
         tapInstalled = true
 
         engine.prepare()
+        configurationObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil
+        ) { _ in reporter(.routeChanged) }
         do {
             try engine.start()
         } catch {
@@ -45,7 +55,11 @@ public actor MicCapture: AudioCaptureSource {
             tapInstalled = false
             continuation.finish()
             self.continuation = nil
-            log.error("AVAudioEngine start failed: \(error.localizedDescription)")
+            health.end()
+            healthReporter = nil
+            if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+            configurationObserver = nil
+            log.error("AVAudioEngine start failed: \(String(describing: type(of: error)), privacy: .public)")
             throw CaptureError.engineStartFailed(underlying: error)
         }
         return stream
@@ -57,10 +71,15 @@ public actor MicCapture: AudioCaptureSource {
 
     public func resume() async {
         guard !engine.isRunning else { return }
-        try? engine.start()
+        do { try engine.start() }
+        catch { healthReporter?(.resumeFailed) }
     }
 
     public func stop() async {
+        health.end()
+        healthReporter = nil
+        if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
+        configurationObserver = nil
         if tapInstalled {
             engine.inputNode.removeTap(onBus: 0)
             tapInstalled = false

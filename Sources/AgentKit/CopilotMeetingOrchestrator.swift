@@ -1,4 +1,5 @@
 import Foundation
+import MemoryKit
 import ProviderKit
 
 public struct CopilotMeetingModels: Sendable, Equatable {
@@ -31,6 +32,7 @@ public struct CopilotMeetingCard: Sendable, Equatable, Identifiable {
     public let requested: Bool
     public var text: String
     public var isStreaming: Bool
+    public var evidence: [RetrievedExcerpt]
 
     public init(
         id: UUID,
@@ -38,7 +40,8 @@ public struct CopilotMeetingCard: Sendable, Equatable, Identifiable {
         target: String,
         requested: Bool,
         text: String = "",
-        isStreaming: Bool = true
+        isStreaming: Bool = true,
+        evidence: [RetrievedExcerpt] = []
     ) {
         self.id = id
         self.kind = kind
@@ -46,6 +49,7 @@ public struct CopilotMeetingCard: Sendable, Equatable, Identifiable {
         self.requested = requested
         self.text = text
         self.isStreaming = isStreaming
+        self.evidence = evidence
     }
 }
 
@@ -379,7 +383,7 @@ public actor CopilotMeetingOrchestrator {
         return true
     }
 
-    public func requestQuery(_ question: String) async -> CopilotMeetingCard? {
+    public func requestQuery(_ question: String, grounding: LiveQueryGrounding? = nil) async -> CopilotMeetingCard? {
         let normalized = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard canAsk, !normalized.isEmpty, let generator else { return nil }
         let revision = invalidateForExplicitRequest()
@@ -406,6 +410,7 @@ public actor CopilotMeetingOrchestrator {
             await self.runQuery(
                 generator: generator,
                 question: normalized,
+                grounding: grounding,
                 lease: lease,
                 revision: revision
             )
@@ -505,6 +510,25 @@ public actor CopilotMeetingOrchestrator {
 
     public func contextSnapshot() async -> CopilotContextSnapshot {
         await contextManager.snapshot()
+    }
+
+    /// Optional source review reads a bounded snapshot without invoking a
+    /// provider or awaiting persistence on the transcript-consumer path.
+    public func recentTranscriptEvidence() -> [LiveTranscriptEvidence] {
+        guard active else { return [] }
+        return CopilotGenerator.lastNinetySeconds(of: turns).suffix(4).compactMap { turn in
+            let text = String(turn.text.prefix(1_000))
+            guard !text.isEmpty else { return nil }
+            return .init(turnID: turn.id, title: "Recent transcript · \(turn.source == .mic ? "You" : "Them") · \(Int(turn.tStart))s",
+                         text: text, tStart: turn.tStart)
+        }
+    }
+
+    public func validateTranscriptEvidence(_ evidence: [LiveTranscriptEvidence]) -> Bool {
+        guard active, evidence.count <= 4 else { return false }
+        return evidence.allSatisfy { item in
+            turns.contains { $0.id == item.turnID && $0.tStart == item.tStart && !$0.text.isEmpty && $0.text.hasPrefix(item.text) }
+        }
     }
 
     public func boundedQueryContext(question: String) async throws -> String {
@@ -746,9 +770,14 @@ private extension CopilotMeetingOrchestrator {
     func runQuery(
         generator: CopilotGenerator,
         question: String,
+        grounding: LiveQueryGrounding?,
         lease: CopilotWorkLease,
         revision: UInt64
     ) async {
+        if let grounding {
+            await runGroundedQuery(question: question, grounding: grounding, lease: lease, revision: revision)
+            return
+        }
         do {
             let context = try await boundedMeetingContext { candidate in
                 CopilotGenerator.queryRequestCharacterCount(
@@ -771,6 +800,41 @@ private extension CopilotMeetingOrchestrator {
         } catch {
             await finishAfterFailure(error, lease: lease, revision: revision)
         }
+    }
+
+    func runGroundedQuery(question: String, grounding: LiveQueryGrounding, lease: CopilotWorkLease, revision: UInt64) async {
+        do {
+            guard let provider, await owns(lease, revision: revision),
+                  validateTranscriptEvidence(grounding.recentTranscript), await grounding.validateExternal() else { throw CancellationError() }
+            let context = MemoryProviderContext(provider: provider, model: models.deep, isCurrent: { [weak self] in
+                guard let self else { return false }
+                return await self.ownsGroundedQuery(lease, revision: revision)
+            }).withValidation { [weak self] in
+                guard let self, await self.validateTranscriptEvidence(grounding.recentTranscript) else { return false }
+                return await grounding.validateExternal()
+            }
+            let answer = try await GroundedAnswerGenerator().answer(question: question, context: grounding.bundle,
+                provider: context, purpose: .generation, maxTokens: CopilotGenerator.queryOutputTokenCeiling)
+            try Task.checkCancellation()
+            guard await context.isCurrent(), await ownsGroundedQuery(lease, revision: revision),
+                  active, workRevision == revision, card?.id == lease.id else { throw CancellationError() }
+            card?.text = LiveQueryGrounding.limitedAnswer(answer.text)
+            card?.isStreaming = false
+            card?.evidence = grounding.bundle.excerpts.filter { answer.citationIDs.contains($0.citationID) }
+            emit(.card(card))
+            providerWorkSucceeded()
+            availability = .ready; emit(.availability(.ready))
+            _ = await finish(lease, revision: revision, retainCard: true)
+        } catch is CancellationError {
+            _ = await finish(lease, revision: revision, retainCard: false)
+        } catch {
+            await finishAfterFailure(error, lease: lease, revision: revision)
+        }
+    }
+
+    func ownsGroundedQuery(_ lease: CopilotWorkLease, revision: UInt64) async -> Bool {
+        guard await owns(lease, revision: revision) else { return false }
+        return active && workRevision == revision && workLease == lease && configuration.aiFeaturesEnabled
     }
 
     func launchAttachedTask(

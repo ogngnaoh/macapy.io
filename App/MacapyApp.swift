@@ -5,6 +5,7 @@ import SwiftUI
 // lives in the AppShell module (SPEC §6.1).
 @main
 struct MacapyApp: App {
+    @NSApplicationDelegateAdaptor(MacapyApplicationDelegate.self) private var appDelegate
     var body: some Scene {
         AppShellScenes()
     }

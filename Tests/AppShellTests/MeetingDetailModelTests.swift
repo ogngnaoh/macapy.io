@@ -18,6 +18,7 @@ struct MeetingDetailModelTests {
 
     private struct World {
         let coordinator: AppShellCoordinator
+        let database: MacapyDatabase
         let meetings: MeetingStore
         let artifacts: ArtifactStore
         let meeting: MeetingRecord
@@ -63,7 +64,7 @@ struct MeetingDetailModelTests {
             try await settings.setProviderSettings(
                 ProviderSettings(selectedProfileID: "fake", perMeetingCapUSD: capUSD))
         }
-        return World(coordinator: coordinator, meetings: meetings, artifacts: artifacts, meeting: meeting)
+        return World(coordinator: coordinator, database: database, meetings: meetings, artifacts: artifacts, meeting: meeting)
     }
 
     // MARK: - State derivation
@@ -217,4 +218,60 @@ struct MeetingDetailModelTests {
 
         #expect(model.state == .unavailable)
     }
+
+    @Test func correctionConflictIsVisibleAndKeepsLatestStoredContent() async throws {
+        let world = try await makeWorld(server: nil, configureProvider: false)
+        let row = try #require(try await world.artifacts.insertDrafts(
+            [try DraftArtifact(kind: .summary, encoding: SummaryPayload(text: "original"))],
+            meetingID: world.meeting.id).first)
+        let model = world.coordinator.meetingDetailModel(for: try await world.freshMeeting())
+        await model.load()
+        _ = try await world.artifacts.edit(id: row.id, expectedRevision: 0, content: .summary("newer correction"))
+        let saved = await model.edit(row.id, expectedRevision: 0, content: .summary("stale editor"))
+        #expect(!saved)
+        #expect(model.operationError?.contains("changed while you were editing") == true)
+        #expect(model.summaries.first?.payload(as: SummaryPayload.self)?.text == "newer correction")
+        #expect(model.state == .review)
+    }
+
+    @Test func localCompletionAndCorrectionRemainSeparateFromApproval() async throws {
+        let world = try await makeWorld(server: nil, configureProvider: false)
+        let row = try #require(try await world.artifacts.insertDrafts([
+            try DraftArtifact(kind: .actionItem, encoding: ActionItemPayload(title: "Send notes", owner: nil, deadline: nil)),
+        ], meetingID: world.meeting.id).first)
+        let model = world.coordinator.meetingDetailModel(for: try await world.freshMeeting())
+        await model.load()
+        await model.approve(row.id)
+        await model.setCompletion(true, id: row.id)
+        #expect(model.actionItems.first?.isComplete == true)
+        #expect(model.actionItems.first?.artifactStatus == .approved)
+        let saved = await model.edit(row.id, expectedRevision: 0,
+                                     content: .actionItem(title: "Send reviewed notes", owner: "Mina", deadline: "Friday"))
+        #expect(saved)
+        #expect(model.actionItems.first?.isUserEdited == true)
+        #expect(model.actionItems.first?.artifactStatus == .draft)
+        #expect(model.actionItems.first?.isComplete == true)
+        #expect(model.operationError == nil)
+        #expect(model.operationNotice != nil)
+    }
+
+    @Test func meetingModelPreparesSelectedExportAndShowsLocalWriteFailure() async throws {
+        let world = try await makeWorld(server: nil, configureProvider: false)
+        let model = MeetingDetailModel(
+            meeting: try await world.freshMeeting(), artifactStore: world.artifacts,
+            exportStore: MeetingExportStore(database: world.database), agent: nil,
+            isProviderConfigured: { false }, capStatus: { _ in nil })
+        await model.load()
+        let data = try #require(await model.exportData(format: .text, selection: .transcript))
+        #expect(String(decoding: data, as: UTF8.self).contains("I will send the notes by Friday."))
+        #expect(!model.isExporting)
+        #expect(model.operationError == nil)
+        model.saveExport(data, to: URL(string: "https://example.com/not-local")!)
+        #expect(model.operationError?.contains("could not be saved") == true)
+        model.clearOperationFeedback()
+        #expect(model.operationError == nil)
+        model.didCopyExport()
+        #expect(model.operationNotice == "Copied to clipboard.")
+    }
+
 }

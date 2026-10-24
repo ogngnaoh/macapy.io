@@ -1,0 +1,77 @@
+{
+  "assets": [
+    {
+      "path": "Sources/AppShell/Resources/Fonts/MartianMono-VF.ttf",
+      "provenance": "Martian Mono; bundled OFL.txt supplies the license.",
+      "sha256": "c3467843ec1c2574b05fbcfd7147c7bfbcf63ddca8fc2bcb9d117f1bfb1b22e7",
+      "status": "notice-retained"
+    },
+    {
+      "path": "Tests/PersistKitTests/Fixtures/RetrievalEvidence/v1.json",
+      "provenance": "Original synthetic text authored for this project under the repository MIT license; frozen before first evaluation.",
+      "sha256": "c5da243216ce654272af03c8f3fe0568f36c571d9b17a81943ac4abc88cfe6b2",
+      "status": "original-synthetic"
+    }
+  ],
+  "notices": [
+    {
+      "path": ".build/checkouts/GRDB.swift/LICENSE",
+      "sha256": "9853f9dce81365fcc1d9b46004633354450164b8d17904e92e80c444545f7e87"
+    },
+    {
+      "path": ".build/checkouts/FluidAudio/LICENSE",
+      "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+    },
+    {
+      "path": ".build/checkouts/FluidAudio/ThirdPartyLicenses/fastcluster-LICENSE.md",
+      "sha256": "67594dbe4a7477719c8160373e7767c2c319ef966a6042f76846a18af02cde0a"
+    },
+    {
+      "path": ".build/checkouts/FluidAudio/ThirdPartyLicenses/vbx-LICENSE.md",
+      "sha256": "08e57fdb5187c816e937916f1e176aadb400ca76f4b3b493d69730ec8f10dd80"
+    },
+    {
+      "path": "Sources/AppShell/Resources/Fonts/OFL.txt",
+      "sha256": "ddafd2c3f37ef1d83ef284ca63e159befd3820850c5e9eded14ca52eee92c256"
+    }
+  ],
+  "pending_release_reviews": [
+    "The exact legacy pyannote_segmentation.mlmodelc and wespeaker_v2.mlmodelc model-asset provenance and terms remain unresolved; weights are not bundled."
+  ],
+  "pins": {
+    "fluidaudio": "19600a485baa4998812e4654b70d2bab8f2c9949",
+    "grdb.swift": "b83108d10f42680d78f23fe4d4d80fc88dab3212"
+  },
+  "removed_audio": [
+    {
+      "path": "Tests/AppShellTests/Fixtures/fox.wav",
+      "sha256": "05cb449b9f0ac689e56b0eefc1dc39e6594bcc9c842ce5af1df60d28e07e1501"
+    },
+    {
+      "path": "Tests/AppShellTests/Fixtures/two-voices.wav",
+      "sha256": "69c988f9bad77477e1fd60917abcb4c939b4a28e6c5dafc1e6479d4c09450e41"
+    },
+    {
+      "path": "Tests/DiarizeKitTests/Fixtures/two-voices.wav",
+      "sha256": "69c988f9bad77477e1fd60917abcb4c939b4a28e6c5dafc1e6479d4c09450e41"
+    },
+    {
+      "path": "Tests/G1BudgetTests/Fixtures/fox.wav",
+      "sha256": "05cb449b9f0ac689e56b0eefc1dc39e6594bcc9c842ce5af1df60d28e07e1501"
+    },
+    {
+      "path": "Tests/TranscribeKitTests/Fixtures/fox.wav",
+      "sha256": "05cb449b9f0ac689e56b0eefc1dc39e6594bcc9c842ce5af1df60d28e07e1501"
+    },
+    {
+      "path": "Tests/TranscribeKitTests/Fixtures/long-meeting.wav",
+      "sha256": "f0e88dc7e27737a5fb5f4080888f853fb136e74e8abbe6d610999781ac1b40f6"
+    },
+    {
+      "path": "Tests/TranscribeKitTests/Fixtures/train.wav",
+      "sha256": "3a6689c744db64644a137ec8807bd8b4db8b48a4d810ff09595067f564332408"
+    }
+  ],
+  "removed_audio_basis": "Apple macOS Tahoe 26 SLA section 2F: https://www.apple.com/legal/sla/docs/macOSTahoe.pdf. Exact historical WAVs are preserved locally, excluded from the current source tree. Older Git objects may still contain them; no history rewrite was performed.",
+  "schema_version": 1
+}

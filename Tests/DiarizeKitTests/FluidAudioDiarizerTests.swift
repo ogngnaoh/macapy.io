@@ -2,19 +2,20 @@ import AVFoundation
 import CaptureKit
 import DiarizeKit
 import Foundation
+import ProviderTestSupport
 import Testing
 
 /// Test gating (slice-4 decision 6): real-model suites skip-not-fail when the
-/// CoreML models aren't installed — the `LiveCredentials.hasDeepSeek`
-/// precedent. Clones run green without the 129MB download.
+/// CoreML models are absent or the local-model lane is not explicitly enabled.
+/// Clones run green without the 129MB download.
 enum DiarizationTestSupport {
     static var hasModels: Bool { DiarizationModelStore.isInstalled }
 
     static func fixtureURL(_ name: String) throws -> URL {
-        try #require(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: nil))
+        try #require(LocalAudioFixtures.url(named: name))
     }
 
-    /// The committed two-voice fixture's ground truth (Phase-0 gate).
+    /// The local two-voice fixture's ground truth (Phase-0 gate).
     struct ScheduledTurn: Decodable {
         let speaker: String
         let tStart: Double
@@ -47,8 +48,8 @@ enum DiarizationTestSupport {
 
 /// Slice-4 check 1 [gated: models]: the two-voice `say` fixture through the
 /// real chunked FluidAudio engine separates into ≥2 stable speakers matching
-/// the committed schedule by majority overlap.
-@Suite(.enabled(if: DiarizationTestSupport.hasModels))
+/// the supplied schedule by majority overlap.
+@Suite(.enabled(if: TestRunPolicy.runsLocalModels && LocalAudioFixtures.has(["two-voices.wav", "schedule.json"]) && DiarizationTestSupport.hasModels, "Requires explicit model opt-in, installed diarization assets, and local two-voices.wav/schedule.json; no downloads"))
 struct FluidAudioDiarizerTests {
 
     @Test func twoVoiceFixtureSeparatesPerTheCommittedSchedule() async throws {

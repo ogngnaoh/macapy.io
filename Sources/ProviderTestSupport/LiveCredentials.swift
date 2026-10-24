@@ -11,7 +11,7 @@ import Foundation
 /// secret stays encrypted at rest and rotation has exactly one place to happen.
 ///
 /// **Absence is the normal case.** A fresh clone, CI, and every contributor
-/// runs `swift test` with no key at all; live suites gate on `hasDeepSeek` and
+/// runs `swift test` with no key at all; live suites require `TestRunPolicy.runsLiveProvider` and
 /// *skip*, never fail. That is what keeps acceptance check 8 ("full `swift
 /// test` green") an honest claim for someone who has never opened a provider
 /// account.
@@ -30,7 +30,8 @@ public enum LiveCredentials {
         value(of: deepSeekVariable)
     }
 
-    /// Whether the DeepSeek live suite can run at all.
+    /// Whether credentials exist. This does not authorize a live test run;
+    /// suites must use `TestRunPolicy.runsLiveProvider` instead.
     public static var hasDeepSeek: Bool { deepSeekKey != nil }
 
     /// Reads one environment variable, treating whitespace-only as absent.

@@ -9,7 +9,9 @@
 	     so no com.apple.security.app-sandbox entitlement is added. System-audio
 	     capture is instead gated at runtime by the AudioCapture TCC prompt
 	     (Info.plist NSAudioCaptureUsageDescription / kTCCServiceAudioCapture);
-	     the mic by NSMicrophoneUsageDescription. This dict stays effectively
-	     empty. Recorded as the SPEC §8 sandbox clarification. -->
+     the mic by NSMicrophoneUsageDescription. Hardened runtime additionally
+     requires the Audio Input entitlement; this does not grant TCC access. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
 </dict>
 </plist>

@@ -3,6 +3,7 @@ import CaptureKit
 import DiarizeKit
 import Foundation
 import PersistKit
+import ProviderTestSupport
 import Testing
 import TranscribeKit
 
@@ -16,11 +17,14 @@ import TranscribeKit
 ///
 /// Real-time paced (~70s) — that cost lives only in this model-gated suite,
 /// per the re-plan's suite-speed rule.
-@Suite(.enabled(if: DiarizationModelStore.isInstalled), .serialized)
+@Suite(.serialized, .enabled("Requires explicit model opt-in, installed speech/diarization assets, and local fox.wav/two-voices.wav; no downloads") {
+    guard TestRunPolicy.runsLocalModels && LocalAudioFixtures.has(["fox.wav", "two-voices.wav"]) && DiarizationModelStore.isInstalled else { return false }
+    return await SpeechAnalyzerEngine.assetsAreInstalled(locale: Locale(identifier: "en_US"))
+})
 struct DiarizedMeetingEndToEndTests {
 
     private func fixture(_ name: String) throws -> URL {
-        try #require(Bundle.module.url(forResource: name, withExtension: "wav", subdirectory: "Fixtures"))
+        try #require(LocalAudioFixtures.url(named: "\(name).wav"))
     }
 
     @MainActor
@@ -29,18 +33,23 @@ struct DiarizedMeetingEndToEndTests {
         let store = TranscriptStore()
         let meetingStore = MeetingStore(database: try MacapyDatabase.inMemory())
         let pipeline = MeetingPipeline(
-            engine: SpeechAnalyzerEngine(),
+            engine: SpeechAnalyzerEngine(locale: Locale(identifier: "en_US"), assetInstallationPolicy: .installedOnly),
             sources: [
                 FixturePlaybackSource(fixtureURL: try fixture("fox"), source: .mic),
                 FixturePlaybackSource(fixtureURL: try fixture("two-voices"), source: .system),
             ],
             store: store,
-            makeDiarizer: { DiarizationSession(engine: try FluidAudioDiarizer()) }
+            locale: Locale(identifier: "en_US"),
+            makeDiarizer: { DiarizationSession(engine: try FluidAudioDiarizer()) },
+            diarizationLease: OptionalDiarizationLease()
         )
 
         try await pipeline.start(mode: .persistent(meetingStore))
-        // Let the them-fixture play out fully (69.6s real time), then stop.
-        try await Task.sleep(for: .seconds(72))
+        // Local generation can vary slightly by installed voice version. Play
+        // the entire supplied fixture before applying the same stop oracle.
+        let fixtureFile = try AVAudioFile(forReading: fixture("two-voices"))
+        let duration = Double(fixtureFile.length) / fixtureFile.processingFormat.sampleRate
+        try await Task.sleep(for: .seconds(duration + 2))
         let stopStarted = ContinuousClock.now
         let meetingID = try #require(await pipeline.stop())
         let stopDuration = ContinuousClock.now - stopStarted

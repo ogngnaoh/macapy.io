@@ -26,17 +26,19 @@ final class LiveAISettingsModel {
     private(set) var settings = LiveAISettings()
     private(set) var loaded = false
 
-    @ObservationIgnored private let store: SettingsStore?
+    @ObservationIgnored private let loadSettings: @Sendable () async throws -> LiveAISettings?
     @ObservationIgnored private let saveSettings: @Sendable (LiveAISettings) async throws -> Void
     @ObservationIgnored private let onChange: @MainActor (LiveAISettings) async -> Void
     @ObservationIgnored private var persistenceTail: Task<Void, Never>?
+    @ObservationIgnored private var deletingContent = false
+    @ObservationIgnored private var contentRevision: UInt64 = 0
     @ObservationIgnored private let log = Logger(subsystem: "io.macapy.app", category: "LiveAISettings")
 
     init(
         store: SettingsStore?,
         onChange: @escaping @MainActor (LiveAISettings) async -> Void = { _ in }
     ) {
-        self.store = store
+        self.loadSettings = { try await store?.liveAISettings() }
         self.saveSettings = { settings in
             try await store?.setLiveAISettings(settings)
         }
@@ -47,19 +49,23 @@ final class LiveAISettingsModel {
     /// while tests can suspend a write to prove notification and ordering.
     init(
         testingSaveSettings saveSettings: @escaping @Sendable (LiveAISettings) async throws -> Void,
+        testingLoadSettings loadSettings: @escaping @Sendable () async throws -> LiveAISettings? = { nil },
         onChange: @escaping @MainActor (LiveAISettings) async -> Void = { _ in }
     ) {
-        store = nil
+        self.loadSettings = loadSettings
         self.saveSettings = saveSettings
         self.onChange = onChange
     }
 
     func load() async {
-        guard !loaded else { return }
-        settings = (try? await store?.liveAISettings()) ?? LiveAISettings()
-        if settings.preferredName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
-            settings.preferredName = Self.defaultPreferredName
+        guard !loaded, !deletingContent else { return }
+        let revision = contentRevision
+        var snapshot = (try? await loadSettings()) ?? LiveAISettings()
+        guard revision == contentRevision, !deletingContent, !Task.isCancelled else { return }
+        if snapshot.usesSystemPreferredName && snapshot.preferredName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+            snapshot.preferredName = Self.defaultPreferredName
         }
+        settings = snapshot
         loaded = true
         // Loading establishes the app's in-memory operational latch too. The
         // database value is durable input, not a separate source of truth once
@@ -68,19 +74,41 @@ final class LiveAISettingsModel {
     }
 
     func setEnabled(_ enabled: Bool) async {
+        guard !deletingContent else { return }
         settings.aiFeaturesEnabled = enabled
         await persist()
     }
 
     func setSensitivity(_ sensitivity: LiveAISensitivity) async {
+        guard !deletingContent else { return }
         settings.sensitivity = sensitivity
         await persist()
     }
 
     func setPreferredName(_ name: String) async {
+        guard !deletingContent else { return }
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         settings.preferredName = trimmed.isEmpty ? nil : trimmed
+        settings.usesSystemPreferredName = false
         await persist()
+    }
+
+    func beginContentDeletion() async {
+        deletingContent = true
+        contentRevision &+= 1
+        await persistenceTail?.value
+    }
+
+    func endContentDeletion() async {
+        guard deletingContent else { return }
+        let revision = contentRevision
+        let snapshot = (try? await loadSettings()) ?? settings
+        guard revision == contentRevision, !Task.isCancelled else { return }
+        settings = snapshot
+        loaded = true
+        await onChange(settings)
+        guard revision == contentRevision, !Task.isCancelled else { return }
+        deletingContent = false
     }
 
     private func persist() async {
@@ -97,7 +125,7 @@ final class LiveAISettingsModel {
             do {
                 try await saveSettings(snapshot)
             } catch {
-                log.error("failed to persist live AI settings: \(error.localizedDescription)")
+                log.error("failed to persist live AI settings: \(String(describing: type(of: error)), privacy: .public)")
             }
         }
         persistenceTail = task

@@ -1,6 +1,7 @@
 import CaptureKit
 import Foundation
 import Observation
+import TranscribeKit
 
 /// The meeting-session state machine. Pure state transitions — the seam
 /// slices 2–4 hook capture/transcription/persistence into. `.paused` arrives
@@ -12,11 +13,51 @@ import Observation
 final class SessionController {
     enum SessionState: Equatable, Sendable {
         case idle
+        case preparing
         case capturing(startedAt: Date)
         case paused(startedAt: Date)
     }
 
     private(set) var state: SessionState = .idle
+    private(set) var failure: SessionFailure?
+    var storageWarning: String?
+    var diarizationWarning: String?
+
+    var isPreparing: Bool { state == .preparing }
+    var isActive: Bool { state != .idle }
+
+    var statusTitle: String {
+        switch state {
+        case .idle: failure == nil ? "Ready" : "Needs attention"
+        case .preparing: "Preparing"
+        case .capturing: "Capturing"
+        case .paused: "Paused"
+        }
+    }
+
+    @discardableResult
+    func prepare() -> Bool {
+        guard !isActive else { return false }
+        failure = nil
+        storageWarning = nil
+        diarizationWarning = nil
+        state = .preparing
+        return true
+    }
+
+    @discardableResult
+    func captureDidStart(now: Date = Date()) -> Bool {
+        guard isPreparing else { return false }
+        state = .capturing(startedAt: now)
+        return true
+    }
+
+    func fail(_ failure: SessionFailure) {
+        state = .idle
+        self.failure = failure
+    }
+
+    func dismissFailure() { failure = nil }
 
     /// The current meeting's per-source levels for the signal strip (slice-4
     /// decision 5). Set by the coordinator when a pipeline starts; nil until
@@ -40,7 +81,7 @@ final class SessionController {
     /// idle. The panel header's meeting timer reads this.
     var startedAt: Date? {
         switch state {
-        case .idle: return nil
+        case .idle, .preparing: return nil
         case .capturing(let startedAt), .paused(let startedAt): return startedAt
         }
     }
@@ -49,6 +90,9 @@ final class SessionController {
     @discardableResult
     func start(now: Date = Date()) -> Bool {
         guard case .idle = state else { return false }
+        failure = nil
+        storageWarning = nil
+        diarizationWarning = nil
         state = .capturing(startedAt: now)
         return true
     }
@@ -87,5 +131,58 @@ final class SessionController {
         } else {
             start(now: now)
         }
+    }
+}
+
+/// Only allowlisted product copy crosses the pipeline/UI error boundary.
+enum SessionFailure: String, Sendable, Equatable {
+    case speechAssets, locale, microphone, systemAudio, storage, transcription, audioRoute, captureInterrupted, systemSleep, shutdownDelayed
+
+    var message: String {
+        switch self {
+        case .speechAssets:
+            "Speech assets are not ready. Open Setup to install English speech support, then try again."
+        case .locale:
+            "This speech language is unavailable. Open Setup and select a supported English locale."
+        case .microphone:
+            "The microphone could not start. Check microphone access in System Settings and reconnect your input device."
+        case .systemAudio:
+            "System audio could not start. Check audio recording access in System Settings, or choose microphone only in Setup."
+        case .storage:
+            "Meeting storage is unavailable. Check available disk space and permissions before trying again."
+        case .transcription:
+            "Transcription stopped unexpectedly. Saved text remains in History. Check your audio device and try again."
+        case .audioRoute:
+            "The audio route changed and recording stopped. Saved text remains in History. Check your microphone and output device, then start a new meeting."
+        case .captureInterrupted:
+            "Audio capture was interrupted and recording stopped. Saved text remains in History. Check audio access and your devices, then start a new meeting."
+        case .systemSleep:
+            "Recording stopped when this Mac went to sleep. Saved text remains in History. Start a new meeting when you are ready."
+        case .shutdownDelayed:
+            "Quitting was cancelled because the recording is still finishing. Keep macapy open to protect the remaining text, then try Quit again."
+        }
+    }
+
+    static func classify(_ error: any Error) -> Self {
+        if error is MeetingStoragePreflight.Failure { return .storage }
+        if let error = error as? CaptureInterruption {
+            return error.reason == .routeChanged ? .audioRoute : .captureInterrupted
+        }
+        if let error = error as? TranscribeError {
+            switch error {
+            case .localeUnsupported: return .locale
+            case .assetsUnavailable: return .speechAssets
+            case .analyzerFailed: return .transcription
+            }
+        }
+        if let error = error as? CaptureError {
+            switch error {
+            case .processTapFailed: return .systemAudio
+            case .engineStartFailed, .formatUnavailable, .conversionFailed: return .microphone
+            }
+        }
+        let domain = (error as NSError).domain
+        if domain == NSCocoaErrorDomain || domain == "GRDB.DatabaseError" { return .storage }
+        return .transcription
     }
 }

@@ -73,9 +73,10 @@ public struct HarnessReport: Sendable, Codable, Equatable {
 /// number is measured with diarization's CPU load in the picture. Requires
 /// installed models; the attributions are discarded (latency is the subject).
 public func runHarness(
-    fixtureURL: URL, locale: Locale = Locale(identifier: "en_US"), diarize: Bool = false
+    fixtureURL: URL, locale: Locale = Locale(identifier: "en_US"), diarize: Bool = false,
+    assetInstallationPolicy: SpeechAssetInstallationPolicy = .allowDownload
 ) async throws -> HarnessReport {
-    let engine = SpeechAnalyzerEngine(locale: locale)
+    let engine = SpeechAnalyzerEngine(locale: locale, assetInstallationPolicy: assetInstallationPolicy)
     try await engine.prepare(locale: locale)
     let format = try await engine.preferredInputFormat()
     let diarizer = diarize ? DiarizationSession(engine: try FluidAudioDiarizer()) : nil

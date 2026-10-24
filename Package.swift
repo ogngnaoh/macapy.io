@@ -18,14 +18,14 @@ let package = Package(
     dependencies: [
         // PersistKit's one external dependency (SPEC §5 sanctioned; slice 4).
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.11.1"),
-        // Diarization (SPEC §5 sanctioned; M2 slice 4). Vetting record in
-        // docs/02-understanding/slice-04-diarization.md — Apache-2.0 SDK,
-        // CC-BY-4.0 CoreML models (~129MB) fetched via consent-gated download,
-        // one build-time binary xcframework (NemoTextProcessing).
+        // Optional diarization. SDK and model assets have separate licenses;
+        // model downloads are consent-gated and never bundled with the app.
         .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.0"),
     ],
     targets: [
         .target(name: "CaptureKit"),
+        .target(name: "MemoryKit"),
+        .target(name: "ActionKit"),
         .target(name: "TranscribeKit", dependencies: ["CaptureKit"]),
         // Depends on ProviderKit for the `SpendLedger` contract and `SpendEntry`
         // (slice 2). The edge points this way on purpose: persistence knowing a
@@ -34,13 +34,15 @@ let package = Package(
         .target(name: "PersistKit", dependencies: [
             "TranscribeKit",
             "ProviderKit",
+            "MemoryKit",
+            "ActionKit",
             .product(name: "GRDB", package: "GRDB.swift"),
         ]),
         // The post-meeting agent (slice 3): extraction over ProviderKit, draft
         // artifacts into PersistKit. TranscribeKit/CaptureKit are for the
         // `Segment`/`AudioSource` types at the transcript boundary.
         .target(name: "AgentKit", dependencies: [
-            "ProviderKit", "PersistKit", "TranscribeKit", "CaptureKit",
+            "ProviderKit", "PersistKit", "TranscribeKit", "CaptureKit", "MemoryKit",
         ]),
         .target(name: "ProviderKit"),
         // The fake OpenAI-compatible server (slice-02 doc decision 6) lives in
@@ -55,7 +57,7 @@ let package = Package(
         .target(name: "ProviderTestSupport", dependencies: ["ProviderKit"]),
         .target(
             name: "AppShell",
-            dependencies: ["CaptureKit", "TranscribeKit", "PersistKit", "AgentKit", "ProviderKit", "DiarizeKit"],
+            dependencies: ["CaptureKit", "TranscribeKit", "PersistKit", "AgentKit", "ProviderKit", "DiarizeKit", "MemoryKit", "ActionKit"],
             // Martian Mono (OFL, license alongside): the design system's
             // "machine voice" face, registered at startup by FontRegistrar.
             resources: [.copy("Resources/Fonts")]
@@ -74,22 +76,24 @@ let package = Package(
         .target(name: "LatencyHarnessLib", dependencies: ["CaptureKit", "TranscribeKit", "DiarizeKit"]),
         .executableTarget(name: "LatencyHarness", dependencies: ["LatencyHarnessLib"]),
         .testTarget(name: "CaptureKitTests", dependencies: ["CaptureKit"]),
+        .testTarget(name: "MemoryKitTests", dependencies: ["MemoryKit"]),
+        .testTarget(name: "ActionKitTests", dependencies: ["ActionKit"]),
         // Model-gated suites live here (skip-not-fail without the ~129MB
         // CoreML models — the LiveCredentials precedent); the session and
         // attributor suites are pure and always run.
         .testTarget(
             name: "DiarizeKitTests",
-            dependencies: ["DiarizeKit", "CaptureKit"],
+            dependencies: ["DiarizeKit", "CaptureKit", "ProviderTestSupport"],
             resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "TranscribeKitTests",
-            dependencies: ["TranscribeKit", "CaptureKit"],
+            dependencies: ["TranscribeKit", "CaptureKit", "ProviderTestSupport"],
             resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "AppShellTests",
-            dependencies: ["AppShell", "AgentKit", "PersistKit", "ProviderKit", "ProviderTestSupport", "DiarizeKit"],
+            dependencies: ["AppShell", "AgentKit", "PersistKit", "ProviderKit", "ProviderTestSupport", "DiarizeKit", "ActionKit", "MemoryKit"],
             resources: [.copy("Fixtures")]
         ),
         // PersistKit is here for the key-leak check (acceptance check 5): the
@@ -109,11 +113,12 @@ let package = Package(
         ),
         .testTarget(
             name: "PersistKitTests",
-            dependencies: ["PersistKit", "TranscribeKit", "CaptureKit", "ProviderKit"]
+            dependencies: ["PersistKit", "TranscribeKit", "CaptureKit", "ProviderKit", "MemoryKit", "ActionKit"],
+            resources: [.copy("Fixtures")]
         ),
         .testTarget(
             name: "G1BudgetTests",
-            dependencies: ["LatencyHarnessLib"],
+            dependencies: ["LatencyHarnessLib", "TranscribeKit", "ProviderTestSupport"],
             resources: [.copy("Fixtures")]
         ),
     ]

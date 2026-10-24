@@ -62,7 +62,7 @@ struct MacapyDatabaseTests {
         let columnNames = try database.dbWriter.read { db in
             try db.columns(in: "artifacts").map(\.name)
         }
-        #expect(Set(columnNames) == ["id", "meetingID", "kind", "payload", "status", "createdAt", "searchText"])
+        #expect(Set(columnNames) == ["id", "meetingID", "kind", "payload", "status", "createdAt", "searchText", "revision", "editedAt", "completedAt"])
     }
 
     // MARK: - v5-search (slice 5, check 1)

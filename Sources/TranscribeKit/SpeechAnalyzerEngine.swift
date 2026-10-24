@@ -4,6 +4,13 @@ import Foundation
 import Speech
 import os
 
+/// Asset installation is a setup operation. Meeting capture and model tests
+/// can require existing assets without invoking any installation request.
+public enum SpeechAssetInstallationPolicy: Sendable {
+    case allowDownload
+    case installedOnly
+}
+
 /// `STTEngine` backed by Apple's on-device `SpeechAnalyzer` (macOS 26+). One
 /// `SpeechTranscriber` + `SpeechAnalyzer` pair is created per `transcribe()`
 /// call (per meeting/source); "stop meeting" is just "finish the capture
@@ -11,19 +18,33 @@ import os
 /// naturally.
 public struct SpeechAnalyzerEngine: STTEngine {
     private let locale: Locale
+    private let assetInstallationPolicy: SpeechAssetInstallationPolicy
     private static let log = Logger(subsystem: "io.macapy.app", category: "SpeechAnalyzerEngine")
 
-    public init(locale: Locale = .current) {
+    public init(
+        locale: Locale = .current,
+        assetInstallationPolicy: SpeechAssetInstallationPolicy = .allowDownload
+    ) {
         self.locale = locale
+        self.assetInstallationPolicy = assetInstallationPolicy
     }
 
     private func makeTranscriber(_ locale: Locale) -> SpeechTranscriber {
+        Self.makeTranscriber(locale)
+    }
+
+    private static func makeTranscriber(_ locale: Locale) -> SpeechTranscriber {
         SpeechTranscriber(
             locale: locale,
             transcriptionOptions: [],
             reportingOptions: [.volatileResults],
             attributeOptions: [.audioTimeRange]
         )
+    }
+
+    /// Read-only readiness check; never requests installation or downloads.
+    public static func assetsAreInstalled(locale: Locale) async -> Bool {
+        await AssetInventory.status(forModules: [makeTranscriber(locale)]) == .installed
     }
 
     public func prepare(locale: Locale) async throws {
@@ -33,15 +54,40 @@ public struct SpeechAnalyzerEngine: STTEngine {
             throw TranscribeError.localeUnsupported(locale)
         }
 
-        let transcriber = makeTranscriber(locale)
         do {
-            if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
-                try await request.downloadAndInstall()
-            }
+            try await Self.prepareAssets(
+                locale: locale,
+                policy: assetInstallationPolicy,
+                isInstalled: { await Self.assetsAreInstalled(locale: locale) },
+                install: {
+                    let transcriber = Self.makeTranscriber(locale)
+                    if let request = try await AssetInventory.assetInstallationRequest(supporting: [transcriber]) {
+                        try await request.downloadAndInstall()
+                    }
+                }
+            )
         } catch {
             throw TranscribeError.assetsUnavailable(locale, underlying: error)
         }
         _ = try? await AssetInventory.reserve(locale: locale)
+    }
+
+    /// Dependency seam verifies that the installed-only policy cannot reach
+    /// the download closure, even when assets are absent or being removed.
+    static func prepareAssets(
+        locale: Locale,
+        policy: SpeechAssetInstallationPolicy,
+        isInstalled: () async -> Bool,
+        install: () async throws -> Void
+    ) async throws {
+        switch policy {
+        case .installedOnly:
+            guard await isInstalled() else {
+                throw TranscribeError.assetsUnavailable(locale, underlying: nil)
+            }
+        case .allowDownload:
+            try await install()
+        }
     }
 
     public func preferredInputFormat() async throws -> AVAudioFormat {
@@ -97,7 +143,7 @@ public struct SpeechAnalyzerEngine: STTEngine {
                 } catch {
                     inputBuilder.finish()
                     resultsTask.cancel()
-                    Self.log.error("transcription failed: \(error.localizedDescription)")
+                    Self.log.error("transcription failed: \(String(describing: type(of: error)), privacy: .public)")
                     continuation.finish(throwing: TranscribeError.analyzerFailed(underlying: error))
                 }
             }

@@ -1,4 +1,5 @@
 import AgentKit
+import ActionKit
 import CaptureKit
 import DiarizeKit
 import Foundation
@@ -42,6 +43,9 @@ final class AppShellCoordinator {
     /// App-lifetime identity injected into the cached panel root. Its contents
     /// are reset per meeting and never persisted.
     let copilot = LiveCopilotModel()
+    let setup: OnboardingModel
+    let requestInspector = RequestInspector()
+    let shortcuts: ShortcutPreferencesModel
 
     /// Menu-bar "Ephemeral meeting" toggle: applies to the *next* meeting
     /// started, not one already running (slice-04 doc decision 9).
@@ -50,6 +54,8 @@ final class AppShellCoordinator {
     @ObservationIgnored private let panel: PanelPresenting
     @ObservationIgnored private let makePipeline: @MainActor (TranscriptStore) -> MeetingPipeline
     @ObservationIgnored private let makeDatabase: @MainActor () throws -> MacapyDatabase
+    @ObservationIgnored private let storagePreflight: @Sendable () async throws -> Void
+    @ObservationIgnored private let resetLaunchPreference: (@MainActor () async throws -> Void)?
     @ObservationIgnored private let providerProfiles: [EndpointProfile]
     @ObservationIgnored private let credentials: any CredentialStore
     /// Test seam for lifecycle tests that must hold a real provider response
@@ -78,11 +84,14 @@ final class AppShellCoordinator {
     @ObservationIgnored private var cachedProviderSettingsModel: ProviderSettingsModel?
     @ObservationIgnored private var cachedLiveAISettingsModel: LiveAISettingsModel?
     @ObservationIgnored private let meetingSpendRegistry = MeetingSpendRegistry()
-    @ObservationIgnored private var hotKey: HotKey?
-    @ObservationIgnored private var pauseHotKey: HotKey?
-    @ObservationIgnored private var catchUpHotKey: HotKey?
-    @ObservationIgnored private var askHotKey: HotKey?
-    @ObservationIgnored private var dismissCopilotHotKey: HotKey?
+    @ObservationIgnored private var cachedLaunchPreferences: LaunchPreferencesModel?
+    @ObservationIgnored private var cachedDiagnosticsExport: SanitizedDiagnosticsExportModel?
+    @ObservationIgnored private var cachedMemoryWorkspace: MemoryWorkspaceModel?
+    @ObservationIgnored private var cachedBriefWorkspace: BriefWorkspaceModel?
+    private(set) var contentDeletionInProgress = false
+    private(set) var terminationInProgress = false
+    @ObservationIgnored private var cachedLifecycle: ApplicationLifecycleController?
+    @ObservationIgnored private var optionalContextRevision: UInt64 = 0
     @ObservationIgnored private var pipeline: MeetingPipeline?
     /// References to the current or most recently started meeting's lock-only
     /// diagnostics. They remain readable after `pipeline` is released, then
@@ -157,11 +166,19 @@ final class AppShellCoordinator {
         liveSpendLedgerOverride: (any SpendLedger)? = nil,
         lifecycleCheckpoint: (@Sendable (LifecycleCheckpoint) async -> Void)? = nil,
         liveSettingsSaveOverride:
-            (@Sendable (LiveAISettings) async throws -> Void)? = nil
+            (@Sendable (LiveAISettings) async throws -> Void)? = nil,
+        storagePreflight: @escaping @Sendable () async throws -> Void = {},
+        setupModel: OnboardingModel? = nil,
+        resetLaunchPreference: (@MainActor () async throws -> Void)? = nil
     ) {
+        self.setup = setupModel ?? OnboardingModel(defaults: installHotKey ? .standard : nil)
+        self.resetLaunchPreference = resetLaunchPreference
+        let shortcutManager = GlobalShortcutManager()
+        shortcuts = ShortcutPreferencesModel(manager: shortcutManager, defaults: installHotKey ? .standard : nil)
         self.panel = panel
         self.makePipeline = makePipeline
         self.makeDatabase = makeDatabase
+        self.storagePreflight = storagePreflight
         self.providerProfiles = providerProfiles
         self.credentials = credentials
         self.postMeetingContextOverride = postMeetingContextOverride
@@ -169,22 +186,16 @@ final class AppShellCoordinator {
         self.liveSpendLedgerOverride = liveSpendLedgerOverride
         self.lifecycleCheckpoint = lifecycleCheckpoint
         self.liveSettingsSaveOverride = liveSettingsSaveOverride
+        panel.configureShortcuts(shortcuts)
+        shortcutManager.handlers = [
+            .startStop: { [weak self] in self?.toggleSession() },
+            .pauseResume: { [weak self] in self?.togglePause() },
+            .catchUp: { [weak self] in self?.requestCatchUp() },
+            .ask: { [weak self] in self?.requestAsk() },
+            .dismiss: { [weak self] in self?.requestDismissCopilot() },
+        ]
         if installHotKey {
-            hotKey = HotKey.startStopMeeting { [weak self] in
-                self?.toggleSession()
-            }
-            pauseHotKey = HotKey.pauseResumeMeeting { [weak self] in
-                self?.togglePause()
-            }
-            catchUpHotKey = HotKey.catchUp { [weak self] in
-                self?.requestCatchUp()
-            }
-            askHotKey = HotKey.askCopilot { [weak self] in
-                self?.requestAsk()
-            }
-            dismissCopilotHotKey = HotKey.dismissCopilot { [weak self] in
-                self?.requestDismissCopilot()
-            }
+            shortcuts.activate()
         }
     }
 
@@ -202,10 +213,13 @@ final class AppShellCoordinator {
         if DiarizationModelStore.isInstalled {
             makeDiarizer = { @Sendable in DiarizationSession(engine: try FluidAudioDiarizer()) }
         }
+        let sources: [any AudioCaptureSource] = CapturePreferences.mode == .microphoneOnly
+            ? [MicCapture()] : [MicCapture(), SystemAudioCapture()]
         return MeetingPipeline(
-            engine: SpeechAnalyzerEngine(),
-            sources: [MicCapture(), SystemAudioCapture()],
+            engine: SpeechAnalyzerEngine(locale: CapturePreferences.locale, assetInstallationPolicy: .installedOnly),
+            sources: sources,
             store: store,
+            locale: CapturePreferences.locale,
             makeDiarizer: makeDiarizer)
     }
 
@@ -223,8 +237,26 @@ final class AppShellCoordinator {
     }
 
     func toggleSession() {
-        session.toggle()
+        guard !contentDeletionInProgress, !terminationInProgress, cachedLifecycle?.phase == nil || cachedLifecycle?.phase == .idle else { return }
+        if session.isActive {
+            requestInspector.clear()
+            session.stop()
+        } else {
+            guard setup.activity.beginMeeting() else {
+                session.fail(.speechAssets)
+                panel.show(session: session, store: store, copilot: copilot)
+                return
+            }
+            session.prepare()
+            invalidateOptionalContext()
+            requestInspector.clear()
+        }
         syncPanel()
+    }
+
+    func dismissSessionFailure() {
+        session.dismissFailure()
+        if !session.isActive { panel.hide() }
     }
 
     /// ⌥⌘P / menu bar: pause a capturing session, or resume a paused one — a
@@ -239,7 +271,7 @@ final class AppShellCoordinator {
         case .paused:
             session.resume()
             enqueueCaptureActivity(.capturing)
-        case .idle:
+        case .idle, .preparing:
             break
         }
     }
@@ -338,12 +370,12 @@ final class AppShellCoordinator {
     }
 
     private func syncPanel() {
-        if session.isCapturing {
+        if session.isActive {
             panel.show(session: session, store: store, copilot: copilot)
             startPipelineIfNeeded()
         } else {
             log.info("session stopped")
-            panel.hide()
+            if session.failure == nil { panel.hide() }
             teardownPipeline()
         }
     }
@@ -363,8 +395,23 @@ final class AppShellCoordinator {
         latestDroppedChunks = 0
         copilot.suggestionLatencyRecorder.reset()
         session.signalMeter = newPipeline.signalMeter
-        newPipeline.onFailure = { [weak self] error in
+        newPipeline.onFailure = { [weak self, weak newPipeline] error in
+            guard let newPipeline else { return }
             self?.handleFailure(from: newPipeline, error)
+        }
+        newPipeline.onDiarizationUnavailable = { [weak self, weak newPipeline] in
+            guard let self, let newPipeline, self.pipeline === newPipeline else { return }
+            self.session.diarizationWarning = "Speaker separation is unavailable. Capture and transcription continue with source labels."
+        }
+        newPipeline.onPersistenceStatus = { [weak self, weak newPipeline] status in
+            guard let self, let newPipeline, self.pipeline === newPipeline else { return }
+            if status.droppedSegments > 0 {
+                self.session.storageWarning = "Storage could not keep up. \(status.droppedSegments) transcript lines could not be saved. Capture continues; stop the meeting to protect the remaining text."
+            } else if status.isDegraded {
+                self.session.storageWarning = "Storage is unavailable. Recent text is held temporarily in memory while capture continues. Free disk space or stop the meeting."
+            } else {
+                self.session.storageWarning = nil
+            }
         }
         // Captured now, not read later: the ephemeral toggle applies to the
         // meeting being started, not to whatever the user flips it to next.
@@ -389,11 +436,13 @@ final class AppShellCoordinator {
                 }
             }
             do {
+                if !ephemeral { try await self.storagePreflight() }
+                guard self.isCurrentStartup(newPipeline, epoch: startupEpoch) else { return }
                 let mode = try self.resolvePersistenceMode(ephemeral: ephemeral)
                 let settingsStore = self.settingsStore()
                 let providerSettings = (try? await settingsStore?.providerSettings()) ?? ProviderSettings()
                 var liveSettings = (try? await settingsStore?.liveAISettings()) ?? LiveAISettings()
-                if liveSettings.preferredName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                if liveSettings.usesSystemPreferredName && liveSettings.preferredName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
                     liveSettings.preferredName = LiveAISettingsModel.defaultPreferredName
                 }
                 let pricing = (try? await settingsStore?.pricing()) ?? PricingTable.defaults
@@ -424,6 +473,9 @@ final class AppShellCoordinator {
                         expectedPipeline: newPipeline,
                         lifecycleEpoch: startupEpoch
                     )
+                }
+                if self.isCurrentStartup(newPipeline, epoch: startupEpoch) {
+                    self.session.captureDidStart()
                 }
             } catch {
                 self.handleFailure(from: newPipeline, error)
@@ -509,7 +561,7 @@ final class AppShellCoordinator {
         do {
             return try openOrReusePersistentStore()
         } catch {
-            log.error("failed to open history store: \(error.localizedDescription)")
+            log.error("failed to open history store: \(String(describing: type(of: error)), privacy: .public)")
             return nil
         }
     }
@@ -538,7 +590,7 @@ final class AppShellCoordinator {
             cachedSettingsStore = opened
             return opened
         } catch {
-            log.error("failed to open settings store: \(error.localizedDescription)")
+            log.error("failed to open settings store: \(String(describing: type(of: error)), privacy: .public)")
             return nil
         }
     }
@@ -553,6 +605,7 @@ final class AppShellCoordinator {
             credentials: credentials,
             settingsStore: settingsStore(),
             ledger: spendLedger(),
+            requestInspector: requestInspector,
             onSettingsChange: { [weak self] settings, change in
                 guard let self else { return }
                 self.latestProviderSettings = settings
@@ -565,6 +618,8 @@ final class AppShellCoordinator {
                     // In particular, do not clear a completed requested card.
                     break
                 case .transport:
+                    self.invalidateOptionalContext()
+                    self.requestInspector.clear()
                     self.providerTransportRevision &+= 1
                     let revision = self.providerTransportRevision
                     await self.applyCapChange(settings.perMeetingCapUSD)
@@ -604,7 +659,7 @@ final class AppShellCoordinator {
             cachedSpendLedger = opened
             return opened
         } catch {
-            log.error("failed to open spend ledger: \(error.localizedDescription)")
+            log.error("failed to open spend ledger: \(String(describing: type(of: error)), privacy: .public)")
             return nil
         }
     }
@@ -619,7 +674,7 @@ final class AppShellCoordinator {
             cachedArtifactStore = opened
             return opened
         } catch {
-            log.error("failed to open artifact store: \(error.localizedDescription)")
+            log.error("failed to open artifact store: \(String(describing: type(of: error)), privacy: .public)")
             return nil
         }
     }
@@ -634,7 +689,7 @@ final class AppShellCoordinator {
             cachedSearchStore = opened
             return opened
         } catch {
-            log.error("failed to open search store: \(error.localizedDescription)")
+            log.error("failed to open search store: \(String(describing: type(of: error)), privacy: .public)")
             return nil
         }
     }
@@ -645,7 +700,11 @@ final class AppShellCoordinator {
     func historySearchModel() -> HistorySearchModel? {
         if let cachedHistorySearchModel { return cachedHistorySearchModel }
         guard let meetings = historyStore() else { return nil }
-        let model = HistorySearchModel(meetings: meetings, search: searchStore())
+        let model = HistorySearchModel(meetings: meetings, search: searchStore(), onContentDeleted: { [weak self] in
+            self?.invalidateOptionalContext()
+            self?.cachedMemoryWorkspace?.forgetAllContent()
+            self?.cachedBriefWorkspace?.forgetAllContent()
+        })
         cachedHistorySearchModel = model
         return model
     }
@@ -657,19 +716,231 @@ final class AppShellCoordinator {
     /// survive (author ruling 2026-08-07).
     @discardableResult
     func deleteAllMeetingData() async -> Bool {
-        guard !session.isCapturing else {
+        guard !session.isActive, !contentDeletionInProgress, !terminationInProgress else {
             log.error("delete-everything refused: a meeting is capturing")
             return false
         }
         guard let store = historyStore() else { return false }
+        let livePreferences = liveAISettingsModel()
+        contentDeletionInProgress = true
+        defer { contentDeletionInProgress = false }
+        invalidateOptionalContext()
+        await livePreferences.beginContentDeletion()
+        await cachedMemoryWorkspace?.cancelAndDrain()
+        await cachedBriefWorkspace?.cancelAndDrain()
+        await cachedPostMeetingAgent?.setGenerationEnabled(false)
+        requestInspector.clear()
         do {
             try await store.deleteAllUserData()
+            cachedMemoryWorkspace?.forgetAllContent()
+            cachedBriefWorkspace?.forgetAllContent()
         } catch {
-            log.error("delete-everything failed: \(error.localizedDescription)")
+            await livePreferences.endContentDeletion()
+            await cachedPostMeetingAgent?.setGenerationEnabled(globalAIFeaturesEnabled)
+            log.error("delete-everything failed: \(String(describing: type(of: error)), privacy: .public)")
             return false
         }
+        await livePreferences.endContentDeletion()
+        await cachedPostMeetingAgent?.setGenerationEnabled(globalAIFeaturesEnabled)
         await historySearchModel()?.load()
         return true
+    }
+
+    func launchPreferencesModel() -> LaunchPreferencesModel {
+        if let cachedLaunchPreferences { return cachedLaunchPreferences }
+        let model = LaunchPreferencesModel()
+        cachedLaunchPreferences = model
+        return model
+    }
+
+    func resetRetainedPreferences() async -> ResetPreferencesOutcome {
+        guard !session.isActive, !contentDeletionInProgress, !terminationInProgress,
+              !setup.activity.sessionActive, !setup.activity.isBusy, !setup.isInstalling,
+              cachedLifecycle?.phase == nil || cachedLifecycle?.phase == .idle else { return .busy }
+        guard let database = try? openOrReuseDatabase() else { return .failed }
+        let resetStore = PreferencesResetStore(database: database)
+        let providerPreferences = providerSettingsModel()
+        let livePreferences = liveAISettingsModel()
+        contentDeletionInProgress = true
+        defer { contentDeletionInProgress = false }
+        do { try await resetStore.requireNoContent() }
+        catch PreferencesResetError.contentRemains { return .requiresContentDeletion }
+        catch { return .failed }
+
+        invalidateOptionalContext()
+        await livePreferences.beginContentDeletion()
+        await providerPreferences.beginPreferencesReset()
+        await cachedMemoryWorkspace?.cancelAndDrain()
+        await cachedBriefWorkspace?.cancelAndDrain()
+        await cachedPostMeetingAgent?.setGenerationEnabled(false)
+        automaticArtifactGenerationRevision &+= 1
+        let oldTasks = Array(artifactGenerationTasks.values)
+        oldTasks.forEach { $0.cancel() }
+        for task in oldTasks { await task.value }
+        var result = ResetPreferencesOutcome.completed
+        do {
+            // These local namespaces cannot share one transaction. Each step
+            // is idempotent; failure is explicitly a partial reset, never a
+            // false success. SQL rechecks content before clearing counters.
+            try credentials.deleteAllOwnedCredentials(profileIDs: providerProfiles.map(\.id))
+            if let resetLaunchPreference { try await resetLaunchPreference() }
+            else {
+                let launch = launchPreferencesModel()
+                guard !launch.isChanging else { throw PreferencesResetFailure.busy }
+                await launch.setEnabled(false)
+                guard launch.status == .disabled || launch.status == .unavailable else { throw PreferencesResetFailure.failed }
+            }
+            try shortcuts.resetRetainedPreferences()
+            guard setup.resetPreferences() else { throw PreferencesResetFailure.busy }
+            try await resetStore.reset()
+            ephemeralNextMeeting = false
+            cachedMemoryWorkspace?.forgetAllContent()
+            cachedBriefWorkspace?.forgetAllContent()
+            latestProviderSettings = ProviderSettings()
+            providerSettingsRevision &+= 1
+            providerTransportRevision &+= 1
+        } catch { result = .failed }
+        requestInspector.clear()
+        await livePreferences.endContentDeletion()
+        await providerPreferences.endPreferencesReset()
+        await cachedPostMeetingAgent?.setGenerationEnabled(globalAIFeaturesEnabled)
+        return result
+    }
+
+    private enum PreferencesResetFailure: Error { case busy, failed }
+
+    func applicationLifecycle() -> ApplicationLifecycleController {
+        if let cachedLifecycle { return cachedLifecycle }
+        let lifecycle = ApplicationLifecycleController(onSleep: { [weak self] in
+            guard let self else { return }
+            self.invalidateOptionalContext()
+            guard self.session.isActive else { return }
+            self.session.fail(.systemSleep)
+            self.syncPanel()
+        }, drainForTermination: { [weak self] in
+            guard let self else { return }
+            self.terminationInProgress = true
+            defer { self.terminationInProgress = false }
+            self.invalidateOptionalContext()
+            self.cachedBriefWorkspace?.stop()
+            self.automaticArtifactGenerationRevision &+= 1
+            self.artifactGenerationTasks.values.forEach { $0.cancel() }
+            self.session.stop()
+            self.syncPanel()
+            // Cancel optional providers immediately; their durable uncertain
+            // debits survive relaunch. Capture teardown owns its final text.
+            Task { await self.cachedPostMeetingAgent?.cancelInFlightGeneration() }
+            await self.startTask?.value
+            await self.stopTask?.value
+        }, onTimeout: { [weak self] in
+            guard let self else { return }
+            self.session.fail(.shutdownDelayed)
+            self.panel.show(session: self.session, store: self.store, copilot: self.copilot)
+        })
+        cachedLifecycle = lifecycle
+        return lifecycle
+    }
+
+    func diagnosticsExportModel() -> SanitizedDiagnosticsExportModel {
+        if let cachedDiagnosticsExport { return cachedDiagnosticsExport }
+        let model = SanitizedDiagnosticsExportModel(snapshot: { [unowned self] in await self.diagnosticsSnapshot() })
+        cachedDiagnosticsExport = model
+        return model
+    }
+
+    private func invalidateOptionalContext() {
+        optionalContextRevision &+= 1
+        requestInspector.clear()
+        copilot.invalidateGrounding()
+        cachedMemoryWorkspace?.cancelAndClear()
+        cachedBriefWorkspace?.cancelAndClear()
+    }
+
+    func memoryWorkspaceModel() -> MemoryWorkspaceModel? {
+        if let cachedMemoryWorkspace { return cachedMemoryWorkspace }
+        guard let database = try? openOrReuseDatabase() else { return nil }
+        let model = MemoryWorkspaceModel(database: database,
+            isMeetingActive: { [weak self] in
+                guard let self else { return true }
+                return self.session.isActive || self.contentDeletionInProgress || self.terminationInProgress
+            },
+            onSensitiveContentChanged: { [weak self] in
+                self?.requestInspector.clear()
+                self?.copilot.invalidateGrounding()
+                self?.cachedBriefWorkspace?.cancelAndClear()
+            },
+            makeProviderContext: { [weak self] meetingID in try await self?.memoryProviderContext(meetingID: meetingID) })
+        cachedMemoryWorkspace = model
+        return model
+    }
+
+    func briefWorkspaceModel() -> BriefWorkspaceModel? {
+        if let cachedBriefWorkspace { return cachedBriefWorkspace }
+        guard let database = try? openOrReuseDatabase() else { return nil }
+        let adapter = EventKitActionAdapter()
+        let model = BriefWorkspaceModel(database: database, reader: adapter,
+            requestReadAccess: { try await adapter.requestCalendarReadAccess() },
+            isMeetingActive: { [weak self] in
+                guard let self else { return true }
+                return self.session.isActive || self.contentDeletionInProgress || self.terminationInProgress
+            },
+            onSensitiveContentChanged: { [requestInspector] in requestInspector.clear() },
+            makeProviderContext: { [weak self] snapshot in try await self?.briefProviderContext(snapshot) },
+            makeAutomaticProviderContext: { [weak self] snapshot in try await self?.briefProviderContext(snapshot, trigger: .automatic) })
+        cachedBriefWorkspace = model
+        return model
+    }
+
+    private func optionalContextIsCurrent(revision: UInt64, transport: UInt64) -> Bool {
+        globalAIFeaturesEnabled && !session.isActive && !contentDeletionInProgress && !terminationInProgress && optionalContextRevision == revision && providerTransportRevision == transport
+    }
+
+    private func memoryProviderContext(meetingID: UUID) async throws -> MemoryProviderContext? {
+        let revision = optionalContextRevision, transport = providerTransportRevision
+        guard optionalContextIsCurrent(revision: revision, transport: transport),
+              let settingsStore = settingsStore(), let ledger = spendLedger(), let meetings = historyStore(),
+              let meeting = try await meetings.meeting(id: meetingID), meeting.hasEnded, !meeting.ephemeral else { return nil }
+        let settings = try await settingsStore.providerSettings()
+        guard (try await settingsStore.liveAISettings()).aiFeaturesEnabled else { return nil }
+        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials, inspector: requestInspector)
+        guard let client = try registry.client(for: settings), let profileID = settings.selectedProfileID,
+              let profile = registry.profile(id: profileID) else { return nil }
+        let meter: SpendMeter
+        if let existing = await meetingSpendRegistry.meter(meetingID: meetingID) { meter = existing }
+        else {
+            let candidate = SpendMeter(ledger: ledger, pricing: try await settingsStore.pricing(), capUSD: settings.perMeetingCapUSD)
+            meter = await meetingSpendRegistry.registerIfAbsent(candidate, meetingID: meetingID)
+        }
+        await meter.updateCapUSD(settings.perMeetingCapUSD)
+        guard optionalContextIsCurrent(revision: revision, transport: transport), !Task.isCancelled else { return nil }
+        return MemoryProviderContext(provider: MeteredProvider(upstream: client, meter: meter, meetingID: meetingID,
+            beforeDispatch: { [weak self] in await self?.optionalContextIsCurrent(revision: revision, transport: transport) ?? false }), model: profile.deepModel,
+            isCurrent: { [weak self] in await self?.optionalContextIsCurrent(revision: revision, transport: transport) ?? false })
+    }
+
+    private func briefProviderContext(_ snapshot: BriefSnapshot, trigger: BackgroundUsageJob.Trigger = .userInitiated) async throws -> MemoryProviderContext? {
+        let revision = optionalContextRevision, transport = providerTransportRevision
+        guard optionalContextIsCurrent(revision: revision, transport: transport),
+              let settingsStore = settingsStore(), let ledger = spendLedger(),
+              let database = try? openOrReuseDatabase() else { return nil }
+        let settings = try await settingsStore.providerSettings()
+        guard (try await settingsStore.liveAISettings()).aiFeaturesEnabled else { return nil }
+        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials, inspector: requestInspector)
+        guard let client = try registry.client(for: settings), let profileID = settings.selectedProfileID,
+              let profile = registry.profile(id: profileID) else { return nil }
+        let meter = SpendMeter(ledger: ledger, pricing: try await settingsStore.pricing(), capUSD: nil)
+        let briefStore = BriefStore(database: database)
+        let validity: @Sendable () async -> Bool = { [weak self] in
+            guard await self?.optionalContextIsCurrent(revision: revision, transport: transport) == true,
+                  (try? await briefStore.isCurrent(eventID: snapshot.id, eventRevision: snapshot.event.revision,
+                                                  mappingRevision: snapshot.mappingRevision)) == true else { return false }
+            return true
+        }
+        guard optionalContextIsCurrent(revision: revision, transport: transport), !Task.isCancelled else { return nil }
+        return MemoryProviderContext(provider: MeteredProvider(upstream: client, meter: meter, scope: .briefs,
+                job: .init(id: snapshot.id, revision: snapshot.generationRevision,
+                           sourceRevision: snapshot.event.revision, trigger: trigger), beforeDispatch: validity), model: profile.deepModel,
+            isCurrent: validity)
     }
 
     /// The post-meeting agent, wired the only way shipping code builds a
@@ -686,10 +957,13 @@ final class AppShellCoordinator {
               let settingsStore = settingsStore(),
               let ledger = spendLedger()
         else { return nil }
-        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials)
+        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials, inspector: requestInspector)
         let meterRegistry = meetingSpendRegistry
         let contextOverride = postMeetingContextOverride
         let ledgerOverride = liveSpendLedgerOverride
+        let canGenerate: @Sendable () async -> Bool = { [weak self] in
+            await self?.allowsPostMeetingWork() ?? false
+        }
         let agent = PostMeetingAgent(
             meetings: meetings,
             artifacts: artifacts,
@@ -702,6 +976,7 @@ final class AppShellCoordinator {
                 )
             },
             makeContext: { meetingID in
+                guard await canGenerate() else { return nil }
                 let settings = try await settingsStore.providerSettings()
                 guard (try await settingsStore.liveAISettings()).aiFeaturesEnabled else { return nil }
                 if let contextOverride {
@@ -726,7 +1001,7 @@ final class AppShellCoordinator {
                     meter = await meterRegistry.registerIfAbsent(candidate, meetingID: meetingID)
                 }
                 return PostMeetingProviderContext(
-                    provider: MeteredProvider(upstream: client, meter: meter, meetingID: meetingID),
+                    provider: MeteredProvider(upstream: client, meter: meter, meetingID: meetingID, beforeDispatch: canGenerate),
                     // Production ignores preserved model overrides for the MVP.
                     model: profile.deepModel
                 )
@@ -736,16 +1011,32 @@ final class AppShellCoordinator {
         return agent
     }
 
+    private func allowsPostMeetingWork() -> Bool {
+        !terminationInProgress && !contentDeletionInProgress && globalAIFeaturesEnabled
+    }
+
     /// One meeting's detail-pane state. Built per selection (fetch-on-appear,
     /// like History itself); the closures re-read settings on every ask so a
     /// provider or cap configured after the meeting applies immediately.
     func meetingDetailModel(for meeting: MeetingRecord) -> MeetingDetailModel {
-        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials)
+        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials, inspector: requestInspector)
         let settingsStore = settingsStore()
         let ledger = spendLedger()
         return MeetingDetailModel(
             meeting: meeting,
             artifactStore: artifactStore(),
+            exportStore: (try? openOrReuseDatabase()).map { MeetingExportStore(database: $0) },
+            makeActionReview: { [weak self] artifact, kind in
+                guard let database = try? self?.openOrReuseDatabase() else { return nil }
+                let adapter = EventKitActionAdapter()
+                return ActionReviewModel(artifact: artifact, kind: kind,
+                    journal: ActionJournalStore(database: database), adapter: adapter,
+                    requestAccess: { lookup in
+                        if kind == .reminder { return try await adapter.requestReminderAccess() }
+                        if lookup { return try await adapter.requestCalendarReadAccess() }
+                        return try await adapter.requestCalendarWriteAccess()
+                    })
+            },
             agent: postMeetingAgent(),
             isProviderConfigured: {
                 guard let settingsStore else { return false }
@@ -814,6 +1105,9 @@ final class AppShellCoordinator {
             await inFlightPauseResume?.value
             let endedMeetingID = await stopping.stop()
             guard let self else { return }
+            if self.pipeline == nil && !self.session.isActive {
+                self.setup.activity.endMeeting()
+            }
             // A newer pipeline may already own the retained diagnostics by the
             // time this old drain completes. Never let its zero/current value
             // be overwritten by stale teardown.
@@ -849,7 +1143,7 @@ final class AppShellCoordinator {
         let previousGeneration = artifactGenerationTailID.flatMap {
             artifactGenerationTasks[$0]
         }
-        let enabledAtAdmission = globalAIFeaturesEnabled
+        let enabledAtAdmission = globalAIFeaturesEnabled && !terminationInProgress && !contentDeletionInProgress
         let admissionRevision = automaticArtifactGenerationRevision
         let task = Task { [weak self] in
             await previousGeneration?.value
@@ -940,8 +1234,9 @@ final class AppShellCoordinator {
 
     private func handleFailure(from failed: MeetingPipeline, _ error: any Error) {
         guard pipeline === failed else { return }  // ignore a stale/late failure
-        log.error("pipeline failed, stopping session: \(error.localizedDescription)")
-        session.stop()
+        log.error("pipeline failed: \(String(describing: type(of: error)), privacy: .public)")
+        session.fail(SessionFailure.classify(error))
+        requestInspector.clear()
         syncPanel()  // → teardown branch (no await of the calling task, so no self-deadlock)
     }
 
@@ -1032,6 +1327,8 @@ final class AppShellCoordinator {
         // copy and cannot be allowed to delay or roll back it.
         globalAIFeaturesEnabled = settings.aiFeaturesEnabled
         if !settings.aiFeaturesEnabled {
+            invalidateOptionalContext()
+            requestInspector.clear()
             automaticArtifactGenerationRevision &+= 1
             // Disable synchronously before any suspension. This wins against a
             // stale startup or enable callback that later resumes.
@@ -1134,7 +1431,7 @@ final class AppShellCoordinator {
                 break
             }
         }
-        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials)
+        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials, inspector: requestInspector)
         let profile = finalProviderSettings.selectedProfileID.flatMap(registry.profile(id:))
         let client = (try? registry.client(for: finalProviderSettings)) ?? nil
         let metered: (any LLMProvider)? = client.map {
@@ -1158,7 +1455,8 @@ final class AppShellCoordinator {
             // Deliberately use the profile defaults, not persisted overrides.
             fastModel: profile?.fastModel ?? EndpointProfile.deepSeek.fastModel,
             deepModel: profile?.deepModel ?? EndpointProfile.deepSeek.deepModel,
-            settings: finalLiveSettings
+            settings: finalLiveSettings,
+            sourceDatabase: ephemeral ? nil : cachedDatabase
         )
     }
 
@@ -1184,7 +1482,7 @@ final class AppShellCoordinator {
               providerRefreshAttemptRevision == attemptRevision
         else { return false }
 
-        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials)
+        let registry = ProviderRegistry(profiles: providerProfiles, credentials: credentials, inspector: requestInspector)
         let profile = settings.selectedProfileID.flatMap(registry.profile(id:))
         let client = (try? registry.client(for: settings)) ?? nil
         let metered: (any LLMProvider)? = client.map {
@@ -1224,7 +1522,8 @@ final class AppShellCoordinator {
     }
 
     private func isCurrentStartup(_ expectedPipeline: MeetingPipeline, epoch: UInt64) -> Bool {
-        pipeline === expectedPipeline && lifecycleEpoch == epoch && session.isCapturing
+        pipeline === expectedPipeline && lifecycleEpoch == epoch
+            && (session.isPreparing || session.isCapturing)
     }
 
     /// Focused lifecycle oracle: production has no reason to enumerate these.

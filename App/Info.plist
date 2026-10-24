@@ -30,5 +30,11 @@
 	<string>macapy transcribes your side of meetings on-device; audio is never saved or sent anywhere.</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
+	<string>macapy creates only the calendar event you review and explicitly confirm.</string>
+	<key>NSCalendarsFullAccessUsageDescription</key>
+	<string>When you enable briefs or choose reconciliation, macapy reads your selected calendars on this Mac.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>macapy creates only the reminder you review and explicitly confirm, and can check its creation status.</string>
 </dict>
 </plist>

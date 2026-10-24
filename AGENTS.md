@@ -2,7 +2,7 @@
 
 ## Product boundary
 
-macapy is a local-first native macOS meeting assistant. The current baseline has Milestones 1–3 implemented; memory/RAG, approved EventKit actions, pre-meeting briefs, and launch hardening remain later work unless the task explicitly includes them.
+macapy is a local-first native macOS meeting assistant. The current source preview includes capture/transcription, live assistance, reviewed memory and lexical document retrieval, approved EventKit actions, pre-meeting briefs, and native setup/recovery controls. Signed distribution and clean-device, installed-model, and live-provider validation remain release gates. Semantic retrieval is not enabled.
 
 Permanent constraints:
 
@@ -99,9 +99,11 @@ Because `docs/` is not backed up by Git or the remote, preserve important local 
 - `CaptureKit`: microphone/system capture, format conversion, bounded audio fan-out.
 - `TranscribeKit`: SpeechAnalyzer adapter, transcript events/store, STT diagnostics.
 - `DiarizeKit`: FluidAudio adapter and speaker attribution; no persistence dependency.
+- `MemoryKit`: source/retrieval contracts, local document parsing and chunking, and optional embedding adapter; no provider, GRDB, or UI dependency.
+- `ActionKit`: reviewed action contracts, EventKit adapters, and allowlisted calendar snapshots; persistence belongs to `PersistKit`.
 - `PersistKit`: GRDB/SQLite migrations and stores, FTS5 search, deletion, spend persistence.
 - `ProviderKit`: Keychain credentials, OpenAI-compatible transport, endpoint quirks, sanitized failures, spend metering.
-- `AgentKit`: post-meeting extraction and live-copilot classification, context, generation, arbitration, and recovery.
+- `AgentKit`: post-meeting and memory extraction, grounded answers, and live-copilot classification, context, generation, arbitration, and recovery.
 - `AppShell`: composition root, meeting lifecycle, task ownership/fencing, native presentation, and user controls.
 - `ProviderTestSupport`: fake provider infrastructure; it must never link into the production product.
 

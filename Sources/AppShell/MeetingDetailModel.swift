@@ -1,4 +1,5 @@
 import AgentKit
+import ActionKit
 import Foundation
 import Observation
 import PersistKit
@@ -42,8 +43,15 @@ final class MeetingDetailModel {
     /// The G3 readout ("drafted in 22s" in the mockup) — `nil` until this
     /// app run has drafted something.
     private(set) var lastDraftedInSeconds: Double?
+    /// Local editing/export failures are independent of generation state, so
+    /// correcting an artifact never hides the rest of the meeting output.
+    private(set) var operationError: String?
+    private(set) var operationNotice: String?
+    private(set) var isExporting = false
+    let makeActionReview: (@MainActor (ArtifactRecord, ExternalActionKind) -> ActionReviewModel?)?
 
     @ObservationIgnored private let artifactStore: ArtifactStore?
+    @ObservationIgnored private let exportStore: MeetingExportStore?
     @ObservationIgnored private let agent: PostMeetingAgent?
     @ObservationIgnored private let isProviderConfigured: @Sendable () async -> Bool
     /// Non-`nil` (spent, cap) when a cap is configured; the model derives
@@ -54,12 +62,16 @@ final class MeetingDetailModel {
     init(
         meeting: MeetingRecord,
         artifactStore: ArtifactStore?,
+        exportStore: MeetingExportStore? = nil,
+        makeActionReview: (@MainActor (ArtifactRecord, ExternalActionKind) -> ActionReviewModel?)? = nil,
         agent: PostMeetingAgent?,
         isProviderConfigured: @escaping @Sendable () async -> Bool,
         capStatus: @escaping @Sendable (UUID) async -> (spentUSD: Double, capUSD: Double)?
     ) {
         self.meeting = meeting
         self.artifactStore = artifactStore
+        self.exportStore = exportStore
+        self.makeActionReview = makeActionReview
         self.agent = agent
         self.isProviderConfigured = isProviderConfigured
         self.capStatus = capStatus
@@ -81,7 +93,7 @@ final class MeetingDetailModel {
         do {
             artifacts = try await artifactStore.artifacts(for: meeting.id)
         } catch {
-            log.error("failed to load artifacts: \(error.localizedDescription)")
+            log.error("failed to load artifacts: \(String(describing: type(of: error)), privacy: .public)")
             state = .unavailable
             return
         }
@@ -141,14 +153,114 @@ final class MeetingDetailModel {
         await setStatus(.rejected, id: id)
     }
 
+    /// The editor passes the revision it originally displayed, not a freshly
+    /// fetched value that could conceal a concurrent correction.
+    @discardableResult
+    func edit(_ id: UUID, expectedRevision: Int, content: ArtifactEdit) async -> Bool {
+        guard let artifactStore else { return false }
+        clearOperationFeedback()
+        do {
+            _ = try await artifactStore.edit(id: id, expectedRevision: expectedRevision, content: content)
+            artifacts = try await artifactStore.artifacts(for: meeting.id)
+            operationNotice = "Correction saved. Review the updated draft when you’re ready."
+            return true
+        } catch {
+            await handleMutationError(error)
+            return false
+        }
+    }
+
+    func setCompletion(_ complete: Bool, id: UUID) async {
+        guard let artifactStore, let row = artifacts.first(where: { $0.id == id }) else { return }
+        clearOperationFeedback()
+        do {
+            _ = try await artifactStore.setCompletion(complete, id: id, expectedRevision: row.revision)
+            artifacts = try await artifactStore.artifacts(for: meeting.id)
+            operationNotice = complete ? "Action marked complete." : "Action reopened."
+        } catch {
+            await handleMutationError(error)
+        }
+    }
+
+    /// Shared by Copy and Save. The UI controls pasteboard access and an
+    /// explicit destination picker; no export is written on load or cancel.
+    func exportData(
+        format: MeetingExportFormat,
+        selection: MeetingExportSelection = .all
+    ) async -> Data? {
+        guard let exportStore else {
+            operationError = "Meeting export is unavailable. Reopen this meeting and try again."
+            return nil
+        }
+        clearOperationFeedback()
+        isExporting = true
+        defer { isExporting = false }
+        do {
+            let snapshot = try await exportStore.snapshot(meetingID: meeting.id, selection: selection)
+            try Task.checkCancellation()
+            return try snapshot.data(format: format)
+        } catch is CancellationError {
+            return nil
+        } catch {
+            log.error("failed to prepare export: \(String(describing: type(of: error)), privacy: .public)")
+            if let exportError = error as? MeetingExportError {
+                switch exportError {
+                case .meetingNotCompleted: operationError = "Finish this meeting before exporting it."
+                case .ephemeralMeeting: operationError = "Ephemeral meetings cannot be exported."
+                case .meetingNotFound: operationError = "This meeting is no longer available."
+                case .unsupportedArtifact: operationError = "Some meeting output cannot be exported by this version of macapy."
+                case .invalidDestination: operationError = "Choose a local file destination."
+                }
+            } else {
+                operationError = "The meeting could not be exported. Try again."
+            }
+            return nil
+        }
+    }
+
+    func saveExport(_ data: Data, to destination: URL) {
+        clearOperationFeedback()
+        do {
+            try MeetingExportWriter.write(data, to: destination)
+            operationNotice = "Export saved to \(destination.lastPathComponent)."
+        } catch is CancellationError {
+            // Closing a save dialog or cancelling preparation is non-destructive.
+        } catch {
+            log.error("failed to save export: \(String(describing: type(of: error)), privacy: .public)")
+            operationError = "The export could not be saved. Choose another location and try again."
+        }
+    }
+
+    func didCopyExport() { operationNotice = "Copied to clipboard." }
+
+    func clearOperationFeedback() {
+        operationError = nil
+        operationNotice = nil
+    }
+
+    private func handleMutationError(_ error: any Error) async {
+        log.error("failed to update artifact: \(String(describing: type(of: error)), privacy: .public)")
+        switch error as? ArtifactStoreError {
+        case .revisionConflict:
+            operationError = "This item changed while you were editing. Your correction has not been saved. Review the latest version and try again."
+            if let artifactStore, let latest = try? await artifactStore.artifacts(for: meeting.id) {
+                artifacts = latest
+            }
+        case .emptyContent: operationError = "Add some text before saving."
+        case .notFound: operationError = "This item is no longer available."
+        default: operationError = "The change could not be saved. Try again."
+        }
+    }
+
     /// FR-009 in M2: the flip is the whole effect — nothing external happens.
     private func setStatus(_ status: ArtifactStatus, id: ArtifactRecord.ID) async {
-        guard let artifactStore else { return }
+        guard let artifactStore, let row = artifacts.first(where: { $0.id == id }) else { return }
+        clearOperationFeedback()
         do {
-            try await artifactStore.setStatus(status, id: id)
+            try await artifactStore.setStatus(status, id: id, expectedRevision: row.revision)
             artifacts = try await artifactStore.artifacts(for: meeting.id)
         } catch {
-            log.error("failed to set artifact status: \(error.localizedDescription)")
+            await handleMutationError(error)
         }
     }
 }

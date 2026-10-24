@@ -9,6 +9,13 @@ public protocol CredentialStore: Sendable {
     func key(for profileID: String) throws -> String?
     func store(_ key: String, for profileID: String) throws
     func delete(for profileID: String) throws
+    func deleteAllOwnedCredentials(profileIDs: [String]) throws
+}
+
+public extension CredentialStore {
+    func deleteAllOwnedCredentials(profileIDs: [String]) throws {
+        for profileID in Set(profileIDs) { try delete(for: profileID) }
+    }
 }
 
 /// Keychain Services, generic-password items keyed by profile id under one
@@ -104,6 +111,10 @@ public struct KeychainCredentialStore: CredentialStore {
         throw KeychainError.status(errSecInternalError)
     }
 
+    public func deleteAllOwnedCredentials(profileIDs: [String]) throws {
+        try deleteAll()
+    }
+
     private func baseQuery(profileID: String) -> [String: Any] {
         [
             kSecClass as String: kSecClassGenericPassword,
@@ -145,5 +156,11 @@ public final class InMemoryCredentialStore: CredentialStore, @unchecked Sendable
         lock.lock()
         defer { lock.unlock() }
         keys[profileID] = nil
+    }
+
+    public func deleteAllOwnedCredentials(profileIDs: [String]) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        keys.removeAll()
     }
 }

@@ -38,15 +38,18 @@ public struct ProviderRegistry: Sendable {
     public let profiles: [EndpointProfile]
     let credentials: any CredentialStore
     let session: URLSession
+    let inspector: RequestInspector?
 
     public init(
         profiles: [EndpointProfile] = EndpointProfile.builtIns,
         credentials: any CredentialStore,
-        session: URLSession = .shared
+        session: URLSession = .shared,
+        inspector: RequestInspector? = nil
     ) {
         self.profiles = profiles
         self.credentials = credentials
         self.session = session
+        self.inspector = inspector
     }
 
     public func profile(id: String) -> EndpointProfile? {
@@ -74,7 +77,7 @@ public struct ProviderRegistry: Sendable {
         let key = try credentials.key(for: id)
         if profile.quirks.requiresAPIKey, key == nil || key?.isEmpty == true { return nil }
 
-        return OpenAICompatibleClient(profile: profile, apiKey: key, session: session)
+        return OpenAICompatibleClient(profile: profile, apiKey: key, session: session, inspector: inspector)
     }
 
     /// Whether AI features can run at all — what the UI asks before deciding

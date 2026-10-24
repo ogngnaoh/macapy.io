@@ -23,7 +23,7 @@ import Testing
 /// credentials under `io.macapy.app` — the mechanism is identical, the service
 /// string is the only variable, and the production constant is wired in
 /// `AppShellCoordinator` via the store's default init.
-@Suite(.enabled(if: LiveCredentials.hasDeepSeek))
+@Suite(.enabled(if: TestRunPolicy.runsLiveProvider, "Requires MACAPY_RUN_LIVE_PROVIDER_TESTS=1 and a nonempty MACAPY_DEEPSEEK_KEY; billable/network lane"))
 @MainActor
 struct ProviderLiveFlowTests {
 

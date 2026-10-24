@@ -235,6 +235,10 @@ public actor PostMeetingAgent {
             return .drafted(rows)
         } catch is CancellationError {
             return .cancelled
+        } catch ArtifactStoreError.existingArtifacts {
+            // Another writer won while extraction was awaiting the provider.
+            // Preserve that complete (possibly corrected) set and reload it.
+            return .skippedExistingArtifacts
         } catch let error as ProviderError {
             if case .capReached(let spent, let cap) = error {
                 log.info("extraction halted at cap: \(spent, format: .fixed(precision: 4)) of \(cap, format: .fixed(precision: 4)) USD")

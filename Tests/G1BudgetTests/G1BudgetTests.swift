@@ -1,26 +1,32 @@
 import Foundation
 import LatencyHarnessLib
+import ProviderTestSupport
+import TranscribeKit
 import Testing
 
 /// Check 3 (slice 5) — regression tripwire, explicitly **NOT** the G1 proof
 /// (slice-05 doc decision 6). Runs the shared harness library, in whatever
 /// config `swift test` was built with (normally debug), against a short
-/// committed fixture. Debug is measurably slower than a release build, so
+/// explicit local fixture. Debug is measurably slower than a release build, so
 /// this only asserts a loose ceiling meant to catch gross regressions in
 /// CI-ish runs — the authoritative G1 number is the user's
 /// `swift run -c release macapy-latency <fixture>`, recorded in
 /// milestone.md.
+@Suite(.enabled("Requires explicit model opt-in, installed speech assets, and local fox.wav; no downloads") {
+    guard TestRunPolicy.runsLocalModels && LocalAudioFixtures.has(["fox.wav"]) else { return false }
+    return await SpeechAnalyzerEngine.assetsAreInstalled(locale: Locale(identifier: "en_US"))
+})
 struct G1BudgetTests {
 
     @Test func shortFixtureStaysUnderTheDebugConfigCeiling() async throws {
-        guard let url = Bundle.module.url(forResource: "fox", withExtension: "wav", subdirectory: "Fixtures") else {
-            Issue.record("environment-blocked: fixture fox.wav missing from test bundle")
+        guard let url = LocalAudioFixtures.url(named: "fox.wav") else {
+            Issue.record("environment-blocked: local fixture fox.wav missing")
             return
         }
 
         let report: HarnessReport
         do {
-            report = try await runHarness(fixtureURL: url)
+            report = try await runHarness(fixtureURL: url, assetInstallationPolicy: .installedOnly)
         } catch {
             Issue.record("environment-blocked: harness run failed — \(error)")
             return

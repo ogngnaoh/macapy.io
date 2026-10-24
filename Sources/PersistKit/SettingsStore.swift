@@ -27,21 +27,25 @@ public struct LiveAISettings: Sendable, Codable, Equatable {
     public var aiFeaturesEnabled: Bool
     public var sensitivity: LiveAISensitivity
     public var preferredName: String?
+    public var usesSystemPreferredName: Bool
 
     public init(
         aiFeaturesEnabled: Bool = true,
         sensitivity: LiveAISensitivity = .quiet,
-        preferredName: String? = nil
+        preferredName: String? = nil,
+        usesSystemPreferredName: Bool = true
     ) {
         self.aiFeaturesEnabled = aiFeaturesEnabled
         self.sensitivity = sensitivity
         self.preferredName = preferredName
+        self.usesSystemPreferredName = usesSystemPreferredName
     }
 
     private enum CodingKeys: String, CodingKey {
         case aiFeaturesEnabled
         case sensitivity
         case preferredName
+        case usesSystemPreferredName
     }
 
     public init(from decoder: any Decoder) throws {
@@ -52,7 +56,8 @@ public struct LiveAISettings: Sendable, Codable, Equatable {
         self.init(
             aiFeaturesEnabled: (try? container.decode(Bool.self, forKey: .aiFeaturesEnabled)) ?? true,
             sensitivity: (try? container.decode(LiveAISensitivity.self, forKey: .sensitivity)) ?? .quiet,
-            preferredName: try? container.decode(String.self, forKey: .preferredName)
+            preferredName: try? container.decode(String.self, forKey: .preferredName),
+            usesSystemPreferredName: (try? container.decode(Bool.self, forKey: .usesSystemPreferredName)) ?? true
         )
     }
 }
@@ -76,6 +81,17 @@ public actor SettingsStore {
 
     public init(database: MacapyDatabase) {
         self.database = database
+    }
+
+    /// Runs inside the content-deletion transaction. A cleared name must not
+    /// be reconstituted from the account name on the next launch.
+    static func clearPersonalName(in db: Database) throws {
+        let raw = try String.fetchOne(db, sql: "SELECT value FROM settings WHERE key=?", arguments: [liveAISettingsKey])
+        var value = raw.flatMap { try? JSONDecoder().decode(LiveAISettings.self, from: Data($0.utf8)) } ?? LiveAISettings()
+        value.preferredName = nil; value.usesSystemPreferredName = false
+        let encoded = String(decoding: try JSONEncoder().encode(value), as: UTF8.self)
+        try db.execute(sql: "INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                       arguments: [liveAISettingsKey, encoded])
     }
 
     public func value(forKey key: String) async throws -> String? {
