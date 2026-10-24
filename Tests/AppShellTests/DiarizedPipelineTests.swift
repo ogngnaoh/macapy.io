@@ -184,20 +184,24 @@ struct DiarizedPipelineTests {
         // Stop has a bounded grace, but the lease remains occupied until the
         // underlying worker actually exits. Its late session is never adopted.
         final class Gate: @unchecked Sendable {
-            let entered = DispatchSemaphore(value: 0)
             let release = DispatchSemaphore(value: 0)
+            private var entered = false
             private weak var session: DiarizationSession?
             private let lock = NSLock()
+            var hasEntered: Bool { lock.withLock { entered } }
+            func noteEntered() { lock.withLock { entered = true } }
             var builtSession: DiarizationSession? { lock.withLock { session } }
             func noteBuilt(_ session: DiarizationSession) {
                 lock.withLock { self.session = session }
             }
-            // Sync wrapper: DispatchSemaphore.wait() is unavailable directly
-            // in async contexts; the detached task calls this instead.
-            func waitUntilEntered() -> Bool { entered.wait(timeout: .now() + 2) == .success }
         }
         let gate = Gate()
         defer { gate.release.signal() }
+        let watchdog = Task.detached {
+            try? await Task.sleep(for: .seconds(30))
+            gate.release.signal()
+        }
+        defer { watchdog.cancel() }
         let lease = OptionalDiarizationLease()
         let store = TranscriptStore()
         let meetingStore = MeetingStore(database: try MacapyDatabase.inMemory())
@@ -207,7 +211,7 @@ struct DiarizedPipelineTests {
             sources: [ScriptedSource(source: .system, chunkCount: 0)],
             store: store,
             makeDiarizer: {
-                gate.entered.signal()
+                gate.noteEntered()
                 gate.release.wait()  // holds the detached thread, not an actor
                 let session = DiarizationSession(engine: engine)
                 gate.noteBuilt(session)
@@ -217,15 +221,23 @@ struct DiarizedPipelineTests {
         )
 
         let startTask = Task { try await pipeline.start(mode: .persistent(meetingStore)) }
-        // Wait for the actual detached factory, not for a scheduling guess.
-        let entered = await Task.detached { gate.waitUntilEntered() }.value
-        try #require(entered)
+        defer { startTask.cancel() }
+        // Wait for actual factory entry without blocking another executor
+        // thread while the intentionally blocked factory occupies one already.
+        let readinessDeadline = ContinuousClock.now.advanced(by: .seconds(20))
+        while !gate.hasEntered && ContinuousClock.now < readinessDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        try #require(gate.hasEntered)
         _ = await pipeline.stop()
         #expect(lease.isOccupied)
 
         gate.release.signal()
         try await startTask.value
-        for _ in 0..<200 where lease.isOccupied { try await Task.sleep(for: .milliseconds(5)) }
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while lease.isOccupied && ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
         #expect(!lease.isOccupied)
 
         // The session built after stop() completed was dropped, not adopted.
